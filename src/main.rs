@@ -1,17 +1,25 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
 use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
+use azure_core::auth::TokenCredential;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
 
 use anyhow::Context;
+
+mod endpoints;
+mod error;
+
+pub type Result<T> = std::result::Result<T, error::Error>;
 
 async fn index() -> impl IntoResponse {
     "hello"
 }
 
 #[derive(Clone, FromRef)]
-struct AppState {}
+struct AppState {
+    cred: Arc<dyn TokenCredential>,
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -19,10 +27,15 @@ async fn main() -> anyhow::Result<()> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
+    let cred =
+        azure_identity::create_default_credential().context("failed to create Azure credential")?;
+
     let app = Router::new()
         .route("/", get(index))
+        .nest("/xrpc", endpoints::routes())
+        // .layer(RateLimitLayer::new(30, Duration::from_secs(30)))
         .layer(TraceLayer::new_for_http())
-        .with_state(AppState {});
+        .with_state(AppState { cred });
 
     // Required endpoints:
     // U /xrpc/_health (undocumented, but impl by reference PDS)

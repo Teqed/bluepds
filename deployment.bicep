@@ -3,7 +3,7 @@ param location string = resourceGroup().location // Location for all resources
 
 param sku string = 'F1' // The SKU of App Service Plan
 param dockerContainerName string = '${webAppName}:latest'
-param repositoryUrl string = 'https://github.com/DrChat/azure-rust-app'
+param repositoryUrl string = 'https://github.com/DrChat/bluepds'
 param branch string = 'main'
 
 var acrName = toLower('${webAppName}${uniqueString(resourceGroup().id)}')

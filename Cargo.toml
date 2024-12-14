@@ -6,11 +6,15 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.94"
+atrium-api = "0.24.6"
+atrium-xrpc = "0.11.5"
+atrium-xrpc-client = "0.5.8"
 axum = { version = "0.7.9", features = ["tower-log", "form", "macros"] }
 azure_core = "0.21.0"
 azure_identity = "0.21.0"
 serde = { version = "1.0.216", features = ["derive"] }
 serde_json = "1.0.133"
+thiserror = "2.0.7"
 tokio = { version = "1.42.0", features = ["macros", "rt-multi-thread"] }
 tower-http = { version = "0.6.2", features = ["fs", "trace"] }
 tracing = "0.1.41"
