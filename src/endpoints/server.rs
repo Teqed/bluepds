@@ -1,5 +1,6 @@
 use atrium_api::com::atproto::server;
 use axum::{extract::State, routing::get, Json, Router};
+use constcat::concat;
 
 use crate::{config::AppConfig, AppState, Result};
 
@@ -20,5 +21,8 @@ async fn describe_server(
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/com.atproto.server.describeServer", get(describe_server))
+    Router::new().route(
+        concat!("/", server::describe_server::NSID),
+        get(describe_server),
+    )
 }

@@ -484,6 +484,7 @@ dependencies = [
  "azure_identity",
  "clap",
  "clap-verbosity-flag",
+ "constcat",
  "figment",
  "serde",
  "serde_json",
@@ -633,6 +634,12 @@ name = "const_fn"
 version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "373e9fafaa20882876db20562275ff58d50e0caa2590077fe7ce7bef90211d0d"
+
+[[package]]
+name = "constcat"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4938185353434999ef52c81753c8cca8955ed38042fc29913db3751916f3b7ab"
 
 [[package]]
 name = "core-foundation"

@@ -81,8 +81,7 @@ async fn main() -> anyhow::Result<()> {
     // U /xrpc/_health (undocumented, but impl by reference PDS)
     //
     // com.atproto.identity:
-    //   - Resolve handle -> DID
-    //   - Resolve DID -> repo
+    //   - Table: Resolve handle -> DID
     // U /xrpc/com.atproto.identity.resolveHandle
     // U /xrpc/com.atproto.identity.updateHandle
     //
