@@ -1,5 +1,6 @@
 /*
 !/.github
+!/migrations
 !/src
 !/static
 !/templates

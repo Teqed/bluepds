@@ -1,8 +1,256 @@
-use atrium_api::com::atproto::server;
-use axum::{extract::State, routing::get, Json, Router};
-use constcat::concat;
+use std::{collections::HashMap, str::FromStr};
 
-use crate::{config::AppConfig, AppState, Result};
+use anyhow::{anyhow, bail, Context};
+use argon2::{
+    password_hash::{Salt, SaltString},
+    Argon2, PasswordHasher,
+};
+use atrium_api::{
+    com::atproto::server,
+    types::string::{Datetime, Did},
+};
+use atrium_crypto::keypair::Did as _;
+use atrium_repo::blockstore::{AsyncBlockStoreWrite, DAG_CBOR, SHA2_256};
+use axum::{
+    extract::State,
+    routing::{get, post},
+    Json, Router,
+};
+use base64::Engine;
+use constcat::concat;
+use serde::{Deserialize, Serialize};
+use sha2::Digest;
+use tracing::info;
+use uuid::Uuid;
+
+use crate::{
+    config::AppConfig, firehose::FirehoseProducer, AppState, Db, Result, RotationKey, SigningKey,
+};
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase", tag = "type")]
+enum PlcService {
+    #[serde(rename = "AtprotoPersonalDataServer")]
+    Pds { endpoint: String },
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PlcVerificationMethod {
+    atproto: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PlcOperation {
+    #[serde(rename = "type")]
+    typ: String,
+    rotation_keys: Vec<String>,
+    verification_methods: Vec<PlcVerificationMethod>,
+    also_known_as: Vec<String>,
+    services: HashMap<String, PlcService>,
+    prev: Option<String>,
+}
+
+impl PlcOperation {
+    fn sign(self, sig: Vec<u8>) -> SignedPlcOperation {
+        SignedPlcOperation {
+            typ: self.typ,
+            rotation_keys: self.rotation_keys,
+            verification_methods: self.verification_methods,
+            also_known_as: self.also_known_as,
+            services: self.services,
+            prev: self.prev,
+            sig: base64::prelude::BASE64_URL_SAFE.encode(sig),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SignedPlcOperation {
+    #[serde(rename = "type")]
+    typ: String,
+    rotation_keys: Vec<String>,
+    verification_methods: Vec<PlcVerificationMethod>,
+    also_known_as: Vec<String>,
+    services: HashMap<String, PlcService>,
+    prev: Option<String>,
+    sig: String,
+}
+
+async fn create_invite_code(
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    Json(input): Json<server::create_invite_code::Input>,
+) -> Result<Json<server::create_invite_code::Output>> {
+    let uuid = Uuid::new_v4().to_string();
+    let did = input.for_account.as_deref();
+    let count = std::cmp::min(input.use_count, 100); // Maximum of 100 uses for any code.
+
+    if count <= 0 {
+        return Err(anyhow!("use_count must be greater than 0").into());
+    }
+
+    let r: String = sqlx::query_scalar!(
+        r#"
+        INSERT INTO invites (id, did, count, created_at)
+            VALUES (?, ?, ?, datetime('now'))
+            RETURNING id
+        "#,
+        uuid,
+        did,
+        count,
+    )
+    .fetch_one(&db)
+    .await
+    .context("failed to create new invite code")?;
+
+    Ok(Json(
+        server::create_invite_code::OutputData { code: r }.into(),
+    ))
+}
+
+async fn create_account(
+    State(db): State<Db>,
+    State(skey): State<SigningKey>,
+    State(rkey): State<RotationKey>,
+    State(config): State<AppConfig>,
+    State(fh): State<FirehoseProducer>,
+    Json(input): Json<server::create_account::Input>,
+) -> Result<Json<server::create_account::Output>> {
+    let email = input.email.as_deref().context("no email provided")?;
+    let password = input.password.as_deref().context("no password provided")?;
+
+    // Begin a new transaction to actually create the user's profile.
+    // Unless committed, the transaction will be automatically rolled back.
+    let tx = db.begin().await.context("failed to begin transaction")?;
+
+    let invite = match &input.invite_code {
+        Some(code) => {
+            let invite: Option<String> = sqlx::query_scalar!(
+                r#"
+                UPDATE OR ROLLBACK invites
+                    SET count = count - 1
+                    WHERE id = ?
+                    AND count > 0
+                    RETURNING id
+                "#,
+                code
+            )
+            .fetch_optional(&db)
+            .await
+            .context("failed to check invite code")?;
+
+            invite.context("invalid invite code")?
+        }
+        None => {
+            return Err(anyhow!("invite code required").into());
+        }
+    };
+
+    // Account can be created. Synthesize a new DID for the user.
+    // https://github.com/did-method-plc/did-method-plc?tab=readme-ov-file#did-creation
+    let op = PlcOperation {
+        typ: "plc_operation".to_string(),
+        rotation_keys: vec![rkey.did().to_string()],
+        verification_methods: vec![PlcVerificationMethod {
+            atproto: skey.did().to_string(),
+        }],
+        also_known_as: vec![input.handle.as_str().to_string()],
+        services: HashMap::from([(
+            "atproto_pds".to_string(),
+            PlcService::Pds {
+                endpoint: config.host_name.clone(),
+            },
+        )]),
+        prev: None,
+    };
+
+    let bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode genesis op")?;
+    let bytes = rkey.sign(&bytes).context("failed to sign genesis op")?;
+
+    let op = op.sign(bytes);
+    let op = serde_ipld_dagcbor::to_vec(&op).context("failed to encode genesis op")?;
+
+    let digest = base32::encode(
+        base32::Alphabet::Rfc4648Lower { padding: false },
+        sha2::Sha256::digest(&op).as_slice(),
+    );
+
+    let did_hash = &digest[..24];
+    let did = format!("did:plc:{}", did_hash);
+    let salt = SaltString::generate(&mut rand::thread_rng());
+    let pass = Argon2::default()
+        .hash_password(password.as_bytes(), salt.as_salt())
+        .context("failed to hash password")?
+        .to_string();
+    let handle = input.handle.as_str().to_owned();
+
+    sqlx::query!(
+        r#"
+        INSERT OR ROLLBACK INTO accounts (did, email, password, created_at)
+            VALUES (?, ?, ?, datetime('now'));
+
+        INSERT OR ROLLBACK INTO handles (did, handle, created_at)
+            VALUES (?, ?, datetime('now'));
+
+        -- Cleanup stale invite codes
+        DELETE FROM invites
+            WHERE count <= 0;
+        "#,
+        did,
+        email,
+        pass,
+        did,
+        handle
+    )
+    .execute(&db)
+    .await
+    .context("failed to create new account")?;
+
+    let doc = tokio::fs::File::create(config.plc.path.join(format!("{}.car", did_hash)))
+        .await
+        .context("failed to create did doc")?;
+
+    let mut doc = atrium_repo::blockstore::CarStore::create(doc)
+        .await
+        .context("failed to create did doc")?;
+
+    let cid = doc
+        .write_block(DAG_CBOR, SHA2_256, &op)
+        .await
+        .context("failed to write genesis commit")?;
+
+    doc.set_root(cid).await.context("failed to set root")?;
+
+    tx.commit().await.context("failed to commit transaction")?;
+
+    // Broadcast the account event on the firehose.
+    fh.account(
+        atrium_api::com::atproto::sync::subscribe_repos::AccountData {
+            active: true,
+            did: Did::from_str(&did).unwrap(),
+            seq: 0,
+            status: Some("active".to_string()), // FIXME: Correct?
+            time: Datetime::now(),
+        },
+    )
+    .await;
+
+    info!("new account: {did} {email} {pass}");
+
+    Ok(Json(
+        server::create_account::OutputData {
+            access_jwt: "".to_string(),
+            did: Did::from_str(&did).unwrap(),
+            did_doc: None,
+            handle: input.handle.clone(),
+            refresh_jwt: "".to_string(),
+        }
+        .into(),
+    ))
+}
 
 async fn describe_server(
     State(config): State<AppConfig>,
@@ -11,18 +259,32 @@ async fn describe_server(
         server::describe_server::OutputData {
             available_user_domains: vec![],
             contact: None,
-            did: config.did,
+            did: Did::from_str(&format!("did:web:{}", config.host_name)).unwrap(),
             invite_code_required: Some(true),
             links: None,
-            phone_verification_required: Some(true), // email verification
+            phone_verification_required: Some(false), // email verification
         }
         .into(),
     ))
 }
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route(
-        concat!("/", server::describe_server::NSID),
-        get(describe_server),
-    )
+    // UG /xrpc/com.atproto.server.describeServer
+    // UP /xrpc/com.atproto.server.createAccount
+    // UP /xrpc/com.atproto.server.createSession
+    // UG /xrpc/com.atproto.server.getSession
+    // AP /xrpc/com.atproto.server.createInviteCode
+    Router::new()
+        .route(
+            concat!("/", server::describe_server::NSID),
+            get(describe_server),
+        )
+        .route(
+            concat!("/", server::create_account::NSID),
+            post(create_account),
+        )
+        .route(
+            concat!("/", server::create_invite_code::NSID),
+            post(create_invite_code),
+        )
 }
