@@ -3,3 +3,5 @@ DROP TABLE IF EXISTS invites;
 DROP TABLE IF EXISTS handles;
 
 DROP TABLE IF EXISTS accounts;
+
+DROP TABLE IF EXISTS sessions;

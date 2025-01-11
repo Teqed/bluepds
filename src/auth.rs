@@ -3,26 +3,14 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use atrium_api::types::string::Cid;
-use atrium_repo::blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore};
+use atrium_repo::{
+    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore},
+    Cid,
+};
 use axum::extract::FromRequestParts;
 use serde::{Deserialize, Serialize};
 
 use crate::{AppState, Result};
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-struct LogonClaims {
-    /// Target audience
-    pub aud: String,
-    /// Issued at
-    pub iat: usize,
-    /// Expiration time (UTC timestamp)
-    pub exp: usize,
-    /// Subject (DID of authenticated user)
-    pub sub: String,
-    /// Scope of the token
-    pub scope: String,
-}
 
 pub struct AuthenticatedUser {
     did: String,
@@ -45,7 +33,6 @@ impl AuthenticatedUser {
     }
 }
 
-#[axum::async_trait]
 impl FromRequestParts<AppState> for AuthenticatedUser {
     type Rejection = crate::Error;
 
@@ -53,6 +40,24 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut axum::http::request::Parts,
         state: &AppState,
     ) -> std::result::Result<Self, Self::Rejection> {
-        todo!()
+        let session_id = parts.headers.get("authorization").and_then(|auth| {
+            auth.to_str()
+                .ok()
+                .and_then(|auth| auth.strip_prefix("Bearer "))
+        });
+
+        let session_id = session_id.context("missing authorization header")?;
+
+        let did = sqlx::query_scalar!(r#"SELECT did FROM sessions WHERE id = ?"#, session_id)
+            .fetch_optional(&state.db)
+            .await
+            .context("failed to query session")?;
+
+        let did = did.context("session not found")?;
+
+        Ok(AuthenticatedUser {
+            storage: state.config.did.path.join(&did),
+            did,
+        })
     }
 }
