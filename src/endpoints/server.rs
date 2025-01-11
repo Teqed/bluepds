@@ -3,11 +3,11 @@ use std::{collections::HashMap, str::FromStr};
 use anyhow::{anyhow, bail, Context};
 use argon2::{
     password_hash::{Salt, SaltString},
-    Argon2, PasswordHasher,
+    Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
 };
 use atrium_api::{
     com::atproto::server,
-    types::string::{Datetime, Did},
+    types::string::{Datetime, Did, Handle},
 };
 use atrium_crypto::keypair::Did as _;
 use atrium_repo::blockstore::{AsyncBlockStoreWrite, DAG_CBOR, SHA2_256};
@@ -209,6 +209,25 @@ async fn create_account(
     .await
     .context("failed to create new account")?;
 
+    let session_id = Uuid::new_v4().to_string();
+
+    // N.B: Because there are a number of shortcomings with JSON web tokens, I've opted to
+    // use classical session identifiers instead. Bluesky's frontend will need to be updated
+    // to use a more secure authentication token.
+    //
+    // Reference: https://datatracker.ietf.org/doc/html/rfc8725
+    sqlx::query!(
+        r#"
+        INSERT OR ROLLBACK INTO sessions (id, did, created_at)
+            VALUES (?, ?, datetime('now'))
+        "#,
+        session_id,
+        did
+    )
+    .execute(&db)
+    .await
+    .context("failed to create new session")?;
+
     let doc = tokio::fs::File::create(config.plc.path.join(format!("{}.car", did_hash)))
         .await
         .context("failed to create did doc")?;
@@ -226,13 +245,15 @@ async fn create_account(
 
     tx.commit().await.context("failed to commit transaction")?;
 
+    // TODO: Send the new account's data to the PLC directory.
+
     // Broadcast the account event on the firehose.
     fh.account(
         atrium_api::com::atproto::sync::subscribe_repos::AccountData {
             active: true,
             did: Did::from_str(&did).unwrap(),
             seq: 0,
-            status: Some("active".to_string()), // FIXME: Correct?
+            status: None, // "takedown" / "suspended" / "deactivated"
             time: Datetime::now(),
         },
     )
@@ -242,11 +263,94 @@ async fn create_account(
 
     Ok(Json(
         server::create_account::OutputData {
-            access_jwt: "".to_string(),
+            access_jwt: session_id.clone(),
             did: Did::from_str(&did).unwrap(),
             did_doc: None,
             handle: input.handle.clone(),
-            refresh_jwt: "".to_string(),
+            refresh_jwt: session_id.clone(),
+        }
+        .into(),
+    ))
+}
+
+async fn create_session(
+    State(db): State<Db>,
+    Json(input): Json<server::create_session::Input>,
+) -> Result<Json<server::create_session::Output>> {
+    let handle = &input.identifier;
+    let password = &input.password;
+
+    let account = sqlx::query!(
+        r#"
+        WITH LatestHandles AS (
+            SELECT did, handle
+            FROM handles
+            WHERE (did, created_at) IN (
+                SELECT did, MAX(created_at) AS max_created_at
+                FROM handles
+                GROUP BY did
+            )
+        )
+        SELECT a.did, a.password, h.handle
+        FROM accounts a
+        LEFT JOIN LatestHandles h ON a.did = h.did
+        WHERE h.handle = ?
+        "#,
+        handle
+    )
+    .fetch_optional(&db)
+    .await
+    .context("failed to authenticate")?;
+
+    let account = if let Some(account) = account {
+        account
+    } else {
+        // TODO: Throw a 401
+        // SEC: We need to call the below `verify_password` function even if the account is not valid.
+        // This is vulnerable to a timing attack where an attacker can determine if an account exists
+        // by timing how long it takes for us to generate a response.
+        return Err(anyhow!("invalid credentials").into());
+    };
+
+    match argon2::Argon2::default().verify_password(
+        password.as_bytes(),
+        &PasswordHash::new(account.password.as_str()).context("invalid password hash in db")?,
+    ) {
+        Ok(_) => {}
+        Err(e) => {
+            info!("failed to verify password: {:?}", e);
+            return Err(anyhow!("invalid credentials").into());
+        }
+    }
+
+    let did = account.did;
+    let session_id = Uuid::new_v4().to_string();
+
+    sqlx::query!(
+        r#"
+        INSERT INTO sessions (id, did, created_at)
+            VALUES (?, ?, datetime('now'))
+        "#,
+        session_id,
+        did
+    )
+    .execute(&db)
+    .await
+    .context("failed to create new session")?;
+
+    Ok(Json(
+        server::create_session::OutputData {
+            access_jwt: session_id.clone(),
+            refresh_jwt: session_id.clone(),
+
+            active: Some(true),
+            did: Did::from_str(&did).unwrap(),
+            did_doc: None,
+            email: None,
+            email_auth_factor: None,
+            email_confirmed: None,
+            handle: Handle::new(account.handle).unwrap(),
+            status: None,
         }
         .into(),
     ))
@@ -282,6 +386,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             concat!("/", server::create_account::NSID),
             post(create_account),
+        )
+        .route(
+            concat!("/", server::create_session::NSID),
+            post(create_session),
         )
         .route(
             concat!("/", server::create_invite_code::NSID),

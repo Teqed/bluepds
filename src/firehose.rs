@@ -15,6 +15,7 @@ pub struct FirehoseProducer {
 }
 
 impl FirehoseProducer {
+    /// Broadcast an `#account` event.
     pub async fn account(&self, account: impl Into<sync::subscribe_repos::Account>) {
         let _ = self
             .tx

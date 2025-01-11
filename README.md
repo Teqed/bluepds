@@ -3,6 +3,8 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
 
 ## Quick Start
 ```
+# Install sqlx CLI at https://github.com/launchbadge/sqlx/tree/main/sqlx-cli
+cargo sqlx database setup
 cargo run
 ```
 
