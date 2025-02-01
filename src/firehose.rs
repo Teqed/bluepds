@@ -1,7 +1,6 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 
 use atrium_api::com::atproto::sync;
-use atrium_repo::Cid;
 use axum::extract::ws::WebSocket;
 use tracing::info;
 

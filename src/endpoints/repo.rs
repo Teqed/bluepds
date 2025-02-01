@@ -1,15 +1,12 @@
 use std::str::FromStr;
 
 use anyhow::Context;
-use atrium_api::{
-    com::atproto::repo,
-    types::string::{Cid, Did},
-};
-use atrium_repo::{mst::Tree, Repository};
+use atrium_api::com::atproto::repo;
+use atrium_repo::Repository;
 use axum::{extract::State, routing::get, Json, Router};
 use constcat::concat;
 
-use crate::{auth::AuthenticatedUser, config::AppConfig, AppState, Cred, Db, Result};
+use crate::{auth::AuthenticatedUser, AppState, Db, Result};
 
 async fn create_record(
     user: AuthenticatedUser,

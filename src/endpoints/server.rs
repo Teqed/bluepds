@@ -1,10 +1,7 @@
 use std::{collections::HashMap, str::FromStr};
 
-use anyhow::{anyhow, bail, Context};
-use argon2::{
-    password_hash::{Salt, SaltString},
-    Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
-};
+use anyhow::{anyhow, Context};
+use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use atrium_api::{
     com::atproto::server,
     types::string::{Datetime, Did, Handle},

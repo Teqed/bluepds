@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use atrium_crypto::keypair::{Did, Export, Secp256k1Keypair};
+use atrium_crypto::keypair::{Export, Secp256k1Keypair};
 use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
 use azure_core::auth::TokenCredential;
 use clap::Parser;
