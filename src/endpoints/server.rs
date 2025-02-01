@@ -10,7 +10,10 @@ use atrium_api::{
     types::string::{Datetime, Did, Handle},
 };
 use atrium_crypto::keypair::Did as _;
-use atrium_repo::blockstore::{AsyncBlockStoreWrite, DAG_CBOR, SHA2_256};
+use atrium_repo::{
+    blockstore::{AsyncBlockStoreWrite, DAG_CBOR, SHA2_256},
+    Cid, Repository,
+};
 use axum::{
     extract::State,
     routing::{get, post},
@@ -116,11 +119,11 @@ async fn create_account(
     State(skey): State<SigningKey>,
     State(rkey): State<RotationKey>,
     State(config): State<AppConfig>,
-    State(fh): State<FirehoseProducer>,
+    State(fhp): State<FirehoseProducer>,
     Json(input): Json<server::create_account::Input>,
 ) -> Result<Json<server::create_account::Output>> {
     let email = input.email.as_deref().context("no email provided")?;
-    let password = input.password.as_deref().context("no password provided")?;
+    let pass = input.password.as_deref().context("no password provided")?;
 
     // Begin a new transaction to actually create the user's profile.
     // Unless committed, the transaction will be automatically rolled back.
@@ -182,15 +185,54 @@ async fn create_account(
     let did = format!("did:plc:{}", did_hash);
     let salt = SaltString::generate(&mut rand::thread_rng());
     let pass = Argon2::default()
-        .hash_password(password.as_bytes(), salt.as_salt())
+        .hash_password(pass.as_bytes(), salt.as_salt())
         .context("failed to hash password")?
         .to_string();
     let handle = input.handle.as_str().to_owned();
 
+    // Write out an initial commit for the user.
+    // https://atproto.com/guides/account-lifecycle
+    let cid = async {
+        let file = tokio::fs::File::create(config.repo.path.join(format!("{}.car", did_hash)))
+            .await
+            .context("failed to create repo file")?;
+        let mut store = atrium_repo::blockstore::CarStore::create(file)
+            .await
+            .context("failed to create carstore")?;
+        let mut diff = atrium_repo::blockstore::DiffBlockStore::wrap(&mut store);
+
+        let repo_builder = Repository::create(&mut diff, Did::from_str(&did).unwrap())
+            .await
+            .context("failed to initialize user repo")?;
+
+        // Sign the root commit.
+        let sig = skey
+            .sign(&repo_builder.hash())
+            .context("failed to sign root commit")?;
+        let repo = repo_builder
+            .sign(sig)
+            .await
+            .context("failed to attach signature to root commit")?;
+
+        let root = repo.root();
+        let cids = diff.blocks().chain([root]).collect::<Vec<_>>();
+
+        store
+            .set_root(root)
+            .await
+            .context("failed to set root CID")?;
+
+        Ok::<Cid, anyhow::Error>(root)
+    }
+    .await
+    .context("failed to create user repo")?;
+
+    let cid = cid.to_string();
+
     sqlx::query!(
         r#"
-        INSERT OR ROLLBACK INTO accounts (did, email, password, created_at)
-            VALUES (?, ?, ?, datetime('now'));
+        INSERT OR ROLLBACK INTO accounts (did, email, password, root, created_at)
+            VALUES (?, ?, ?, ?, datetime('now'));
 
         INSERT OR ROLLBACK INTO handles (did, handle, created_at)
             VALUES (?, ?, datetime('now'));
@@ -202,6 +244,7 @@ async fn create_account(
         did,
         email,
         pass,
+        cid,
         did,
         handle
     )
@@ -212,7 +255,7 @@ async fn create_account(
     let session_id = Uuid::new_v4().to_string();
 
     // N.B: Because there are a number of shortcomings with JSON web tokens, I've opted to
-    // use classical session identifiers instead. Bluesky's frontend will need to be updated
+    // use classic session identifiers instead. Bluesky's frontend will need to be updated
     // to use a more secure authentication token.
     //
     // Reference: https://datatracker.ietf.org/doc/html/rfc8725
@@ -243,16 +286,28 @@ async fn create_account(
 
     doc.set_root(cid).await.context("failed to set root")?;
 
+    // The account is fully created. Commit the SQL transaction to the database.
     tx.commit().await.context("failed to commit transaction")?;
 
     // TODO: Send the new account's data to the PLC directory.
 
-    // Broadcast the account event on the firehose.
-    fh.account(
+    // Broadcast the identity event now that the new identity is resolvable on the public directory.
+    fhp.identity(
+        atrium_api::com::atproto::sync::subscribe_repos::IdentityData {
+            did: Did::from_str(&did).unwrap(),
+            handle: Some(Handle::new(handle).unwrap()),
+            seq: 0, // Filled by firehose later.
+            time: Datetime::now(),
+        },
+    )
+    .await;
+
+    // The new account is now active on this PDS, so we can broadcast the account firehose event.
+    fhp.account(
         atrium_api::com::atproto::sync::subscribe_repos::AccountData {
             active: true,
             did: Did::from_str(&did).unwrap(),
-            seq: 0,
+            seq: 0,       // Filled by firehose later.
             status: None, // "takedown" / "suspended" / "deactivated"
             time: Datetime::now(),
         },

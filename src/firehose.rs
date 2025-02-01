@@ -1,12 +1,18 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use atrium_api::com::atproto::sync;
+use atrium_repo::Cid;
 use axum::extract::ws::WebSocket;
 use tracing::info;
 
 enum FirehoseMessage {
     Broadcast(sync::subscribe_repos::Message),
     Connect(axum::extract::ws::WebSocket),
+}
+
+pub struct Commit {
+    /// A CAR file containing the serialized blocks
+    pub blocks: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -21,6 +27,16 @@ impl FirehoseProducer {
             .tx
             .send(FirehoseMessage::Broadcast(
                 sync::subscribe_repos::Message::Account(Box::new(account.into())),
+            ))
+            .await;
+    }
+
+    /// Broadcast an `#identity` event.
+    pub async fn identity(&self, identity: impl Into<sync::subscribe_repos::Identity>) {
+        let _ = self
+            .tx
+            .send(FirehoseMessage::Broadcast(
+                sync::subscribe_repos::Message::Identity(Box::new(identity.into())),
             ))
             .await;
     }
@@ -42,7 +58,19 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
                     let enc = serde_ipld_dagcbor::to_vec(&msg).unwrap().into_boxed_slice();
                     history.push_back(enc.clone());
 
-                    info!("Broadcasting message ({} bytes)", enc.len());
+                    info!(
+                        "Broadcasting message {} ({} bytes)",
+                        match msg {
+                            sync::subscribe_repos::Message::Account(_) => "#account",
+                            sync::subscribe_repos::Message::Commit(_) => "#commit",
+                            sync::subscribe_repos::Message::Handle(_) => "#handle",
+                            sync::subscribe_repos::Message::Identity(_) => "#identity",
+                            sync::subscribe_repos::Message::Info(_) => "#info",
+                            sync::subscribe_repos::Message::Migrate(_) => "#migrate",
+                            sync::subscribe_repos::Message::Tombstone(_) => "#tombstone",
+                        },
+                        enc.len()
+                    );
                 }
                 FirehoseMessage::Connect(ws) => {
                     clients.push(ws);

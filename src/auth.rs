@@ -3,12 +3,8 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use atrium_repo::{
-    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore},
-    Cid,
-};
+use atrium_repo::blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore};
 use axum::extract::FromRequestParts;
-use serde::{Deserialize, Serialize};
 
 use crate::{AppState, Result};
 
@@ -18,8 +14,12 @@ pub struct AuthenticatedUser {
 }
 
 impl AuthenticatedUser {
+    pub fn did(&self) -> String {
+        self.did.clone()
+    }
+
     /// Retrieve a handle to the backing storage for the user
-    pub async fn storage(&self) -> Result<(impl AsyncBlockStoreRead + AsyncBlockStoreWrite, Cid)> {
+    pub async fn storage(&self) -> Result<impl AsyncBlockStoreRead + AsyncBlockStoreWrite> {
         let store = CarStore::open(
             tokio::fs::File::open(self.storage.clone())
                 .await
@@ -27,9 +27,8 @@ impl AuthenticatedUser {
         )
         .await
         .map_err(anyhow::Error::new)?;
-        let root = store.roots().next().context("no roots found in storage")?;
 
-        Ok((store, root))
+        Ok(store)
     }
 }
 
@@ -56,7 +55,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         let did = did.context("session not found")?;
 
         Ok(AuthenticatedUser {
-            storage: state.config.did.path.join(&did),
+            storage: state.config.repo.path.join(&did),
             did,
         })
     }

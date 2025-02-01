@@ -149,7 +149,7 @@ async fn run() -> anyhow::Result<()> {
         (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
     };
 
-    tokio::fs::create_dir_all(&config.did.path).await?;
+    tokio::fs::create_dir_all(&config.repo.path).await?;
     tokio::fs::create_dir_all(&config.plc.path).await?;
 
     let cred =

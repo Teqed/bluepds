@@ -4,7 +4,7 @@ use serde::Deserialize;
 use url::Url;
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct DidConfig {
+pub struct RepoConfig {
     pub path: PathBuf,
 }
 
@@ -25,8 +25,8 @@ pub struct AppConfig {
     pub listen_address: Option<SocketAddr>,
     /// The PLC configuration block.
     pub plc: PlcConfig,
-    /// The DID configuration block.
-    pub did: DidConfig,
+    /// The repo configuration block.
+    pub repo: RepoConfig,
     /// The sqlite database connection options.
     pub db: String,
 }

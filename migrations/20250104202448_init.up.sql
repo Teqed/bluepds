@@ -1,7 +1,8 @@
 CREATE TABLE IF NOT EXISTS accounts (
     did TEXT PRIMARY KEY NOT NULL,
-    password TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
+    password TEXT NOT NULL,
+    root TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
