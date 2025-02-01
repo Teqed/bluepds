@@ -176,14 +176,9 @@ async fn run() -> anyhow::Result<()> {
     // Required endpoints:
     // UG /xrpc/_health (undocumented, but impl by reference PDS)
     //
-    // com.atproto.identity:
-    //   - Table: Resolve handle -> DID
     // UG /xrpc/com.atproto.identity.resolveHandle
     // UP /xrpc/com.atproto.identity.updateHandle
     //
-    // com.atproto.server:
-    //   - Table: Invitation code expiration list
-    //   - Table: Private account details by DID (e.g. password, email)
     // UG /xrpc/com.atproto.server.describeServer
     // UP /xrpc/com.atproto.server.createAccount
     // AP /xrpc/com.atproto.server.createInviteCode

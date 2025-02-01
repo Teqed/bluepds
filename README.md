@@ -1,6 +1,37 @@
 # Bluesky PDS
 This is a barebones implementation of a ATProto PDS using [Axum](https://github.com/tokio-rs/axum) and [Azure app services](https://learn.microsoft.com/en-us/azure/app-service/overview).
 
+## To-do
+- [ ] UG /xrpc/_health (undocumented, but impl by reference PDS)
+- com.atproto.identity
+    - [ ] UG /xrpc/com.atproto.identity.resolveHandle
+    - [ ] UP /xrpc/com.atproto.identity.updateHandle
+- com.atproto.server
+    - [X] UG /xrpc/com.atproto.server.describeServer
+    - [X] UP /xrpc/com.atproto.server.createAccount
+    - [X] AP /xrpc/com.atproto.server.createInviteCode
+    - [X] UP /xrpc/com.atproto.server.createSession
+    - [ ] UG /xrpc/com.atproto.server.getSession
+- com.atproto.repo
+    - [ ] AP /xrpc/com.atproto.repo.applyWrites
+    - [ ] AP /xrpc/com.atproto.repo.createRecord
+    - [ ] AP /xrpc/com.atproto.repo.putRecord
+    - [ ] AP /xrpc/com.atproto.repo.deleteRecord
+    - [ ] UG /xrpc/com.atproto.repo.describeRepo
+    - [ ] UG /xrpc/com.atproto.repo.getRecord
+    - [ ] UG /xrpc/com.atproto.repo.listRecords
+    - [ ] AP /xrpc/com.atproto.repo.uploadBlob
+- com.atproto.sync
+    - [ ] UG /xrpc/com.atproto.sync.getBlob
+    - [ ] UG /xrpc/com.atproto.sync.getBlocks
+    - [ ] UG /xrpc/com.atproto.sync.getLatestCommit
+    - [ ] UG /xrpc/com.atproto.sync.getRecord
+    - [ ] UG /xrpc/com.atproto.sync.getRepoStatus
+    - [ ] UG /xrpc/com.atproto.sync.getRepo
+    - [ ] UG /xrpc/com.atproto.sync.listBlobs
+    - [ ] UG /xrpc/com.atproto.sync.listRepos
+    - [ ] UG /xrpc/com.atproto.sync.subscribeRepos
+
 ## Quick Start
 ```
 # Install sqlx CLI at https://github.com/launchbadge/sqlx/tree/main/sqlx-cli
