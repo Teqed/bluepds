@@ -2,20 +2,25 @@
 
 use std::path::PathBuf;
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use atrium_repo::blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore};
-use axum::extract::FromRequestParts;
+use axum::{extract::FromRequestParts, http::StatusCode};
 
-use crate::{AppState, Result};
+use crate::{AppState, Error, Result};
 
 pub struct AuthenticatedUser {
     did: String,
+    session: String,
     storage: PathBuf,
 }
 
 impl AuthenticatedUser {
     pub fn did(&self) -> String {
         self.did.clone()
+    }
+
+    pub fn session(&self) -> String {
+        self.session.clone()
     }
 
     /// Retrieve a handle to the backing storage for the user
@@ -45,18 +50,24 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                 .and_then(|auth| auth.strip_prefix("Bearer "))
         });
 
-        let session_id = session_id.context("missing authorization header")?;
+        if let Some(session_id) = session_id {
+            let did = sqlx::query_scalar!(r#"SELECT did FROM sessions WHERE id = ?"#, session_id)
+                .fetch_optional(&state.db)
+                .await
+                .context("failed to query session")?;
 
-        let did = sqlx::query_scalar!(r#"SELECT did FROM sessions WHERE id = ?"#, session_id)
-            .fetch_optional(&state.db)
-            .await
-            .context("failed to query session")?;
+            let did = did.context("session not found")?;
 
-        let did = did.context("session not found")?;
-
-        Ok(AuthenticatedUser {
-            storage: state.config.repo.path.join(&did),
-            did,
-        })
+            Ok(AuthenticatedUser {
+                storage: state.config.repo.path.join(&did),
+                session: session_id.to_string(),
+                did,
+            })
+        } else {
+            Err(Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                anyhow!("no authorization token provided"),
+            ))
+        }
     }
 }

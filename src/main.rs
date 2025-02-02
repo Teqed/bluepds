@@ -183,7 +183,7 @@ async fn run() -> anyhow::Result<()> {
     // UP /xrpc/com.atproto.server.createAccount
     // AP /xrpc/com.atproto.server.createInviteCode
     // UP /xrpc/com.atproto.server.createSession
-    // UG /xrpc/com.atproto.server.getSession
+    // AG /xrpc/com.atproto.server.getSession
     //
     // AP /xrpc/com.atproto.repo.applyWrites
     // AP /xrpc/com.atproto.repo.createRecord

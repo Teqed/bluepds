@@ -13,6 +13,7 @@ use atrium_repo::{
 };
 use axum::{
     extract::State,
+    http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
@@ -24,7 +25,8 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    config::AppConfig, firehose::FirehoseProducer, AppState, Db, Result, RotationKey, SigningKey,
+    auth::AuthenticatedUser, config::AppConfig, firehose::FirehoseProducer, AppState, Db, Error,
+    Result, RotationKey, SigningKey,
 };
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -357,11 +359,13 @@ async fn create_session(
     let account = if let Some(account) = account {
         account
     } else {
-        // TODO: Throw a 401
         // SEC: We need to call the below `verify_password` function even if the account is not valid.
         // This is vulnerable to a timing attack where an attacker can determine if an account exists
         // by timing how long it takes for us to generate a response.
-        return Err(anyhow!("invalid credentials").into());
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("failed to validate credentials"),
+        ));
     };
 
     match argon2::Argon2::default().verify_password(
@@ -370,8 +374,10 @@ async fn create_session(
     ) {
         Ok(_) => {}
         Err(e) => {
-            info!("failed to verify password: {:?}", e);
-            return Err(anyhow!("invalid credentials").into());
+            return Err(Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                anyhow!("failed to validate credentials"),
+            ));
         }
     }
 
@@ -408,6 +414,56 @@ async fn create_session(
     ))
 }
 
+async fn get_session(
+    user: AuthenticatedUser,
+    State(db): State<Db>,
+) -> Result<Json<server::get_session::Output>> {
+    let did = user.did();
+    let session_id = user.session();
+
+    let session = sqlx::query!(
+        r#"
+        SELECT s.id, s.did, a.email, (
+            SELECT h.handle
+            FROM handles h
+            WHERE h.did = s.did
+            ORDER BY h.created_at ASC
+            LIMIT 1
+        ) AS handle
+        FROM sessions s
+        JOIN accounts a ON s.did = a.did
+        WHERE s.id = ?
+        AND s.did = ?
+        "#,
+        session_id,
+        did
+    )
+    .fetch_optional(&db)
+    .await
+    .context("failed to fetch session")?;
+
+    if let Some(session) = session {
+        Ok(Json(
+            server::get_session::OutputData {
+                active: Some(true),
+                did: Did::from_str(&did).unwrap(),
+                did_doc: None,
+                email: Some(session.email),
+                email_auth_factor: None,
+                email_confirmed: None,
+                handle: Handle::new(session.handle).unwrap(),
+                status: None,
+            }
+            .into(),
+        ))
+    } else {
+        Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("session not found"),
+        ))
+    }
+}
+
 async fn describe_server(
     State(config): State<AppConfig>,
 ) -> Result<Json<server::describe_server::Output>> {
@@ -428,7 +484,7 @@ pub fn routes() -> Router<AppState> {
     // UG /xrpc/com.atproto.server.describeServer
     // UP /xrpc/com.atproto.server.createAccount
     // UP /xrpc/com.atproto.server.createSession
-    // UG /xrpc/com.atproto.server.getSession
+    // AG /xrpc/com.atproto.server.getSession
     // AP /xrpc/com.atproto.server.createInviteCode
     Router::new()
         .route(
@@ -443,6 +499,7 @@ pub fn routes() -> Router<AppState> {
             concat!("/", server::create_session::NSID),
             post(create_session),
         )
+        .route(concat!("/", server::get_session::NSID), get(get_session))
         .route(
             concat!("/", server::create_invite_code::NSID),
             post(create_invite_code),

@@ -11,7 +11,7 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [X] UP /xrpc/com.atproto.server.createAccount
     - [X] AP /xrpc/com.atproto.server.createInviteCode
     - [X] UP /xrpc/com.atproto.server.createSession
-    - [ ] UG /xrpc/com.atproto.server.getSession
+    - [X] AG /xrpc/com.atproto.server.getSession
 - com.atproto.repo
     - [ ] AP /xrpc/com.atproto.repo.applyWrites
     - [ ] AP /xrpc/com.atproto.repo.createRecord
