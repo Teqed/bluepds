@@ -1,4 +1,8 @@
-use axum::{http::StatusCode, response::IntoResponse};
+use axum::{
+    body::Body,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use thiserror::Error;
 use tracing::error;
 
@@ -47,9 +51,15 @@ impl IntoResponse for Error {
         // This is insecure for production builds, so we'll return an empty body if this
         // is a release build.
         if cfg!(debug_assertions) {
-            (self.status, format!("{:?}", self.err)).into_response()
+            Response::builder()
+                .status(self.status)
+                .body(Body::new(format!("{:?}", self.err)))
+                .unwrap()
         } else {
-            self.status.into_response()
+            Response::builder()
+                .status(self.status)
+                .body(Body::empty())
+                .unwrap()
         }
     }
 }
