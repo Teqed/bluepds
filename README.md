@@ -22,15 +22,15 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [ ] UG /xrpc/com.atproto.repo.listRecords
     - [ ] AP /xrpc/com.atproto.repo.uploadBlob
 - com.atproto.sync
-    - [ ] UG /xrpc/com.atproto.sync.getBlob
+    - [X] UG /xrpc/com.atproto.sync.getBlob
     - [ ] UG /xrpc/com.atproto.sync.getBlocks
-    - [ ] UG /xrpc/com.atproto.sync.getLatestCommit
+    - [X] UG /xrpc/com.atproto.sync.getLatestCommit
     - [ ] UG /xrpc/com.atproto.sync.getRecord
     - [ ] UG /xrpc/com.atproto.sync.getRepoStatus
     - [ ] UG /xrpc/com.atproto.sync.getRepo
     - [ ] UG /xrpc/com.atproto.sync.listBlobs
     - [ ] UG /xrpc/com.atproto.sync.listRepos
-    - [ ] UG /xrpc/com.atproto.sync.subscribeRepos
+    - [X] UG /xrpc/com.atproto.sync.subscribeRepos
 
 ## Quick Start
 ```

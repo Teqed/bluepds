@@ -41,5 +41,13 @@ async fn create_record(
 }
 
 pub fn routes() -> Router<AppState> {
+    // AP /xrpc/com.atproto.repo.applyWrites
+    // AP /xrpc/com.atproto.repo.createRecord
+    // AP /xrpc/com.atproto.repo.putRecord
+    // AP /xrpc/com.atproto.repo.deleteRecord
+    // UG /xrpc/com.atproto.repo.describeRepo
+    // UG /xrpc/com.atproto.repo.getRecord
+    // UG /xrpc/com.atproto.repo.listRecords
+    // AP /xrpc/com.atproto.repo.uploadBlob
     Router::new().route(concat!("/", repo::create_record::NSID), get(create_record))
 }
