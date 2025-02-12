@@ -1,8 +1,11 @@
-use std::str::FromStr;
+use std::{collections::HashSet, str::FromStr};
 
 use anyhow::Context;
-use atrium_api::com::atproto::sync;
-use atrium_repo::{blockstore::AsyncBlockStoreRead, Cid};
+use atrium_api::{com::atproto::sync, types::string::Did};
+use atrium_repo::{
+    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
+    Cid, Repository,
+};
 use axum::{
     body::Bytes,
     extract::{Query, State, WebSocketUpgrade},
@@ -11,32 +14,20 @@ use axum::{
     Json, Router,
 };
 use constcat::concat;
+use futures::stream::TryStreamExt;
 
-use crate::{config::AppConfig, firehose::FirehoseProducer, storage, AppState, Db, Result};
+use crate::{
+    config::{self, AppConfig},
+    firehose::FirehoseProducer,
+    storage, AppState, Db, Result,
+};
 
-async fn get_blob(
-    State(config): State<AppConfig>,
-    Query(input): Query<sync::get_blob::Parameters>,
-) -> Result<Bytes> {
-    let mut repo = storage::open_store(&config.repo, &input.did)
-        .await
-        .context("failed to open repo")?;
-
-    let blob = repo
-        .read_block(input.cid.as_ref())
-        .await
-        .context("failed to find blob")?;
-
-    Ok(Bytes::copy_from_slice(&blob))
-}
-
-async fn get_latest_commit(
-    State(config): State<AppConfig>,
-    State(db): State<Db>,
-    Query(input): Query<sync::get_latest_commit::Parameters>,
-) -> Result<Json<sync::get_latest_commit::Output>> {
-    let did = input.did.as_str();
-
+async fn open_store<'a, 'b>(
+    config: &config::RepoConfig,
+    db: &Db,
+    did: impl Into<String>,
+) -> anyhow::Result<(impl AsyncBlockStoreRead + AsyncBlockStoreWrite, Cid)> {
+    let did = did.into();
     let cid = sqlx::query_scalar!(
         r#"
         SELECT root FROM accounts
@@ -44,16 +35,48 @@ async fn get_latest_commit(
         "#,
         did
     )
-    .fetch_one(&db)
+    .fetch_one(db)
     .await
     .context("failed to query database")?;
 
     let cid = Cid::from_str(&cid).expect("cid conversion unexpectedly failed");
 
-    let repo = storage::open_repo(&config.repo, did, cid)
+    let store = storage::open_store(&config, did)
         .await
-        .context("failed to open repo")?;
+        .context("failed to open store")?;
 
+    Ok((store, cid))
+}
+
+async fn open_repo<'a, 'b>(
+    config: &config::RepoConfig,
+    db: &Db,
+    did: impl Into<String>,
+) -> anyhow::Result<Repository<impl AsyncBlockStoreRead + AsyncBlockStoreWrite>> {
+    let did = did.into();
+    let (store, root) = open_store(config, db, did.clone()).await?;
+    let repo = Repository::open(store, root).await?;
+
+    Ok(repo)
+}
+
+async fn get_blob(
+    State(config): State<AppConfig>,
+    Query(input): Query<sync::get_blob::Parameters>,
+) -> Result<Bytes> {
+    todo!()
+}
+
+async fn get_latest_commit(
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    Query(input): Query<sync::get_latest_commit::Parameters>,
+) -> Result<Json<sync::get_latest_commit::Output>> {
+    let repo = open_repo(&config.repo, &db, input.did.as_str())
+        .await
+        .context("failed to open repository")?;
+
+    let cid = repo.root();
     let commit = repo.commit();
 
     Ok(Json(
@@ -70,7 +93,85 @@ async fn get_record(
     State(db): State<Db>,
     Query(input): Query<sync::get_record::Parameters>,
 ) -> Result<Bytes> {
-    todo!()
+    let (mut store, root) = open_store(&config.repo, &db, input.did.as_str())
+        .await
+        .context("failed to open store")?;
+
+    let mut repo = Repository::open(&mut store, root)
+        .await
+        .context("failed to open repo")?;
+
+    let key = format!("{}/{}", input.collection.as_str(), input.rkey);
+
+    let mut contents = Vec::new();
+    let mut ret_store = CarStore::create(std::io::Cursor::new(&mut contents))
+        .await
+        .context("failed to create car store")?;
+
+    repo.extract_raw_into(&key, &mut ret_store)
+        .await
+        .context("failed to extract records")?;
+
+    ret_store.set_root(root).await.unwrap();
+    Ok(Bytes::copy_from_slice(contents.as_slice()))
+}
+
+// HACK: `limit` may be passed as a string, so we must treat it as one.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListReposParameters {
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub cursor: core::option::Option<String>,
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub limit: core::option::Option<String>,
+}
+
+async fn list_repos(
+    State(db): State<Db>,
+    Query(input): Query<ListReposParameters>,
+) -> Result<Json<sync::list_repos::Output>> {
+    struct Record {
+        did: String,
+        root: String,
+        rev: String,
+    }
+
+    let r = if let Some(cursor) = &input.cursor {
+        let r = sqlx::query_as!(
+            Record,
+            r#"SELECT did, root, rev FROM accounts WHERE did > ? LIMIT 1000"#,
+            cursor
+        )
+        .fetch(&db);
+
+        r.try_collect::<Vec<_>>()
+            .await
+            .context("failed to fetch profiles")?
+    } else {
+        let r =
+            sqlx::query_as!(Record, r#"SELECT did, root, rev FROM accounts LIMIT 1000"#).fetch(&db);
+
+        r.try_collect::<Vec<_>>()
+            .await
+            .context("failed to fetch profiles")?
+    };
+
+    let cursor = r.last().map(|r| r.did.clone());
+    let repos = r
+        .into_iter()
+        .map(|r| {
+            sync::list_repos::RepoData {
+                active: Some(true),
+                did: Did::new(r.did).unwrap(),
+                head: atrium_api::types::string::Cid::new(Cid::from_str(&r.root).unwrap()),
+                rev: r.rev,
+                status: None,
+            }
+            .into()
+        })
+        .collect::<Vec<_>>();
+
+    Ok(Json(sync::list_repos::OutputData { cursor, repos }.into()))
 }
 
 async fn subscribe_repos(
@@ -99,6 +200,7 @@ pub fn routes() -> axum::Router<AppState> {
             get(get_latest_commit),
         )
         .route(concat!("/", sync::get_record::NSID), get(get_record))
+        .route(concat!("/", sync::list_repos::NSID), get(list_repos))
         .route(
             concat!("/", sync::subscribe_repos::NSID),
             get(subscribe_repos),

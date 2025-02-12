@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context};
 use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use atrium_api::{
     com::atproto::server,
-    types::string::{Datetime, Did, Handle},
+    types::string::{Datetime, Did, Handle, Tid},
 };
 use atrium_crypto::keypair::Did as _;
 use atrium_repo::{
@@ -191,7 +191,7 @@ async fn create_account(
 
     // Write out an initial commit for the user.
     // https://atproto.com/guides/account-lifecycle
-    let cid = async {
+    let (cid, rev) = async {
         let file = tokio::fs::File::create(config.repo.path.join(format!("{}.car", did_hash)))
             .await
             .context("failed to create repo file")?;
@@ -214,24 +214,21 @@ async fn create_account(
             .context("failed to attach signature to root commit")?;
 
         let root = repo.root();
+        let rev = repo.commit().rev();
         let cids = diff.blocks().chain([root]).collect::<Vec<_>>();
 
-        store
-            .set_root(root)
-            .await
-            .context("failed to set root CID")?;
-
-        Ok::<Cid, anyhow::Error>(root)
+        Ok::<(Cid, Tid), anyhow::Error>((root, rev))
     }
     .await
     .context("failed to create user repo")?;
 
     let cid = cid.to_string();
+    let rev = rev.as_str();
 
     sqlx::query!(
         r#"
-        INSERT OR ROLLBACK INTO accounts (did, email, password, root, created_at)
-            VALUES (?, ?, ?, ?, datetime('now'));
+        INSERT OR ROLLBACK INTO accounts (did, email, password, root, rev, created_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'));
 
         INSERT OR ROLLBACK INTO handles (did, handle, created_at)
             VALUES (?, ?, datetime('now'));
@@ -244,6 +241,7 @@ async fn create_account(
         email,
         pass,
         cid,
+        rev,
         did,
         handle
     )

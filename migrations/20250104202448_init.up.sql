@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     email TEXT NOT NULL UNIQUE,
     password TEXT NOT NULL,
     root TEXT NOT NULL,
+    rev TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

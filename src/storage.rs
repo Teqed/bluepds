@@ -1,25 +1,30 @@
 //! ATProto user repository datastore functionality.
 
+use std::str::FromStr;
+
 use anyhow::{Context, Result};
 use atrium_repo::{
     blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore},
     Cid, Repository,
 };
 
-use crate::config::RepoConfig;
+use crate::{config::RepoConfig, Db};
 
 pub async fn open_store(
     config: &RepoConfig,
-    did: impl AsRef<str>,
+    did: impl Into<String>,
 ) -> Result<impl AsyncBlockStoreRead + AsyncBlockStoreWrite> {
-    let did = did.as_ref();
+    let did = did.into();
     let id = did
         .strip_prefix("did:plc:")
         .context("did in unknown format")?;
 
     let p = config.path.join(id).with_extension("car");
 
-    let f = tokio::fs::File::open(p)
+    let f = tokio::fs::File::options()
+        .read(true)
+        .write(true)
+        .open(p)
         .await
         .context("failed to open repository file")?;
 
@@ -28,11 +33,32 @@ pub async fn open_store(
         .context("failed to open car store")?)
 }
 
+pub async fn open_repo_db(
+    config: &RepoConfig,
+    db: &Db,
+    did: impl Into<String>,
+) -> Result<Repository<impl AsyncBlockStoreRead + AsyncBlockStoreWrite>> {
+    let did = did.into();
+    let cid = sqlx::query_scalar!(
+        r#"
+        SELECT root FROM accounts
+        WHERE did = ?
+        "#,
+        did
+    )
+    .fetch_one(db)
+    .await
+    .context("failed to query database")?;
+
+    open_repo(config, did, Cid::from_str(&cid).unwrap()).await
+}
+
 pub async fn open_repo(
     config: &RepoConfig,
-    did: impl AsRef<str>,
+    did: impl Into<String>,
     cid: Cid,
 ) -> Result<Repository<impl AsyncBlockStoreRead + AsyncBlockStoreWrite>> {
+    let did = did.into();
     let store = open_store(config, did)
         .await
         .context("failed to open storage")?;

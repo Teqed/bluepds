@@ -16,7 +16,7 @@ use firehose::FirehoseProducer;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use tokio::net::TcpListener;
-use tower_http::trace::TraceLayer;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use anyhow::Context;
 use tracing::{info, warn};
@@ -209,6 +209,7 @@ async fn run() -> anyhow::Result<()> {
         .route("/", get(index))
         .nest("/xrpc", endpoints::routes())
         // .layer(RateLimitLayer::new(30, Duration::from_secs(30)))
+        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(AppState {
             cred,

@@ -14,7 +14,7 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [X] AG /xrpc/com.atproto.server.getSession
 - com.atproto.repo
     - [ ] AP /xrpc/com.atproto.repo.applyWrites
-    - [ ] AP /xrpc/com.atproto.repo.createRecord
+    - [X] AP /xrpc/com.atproto.repo.createRecord
     - [ ] AP /xrpc/com.atproto.repo.putRecord
     - [ ] AP /xrpc/com.atproto.repo.deleteRecord
     - [ ] UG /xrpc/com.atproto.repo.describeRepo
@@ -25,11 +25,11 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [X] UG /xrpc/com.atproto.sync.getBlob
     - [ ] UG /xrpc/com.atproto.sync.getBlocks
     - [X] UG /xrpc/com.atproto.sync.getLatestCommit
-    - [ ] UG /xrpc/com.atproto.sync.getRecord
+    - [X] UG /xrpc/com.atproto.sync.getRecord
     - [ ] UG /xrpc/com.atproto.sync.getRepoStatus
     - [ ] UG /xrpc/com.atproto.sync.getRepo
     - [ ] UG /xrpc/com.atproto.sync.listBlobs
-    - [ ] UG /xrpc/com.atproto.sync.listRepos
+    - [X] UG /xrpc/com.atproto.sync.listRepos
     - [X] UG /xrpc/com.atproto.sync.subscribeRepos
 
 ## Quick Start

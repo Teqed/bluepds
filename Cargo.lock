@@ -592,6 +592,7 @@ dependencies = [
  "clap-verbosity-flag",
  "constcat",
  "figment",
+ "futures",
  "rand 0.8.5",
  "serde",
  "serde_ipld_dagcbor",
