@@ -47,7 +47,7 @@ impl FirehoseProducer {
             .await;
     }
 
-    pub async fn connect(&self, ws: WebSocket) {
+    pub async fn client_connection(&self, ws: WebSocket) {
         let _ = self.tx.send(FirehoseMessage::Connect(ws)).await;
     }
 }

@@ -179,7 +179,7 @@ async fn subscribe_repos(
     State(fh): State<FirehoseProducer>,
 ) -> impl IntoResponse {
     ws.on_upgrade(|ws| async move {
-        fh.connect(ws).await;
+        fh.client_connection(ws).await;
     })
 }
 

@@ -42,10 +42,9 @@ async fn create_record(
         .context("failed to write signed commit")?;
 
     let mut contents = Vec::new();
-    let mut ret_store =
-        CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [repo.root()])
-            .await
-            .context("failed to create car store")?;
+    let mut ret_store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [rcid])
+        .await
+        .context("failed to create car store")?;
 
     repo.extract_raw_into(&key, &mut ret_store)
         .await
@@ -55,15 +54,15 @@ async fn create_record(
 
     let uri = format!("at://{}/{}", user.did(), &key);
 
-    let cid_str = repo.root().to_string();
-    let did_str = user.did();
     let rev_str = repo.commit().rev().to_string();
+    let cid_str = rcid.to_string();
+    let did_str = user.did();
 
     sqlx::query!(
         r#"UPDATE accounts SET root = ?, rev = ? WHERE did = ?"#,
         cid_str,
-        did_str,
         rev_str,
+        did_str,
     )
     .execute(&db)
     .await
@@ -74,7 +73,7 @@ async fn create_record(
             cid: atrium_api::types::string::Cid::new(rcid),
             commit: Some(
                 CommitMetaData {
-                    cid: atrium_api::types::string::Cid::new(repo.root()),
+                    cid: atrium_api::types::string::Cid::new(rcid),
                     rev: repo.commit().rev().to_string(),
                 }
                 .into(),
