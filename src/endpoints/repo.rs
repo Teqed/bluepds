@@ -37,23 +37,19 @@ async fn create_record(
         .context("failed to sign commit")?;
 
     let rcid = builder
-        .sign(sig)
+        .finalize(sig)
         .await
         .context("failed to write signed commit")?;
 
     let mut contents = Vec::new();
-    let mut ret_store = CarStore::create(std::io::Cursor::new(&mut contents))
-        .await
-        .context("failed to create car store")?;
+    let mut ret_store =
+        CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [repo.root()])
+            .await
+            .context("failed to create car store")?;
 
     repo.extract_raw_into(&key, &mut ret_store)
         .await
         .context("failed to extract commits")?;
-
-    ret_store
-        .set_root(repo.root())
-        .await
-        .context("failed to set repo root")?;
 
     // TODO: Broadcast `ret_store` on the firehose.
 

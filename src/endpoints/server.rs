@@ -8,7 +8,7 @@ use atrium_api::{
 };
 use atrium_crypto::keypair::Did as _;
 use atrium_repo::{
-    blockstore::{AsyncBlockStoreWrite, DAG_CBOR, SHA2_256},
+    blockstore::{AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
     Cid, Repository,
 };
 use axum::{
@@ -17,69 +17,19 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use base64::Engine;
 use constcat::concat;
-use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use tokio::fs::File;
 use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    auth::AuthenticatedUser, config::AppConfig, firehose::FirehoseProducer, AppState, Db, Error,
-    Result, RotationKey, SigningKey,
+    auth::AuthenticatedUser,
+    config::AppConfig,
+    firehose::FirehoseProducer,
+    plc::{PlcOperation, PlcService, PlcVerificationMethod},
+    AppState, Db, Error, Result, RotationKey, SigningKey,
 };
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase", tag = "type")]
-enum PlcService {
-    #[serde(rename = "AtprotoPersonalDataServer")]
-    Pds { endpoint: String },
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct PlcVerificationMethod {
-    atproto: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct PlcOperation {
-    #[serde(rename = "type")]
-    typ: String,
-    rotation_keys: Vec<String>,
-    verification_methods: Vec<PlcVerificationMethod>,
-    also_known_as: Vec<String>,
-    services: HashMap<String, PlcService>,
-    prev: Option<String>,
-}
-
-impl PlcOperation {
-    fn sign(self, sig: Vec<u8>) -> SignedPlcOperation {
-        SignedPlcOperation {
-            typ: self.typ,
-            rotation_keys: self.rotation_keys,
-            verification_methods: self.verification_methods,
-            also_known_as: self.also_known_as,
-            services: self.services,
-            prev: self.prev,
-            sig: base64::prelude::BASE64_URL_SAFE.encode(sig),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct SignedPlcOperation {
-    #[serde(rename = "type")]
-    typ: String,
-    rotation_keys: Vec<String>,
-    verification_methods: Vec<PlcVerificationMethod>,
-    also_known_as: Vec<String>,
-    services: HashMap<String, PlcService>,
-    prev: Option<String>,
-    sig: String,
-}
 
 async fn create_invite_code(
     State(config): State<AppConfig>,
@@ -191,16 +141,15 @@ async fn create_account(
 
     // Write out an initial commit for the user.
     // https://atproto.com/guides/account-lifecycle
-    let (cid, rev) = async {
+    let (cid, rev, store) = async {
         let file = tokio::fs::File::create(config.repo.path.join(format!("{}.car", did_hash)))
             .await
             .context("failed to create repo file")?;
         let mut store = atrium_repo::blockstore::CarStore::create(file)
             .await
             .context("failed to create carstore")?;
-        let mut diff = atrium_repo::blockstore::DiffBlockStore::wrap(&mut store);
 
-        let repo_builder = Repository::create(&mut diff, Did::from_str(&did).unwrap())
+        let repo_builder = Repository::create(&mut store, Did::from_str(&did).unwrap())
             .await
             .context("failed to initialize user repo")?;
 
@@ -209,15 +158,14 @@ async fn create_account(
             .sign(&repo_builder.hash())
             .context("failed to sign root commit")?;
         let repo = repo_builder
-            .sign(sig)
+            .finalize(sig)
             .await
             .context("failed to attach signature to root commit")?;
 
         let root = repo.root();
         let rev = repo.commit().rev();
-        let cids = diff.blocks().chain([root]).collect::<Vec<_>>();
 
-        Ok::<(Cid, Tid), anyhow::Error>((root, rev))
+        Ok::<(Cid, Tid, CarStore<File>), anyhow::Error>((root, rev, store))
     }
     .await
     .context("failed to create user repo")?;
@@ -276,12 +224,10 @@ async fn create_account(
         .await
         .context("failed to create did doc")?;
 
-    let cid = doc
+    let _cid = doc
         .write_block(DAG_CBOR, SHA2_256, &op)
         .await
         .context("failed to write genesis commit")?;
-
-    doc.set_root(cid).await.context("failed to set root")?;
 
     // The account is fully created. Commit the SQL transaction to the database.
     tx.commit().await.context("failed to commit transaction")?;
@@ -310,6 +256,8 @@ async fn create_account(
         },
     )
     .await;
+
+    // TODO: Broadcast the `#commit` event using `store`.
 
     info!("new account: {did} {email} {pass}");
 

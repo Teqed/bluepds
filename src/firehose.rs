@@ -9,10 +9,7 @@ enum FirehoseMessage {
     Connect(axum::extract::ws::WebSocket),
 }
 
-pub struct Commit {
-    /// A CAR file containing the serialized blocks
-    pub blocks: Vec<u8>,
-}
+pub struct Commit {}
 
 #[derive(Clone, Debug)]
 pub struct FirehoseProducer {
@@ -36,6 +33,16 @@ impl FirehoseProducer {
             .tx
             .send(FirehoseMessage::Broadcast(
                 sync::subscribe_repos::Message::Identity(Box::new(identity.into())),
+            ))
+            .await;
+    }
+
+    /// Broadcast a `#commit` event.
+    pub async fn commit(&self, commit: impl Into<sync::subscribe_repos::Commit>) {
+        let _ = self
+            .tx
+            .send(FirehoseMessage::Broadcast(
+                sync::subscribe_repos::Message::Commit(Box::new(commit.into())),
             ))
             .await;
     }

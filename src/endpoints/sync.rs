@@ -15,6 +15,7 @@ use axum::{
 };
 use constcat::concat;
 use futures::stream::TryStreamExt;
+use tracing::info;
 
 use crate::{
     config::{self, AppConfig},
@@ -104,7 +105,7 @@ async fn get_record(
     let key = format!("{}/{}", input.collection.as_str(), input.rkey);
 
     let mut contents = Vec::new();
-    let mut ret_store = CarStore::create(std::io::Cursor::new(&mut contents))
+    let mut ret_store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [root])
         .await
         .context("failed to create car store")?;
 
@@ -112,7 +113,6 @@ async fn get_record(
         .await
         .context("failed to extract records")?;
 
-    ret_store.set_root(root).await.unwrap();
     Ok(Bytes::copy_from_slice(contents.as_slice()))
 }
 

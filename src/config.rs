@@ -5,12 +5,16 @@ use url::Url;
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct RepoConfig {
+    /// The path to the repository storage.
     pub path: PathBuf,
 }
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct PlcConfig {
+    /// The path to the local PLC cache.
     pub path: PathBuf,
+    /// Whether or not to write updates to the global PLC directory.
+    pub update: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]

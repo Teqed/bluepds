@@ -26,6 +26,7 @@ mod config;
 mod endpoints;
 mod error;
 mod firehose;
+mod plc;
 mod storage;
 
 pub type Result<T> = std::result::Result<T, error::Error>;
