@@ -1,17 +1,13 @@
 //! Authentication layers
 
-use std::path::PathBuf;
-
 use anyhow::{anyhow, Context};
-use atrium_repo::blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore};
 use axum::{extract::FromRequestParts, http::StatusCode};
 
-use crate::{AppState, Error, Result};
+use crate::{AppState, Error};
 
 pub struct AuthenticatedUser {
     did: String,
     session: String,
-    storage: PathBuf,
 }
 
 impl AuthenticatedUser {
@@ -21,19 +17,6 @@ impl AuthenticatedUser {
 
     pub fn session(&self) -> String {
         self.session.clone()
-    }
-
-    /// Retrieve a handle to the backing storage for the user
-    pub async fn storage(&self) -> Result<impl AsyncBlockStoreRead + AsyncBlockStoreWrite> {
-        let store = CarStore::open(
-            tokio::fs::File::open(self.storage.clone())
-                .await
-                .context("failed to open backing storage")?,
-        )
-        .await
-        .map_err(anyhow::Error::new)?;
-
-        Ok(store)
     }
 }
 
@@ -59,7 +42,6 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             let did = did.context("session not found")?;
 
             Ok(AuthenticatedUser {
-                storage: state.config.repo.path.join(&did),
                 session: session_id.to_string(),
                 did,
             })
