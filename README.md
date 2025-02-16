@@ -13,10 +13,10 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [X] UP /xrpc/com.atproto.server.createSession
     - [X] AG /xrpc/com.atproto.server.getSession
 - com.atproto.repo
-    - [ ] AP /xrpc/com.atproto.repo.applyWrites
+    - [X] AP /xrpc/com.atproto.repo.applyWrites
     - [X] AP /xrpc/com.atproto.repo.createRecord
-    - [ ] AP /xrpc/com.atproto.repo.putRecord
-    - [ ] AP /xrpc/com.atproto.repo.deleteRecord
+    - [X] AP /xrpc/com.atproto.repo.putRecord
+    - [X] AP /xrpc/com.atproto.repo.deleteRecord
     - [ ] UG /xrpc/com.atproto.repo.describeRepo
     - [ ] UG /xrpc/com.atproto.repo.getRecord
     - [ ] UG /xrpc/com.atproto.repo.listRecords
