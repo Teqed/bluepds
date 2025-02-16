@@ -11,6 +11,7 @@ use atrium_api::{
 use atrium_repo::{blockstore::CarStore, Cid};
 use axum::{
     extract::{Query, State},
+    http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
@@ -21,7 +22,7 @@ use crate::{
     auth::AuthenticatedUser,
     config::AppConfig,
     firehose::{self, FirehoseProducer},
-    storage, AppState, Db, Result, SigningKey,
+    storage, AppState, Db, Error, Result, SigningKey,
 };
 
 async fn swap_commit(
@@ -615,7 +616,10 @@ async fn get_record(
             .into(),
         ))
     } else {
-        return Err(anyhow!("failed to find record").into());
+        return Err(Error::with_status(
+            StatusCode::NOT_FOUND,
+            anyhow!("could not find the requested record"),
+        ));
     }
 }
 
