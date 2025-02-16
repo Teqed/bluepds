@@ -330,6 +330,7 @@ dependencies = [
  "futures",
  "ipld-core",
  "serde",
+ "serde_bytes",
  "serde_ipld_dagcbor",
  "sha2",
  "thiserror 1.0.69",

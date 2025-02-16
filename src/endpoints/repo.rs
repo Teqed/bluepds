@@ -623,6 +623,59 @@ async fn get_record(
     }
 }
 
+async fn list_records(
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    Query(input): Query<repo::list_records::Parameters>,
+) -> Result<Json<repo::list_records::Output>> {
+    // Lookup the DID by the provided handle.
+    let (did, _handle) = resolve_did(&db, &input.repo)
+        .await
+        .context("failed to resolve handle")?;
+
+    let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
+        .await
+        .context("failed to open user repo")?;
+
+    let mut keys = Vec::new();
+    let mut tree = repo.tree();
+
+    let mut it = Box::pin(tree.entries_prefixed(input.collection.as_str()));
+    while let Some((key, cid)) = it.try_next().await.context("failed to iterate keys")? {
+        keys.push((key, cid));
+    }
+
+    drop(it);
+
+    // TODO: Calculate the view on `keys` using `cursor` and `limit`.
+
+    let mut records = Vec::new();
+    for (key, cid) in &keys {
+        let value: serde_json::Value = repo
+            .get_raw(key)
+            .await
+            .context("failed to get record")?
+            .context("record not found")?;
+
+        records.push(
+            repo::list_records::RecordData {
+                cid: atrium_api::types::string::Cid::new(*cid),
+                uri: format!("at://{}/{}", did.as_str(), key),
+                value: value.try_into_unknown().unwrap(),
+            }
+            .into(),
+        )
+    }
+
+    Ok(Json(
+        repo::list_records::OutputData {
+            cursor: keys.last().map(|(k, _)| k.clone()),
+            records,
+        }
+        .into(),
+    ))
+}
+
 pub fn routes() -> Router<AppState> {
     // AP /xrpc/com.atproto.repo.applyWrites
     // AP /xrpc/com.atproto.repo.createRecord
@@ -639,4 +692,5 @@ pub fn routes() -> Router<AppState> {
         .route(concat!("/", repo::delete_record::NSID), post(delete_record))
         .route(concat!("/", repo::describe_repo::NSID), get(describe_repo))
         .route(concat!("/", repo::get_record::NSID), get(get_record))
+        .route(concat!("/", repo::list_records::NSID), get(list_records))
 }

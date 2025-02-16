@@ -19,7 +19,7 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [X] AP /xrpc/com.atproto.repo.deleteRecord
     - [X] UG /xrpc/com.atproto.repo.describeRepo
     - [X] UG /xrpc/com.atproto.repo.getRecord
-    - [ ] UG /xrpc/com.atproto.repo.listRecords
+    - [X] UG /xrpc/com.atproto.repo.listRecords
     - [ ] AP /xrpc/com.atproto.repo.uploadBlob
 - com.atproto.sync
     - [ ] UG /xrpc/com.atproto.sync.getBlob
