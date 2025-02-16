@@ -27,7 +27,7 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [X] UG /xrpc/com.atproto.sync.getLatestCommit
     - [X] UG /xrpc/com.atproto.sync.getRecord
     - [ ] UG /xrpc/com.atproto.sync.getRepoStatus
-    - [ ] UG /xrpc/com.atproto.sync.getRepo
+    - [X] UG /xrpc/com.atproto.sync.getRepo
     - [ ] UG /xrpc/com.atproto.sync.listBlobs
     - [X] UG /xrpc/com.atproto.sync.listRepos
     - [X] UG /xrpc/com.atproto.sync.subscribeRepos

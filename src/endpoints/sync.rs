@@ -108,6 +108,27 @@ async fn get_record(
     Ok(Bytes::from_owner(contents))
 }
 
+async fn get_repo(
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    Query(input): Query<sync::get_repo::Parameters>,
+) -> Result<Bytes> {
+    let mut repo = open_repo_db(&config.repo, &db, input.did.as_str())
+        .await
+        .context("failed to open repo")?;
+
+    let mut contents = Vec::new();
+    let mut store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [repo.root()])
+        .await
+        .context("failed to create car store")?;
+
+    repo.export_into(&mut store)
+        .await
+        .context("failed to extract records")?;
+
+    Ok(Bytes::from_owner(contents))
+}
+
 // HACK: `limit` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -205,6 +226,7 @@ pub fn routes() -> axum::Router<AppState> {
             get(get_latest_commit),
         )
         .route(concat!("/", sync::get_record::NSID), get(get_record))
+        .route(concat!("/", sync::get_repo::NSID), get(get_repo))
         .route(concat!("/", sync::list_repos::NSID), get(list_repos))
         .route(
             concat!("/", sync::subscribe_repos::NSID),
