@@ -1,10 +1,10 @@
-use std::{collections::HashSet, str::FromStr};
+use std::str::FromStr;
 
 use anyhow::Context;
 use atrium_api::{com::atproto::sync, types::string::Did};
 use atrium_repo::{
     blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
-    Cid, Repository,
+    Cid,
 };
 use axum::{
     body::Bytes,
@@ -15,51 +15,13 @@ use axum::{
 };
 use constcat::concat;
 use futures::stream::TryStreamExt;
-use tracing::info;
 
 use crate::{
-    config::{self, AppConfig},
+    config::AppConfig,
     firehose::FirehoseProducer,
-    storage, AppState, Db, Result,
+    storage::{open_repo_db, open_store},
+    AppState, Db, Result,
 };
-
-async fn open_store<'a, 'b>(
-    config: &config::RepoConfig,
-    db: &Db,
-    did: impl Into<String>,
-) -> anyhow::Result<(impl AsyncBlockStoreRead + AsyncBlockStoreWrite, Cid)> {
-    let did = did.into();
-    let cid = sqlx::query_scalar!(
-        r#"
-        SELECT root FROM accounts
-        WHERE did = ?
-        "#,
-        did
-    )
-    .fetch_one(db)
-    .await
-    .context("failed to query database")?;
-
-    let cid = Cid::from_str(&cid).expect("cid conversion unexpectedly failed");
-
-    let store = storage::open_store(&config, did)
-        .await
-        .context("failed to open store")?;
-
-    Ok((store, cid))
-}
-
-async fn open_repo<'a, 'b>(
-    config: &config::RepoConfig,
-    db: &Db,
-    did: impl Into<String>,
-) -> anyhow::Result<Repository<impl AsyncBlockStoreRead + AsyncBlockStoreWrite>> {
-    let did = did.into();
-    let (store, root) = open_store(config, db, did.clone()).await?;
-    let repo = Repository::open(store, root).await?;
-
-    Ok(repo)
-}
 
 async fn get_blob(
     State(config): State<AppConfig>,
@@ -73,7 +35,7 @@ async fn get_blocks(
     State(db): State<Db>,
     Query(input): Query<sync::get_blocks::Parameters>,
 ) -> Result<Bytes> {
-    let mut repo = open_repo(&config.repo, &db, input.did.as_str())
+    let mut repo = open_store(&config.repo, input.did.as_str())
         .await
         .context("failed to open repository")?;
 
@@ -83,14 +45,19 @@ async fn get_blocks(
         .expect("failed to create intermediate carstore");
 
     for cid in &input.cids {
-        // FIXME: I don't like this round tripping here. Could end up corrupting some data, probably.
-        if let Ok(Some(c)) = repo
-            .get_raw_cid::<serde_json::Value>(cid.as_ref().clone())
+        // SEC: This can potentially fetch stale blocks from a repository (e.g. those that were deleted).
+        // We'll want to prevent accesses to stale blocks eventually just to respect a user's right to be forgotten.
+        let _ = store
+            .write_block(
+                DAG_CBOR,
+                SHA2_256,
+                &repo
+                    .read_block(*cid.as_ref())
+                    .await
+                    .context("failed to read block")?,
+            )
             .await
-        {
-            let c = serde_ipld_dagcbor::to_vec(&c).context("failed to encode value")?;
-            let _ = store.write_block(DAG_CBOR, SHA2_256, &c).await;
-        }
+            .context("failed to write block")?;
     }
 
     Ok(Bytes::from_owner(mem))
@@ -101,7 +68,7 @@ async fn get_latest_commit(
     State(db): State<Db>,
     Query(input): Query<sync::get_latest_commit::Parameters>,
 ) -> Result<Json<sync::get_latest_commit::Output>> {
-    let repo = open_repo(&config.repo, &db, input.did.as_str())
+    let repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
         .context("failed to open repository")?;
 
@@ -122,20 +89,17 @@ async fn get_record(
     State(db): State<Db>,
     Query(input): Query<sync::get_record::Parameters>,
 ) -> Result<Bytes> {
-    let (mut store, root) = open_store(&config.repo, &db, input.did.as_str())
-        .await
-        .context("failed to open store")?;
-
-    let mut repo = Repository::open(&mut store, root)
+    let mut repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
         .context("failed to open repo")?;
 
     let key = format!("{}/{}", input.collection.as_str(), input.rkey);
 
     let mut contents = Vec::new();
-    let mut ret_store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [root])
-        .await
-        .context("failed to create car store")?;
+    let mut ret_store =
+        CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [repo.root()])
+            .await
+            .context("failed to create car store")?;
 
     repo.extract_raw_into(&key, &mut ret_store)
         .await
