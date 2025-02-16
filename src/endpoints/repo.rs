@@ -8,7 +8,10 @@ use axum::{extract::State, routing::post, Json, Router};
 use constcat::concat;
 
 use crate::{
-    auth::AuthenticatedUser, config::AppConfig, storage, AppState, Db, Result, SigningKey,
+    auth::AuthenticatedUser,
+    config::AppConfig,
+    firehose::{self, FirehoseProducer},
+    storage, AppState, Db, Result, SigningKey,
 };
 
 async fn swap_commit(
@@ -57,6 +60,7 @@ async fn apply_writes(
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
+    State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::apply_writes::Input>,
 ) -> Result<Json<repo::apply_writes::Output>> {
     use atrium_api::com::atproto::repo::apply_writes::{self, InputWritesItem, OutputResultsItem};
@@ -205,6 +209,7 @@ async fn create_record(
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
+    State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::create_record::Input>,
 ) -> Result<Json<repo::create_record::Output>> {
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
@@ -242,7 +247,17 @@ async fn create_record(
         .await
         .context("failed to extract commits")?;
 
-    // TODO: Broadcast `ret_store` on the firehose.
+    fhp.commit(firehose::Commit {
+        car: contents,
+        ops: vec![firehose::RepoOp::Create {
+            cid: rcid,
+            path: key,
+        }],
+        cid: ccid,
+        rev: repo.commit().rev().to_string(),
+        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
+    })
+    .await;
 
     if !swap_commit(
         &db,
@@ -297,6 +312,7 @@ async fn put_record(
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
+    State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::put_record::Input>,
 ) -> Result<Json<repo::put_record::Output>> {
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
@@ -337,7 +353,18 @@ async fn put_record(
         .await
         .context("failed to extract commits")?;
 
-    // TODO: Broadcast `ret_store` on the firehose.
+    // FIXME: Probably need to broadcast a `Create` op if the record was created.
+    fhp.commit(firehose::Commit {
+        car: contents,
+        ops: vec![firehose::RepoOp::Update {
+            cid: rcid,
+            path: key,
+        }],
+        cid: ccid,
+        rev: repo.commit().rev().to_string(),
+        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
+    })
+    .await;
 
     if !swap_commit(
         &db,
@@ -392,6 +419,7 @@ async fn delete_record(
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
+    State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::delete_record::Input>,
 ) -> Result<Json<repo::delete_record::Output>> {
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
@@ -424,7 +452,14 @@ async fn delete_record(
         .await
         .context("failed to extract commits")?;
 
-    // TODO: Broadcast `ret_store` on the firehose.
+    fhp.commit(firehose::Commit {
+        car: contents,
+        ops: vec![firehose::RepoOp::Delete { path: key }],
+        cid: ccid,
+        rev: repo.commit().rev().to_string(),
+        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
+    })
+    .await;
 
     if !swap_commit(
         &db,

@@ -1,7 +1,12 @@
 use std::collections::VecDeque;
 
-use atrium_api::com::atproto::sync;
-use axum::extract::ws::WebSocket;
+use atrium_api::{
+    com::atproto::sync::{self},
+    types::string::{Datetime, Did},
+};
+use atrium_repo::Cid;
+use axum::extract::ws::{Message, WebSocket};
+use serde::{ser::SerializeMap, Serialize};
 use tracing::info;
 
 enum FirehoseMessage {
@@ -9,7 +14,93 @@ enum FirehoseMessage {
     Connect(axum::extract::ws::WebSocket),
 }
 
-pub struct Commit {}
+enum FrameHeader {
+    Message(String),
+    Error,
+}
+
+impl Serialize for FrameHeader {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
+
+        match self {
+            FrameHeader::Message(s) => {
+                map.serialize_key("op")?;
+                map.serialize_value(&1)?;
+                map.serialize_key("t")?;
+                map.serialize_value(s.as_str())?;
+            }
+            FrameHeader::Error => {
+                map.serialize_key("op")?;
+                map.serialize_value(&-1)?;
+
+                // TODO...
+                todo!()
+            }
+        }
+
+        map.end()
+    }
+}
+
+pub enum RepoOp {
+    Create { cid: Cid, path: String },
+    Update { cid: Cid, path: String },
+    Delete { path: String },
+}
+
+impl Into<sync::subscribe_repos::RepoOp> for RepoOp {
+    fn into(self) -> sync::subscribe_repos::RepoOp {
+        let (action, cid, path) = match self {
+            RepoOp::Create { cid, path } => ("create", Some(cid), path),
+            RepoOp::Update { cid, path } => ("update", Some(cid), path),
+            RepoOp::Delete { path } => ("delete", None, path),
+        };
+
+        sync::subscribe_repos::RepoOpData {
+            action: action.to_string(),
+            cid: cid.map(atrium_api::types::CidLink),
+            path,
+        }
+        .into()
+    }
+}
+
+pub struct Commit {
+    /// The car file containing the commit blocks.
+    pub car: Vec<u8>,
+    /// The operations performed in this commit.
+    pub ops: Vec<RepoOp>,
+    /// The CID of the commit.
+    pub cid: Cid,
+    /// The revision of the commit.
+    pub rev: String,
+    /// The DID of the repository changed.
+    pub did: Did,
+}
+
+impl Into<sync::subscribe_repos::Commit> for Commit {
+    fn into(self) -> sync::subscribe_repos::Commit {
+        sync::subscribe_repos::CommitData {
+            blobs: Vec::new(),
+            blocks: self.car,
+            commit: atrium_api::types::CidLink(self.cid),
+            ops: self.ops.into_iter().map(Into::into).collect::<Vec<_>>(),
+            prev: None,
+            rebase: false,
+            repo: self.did,
+            rev: self.rev,
+            seq: 0,
+            since: None,
+            time: Datetime::now(),
+            too_big: false,
+        }
+        .into()
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct FirehoseProducer {
@@ -55,7 +146,7 @@ impl FirehoseProducer {
 pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1000);
     let handle = tokio::spawn(async move {
-        let mut clients = vec![];
+        let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
 
         while let Some(msg) = rx.recv().await {
@@ -64,19 +155,29 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
                     let enc = serde_ipld_dagcbor::to_vec(&msg).unwrap().into_boxed_slice();
                     history.push_back(enc.clone());
 
-                    info!(
-                        "Broadcasting message {} ({} bytes)",
-                        match msg {
-                            sync::subscribe_repos::Message::Account(_) => "#account",
-                            sync::subscribe_repos::Message::Commit(_) => "#commit",
-                            sync::subscribe_repos::Message::Handle(_) => "#handle",
-                            sync::subscribe_repos::Message::Identity(_) => "#identity",
-                            sync::subscribe_repos::Message::Info(_) => "#info",
-                            sync::subscribe_repos::Message::Migrate(_) => "#migrate",
-                            sync::subscribe_repos::Message::Tombstone(_) => "#tombstone",
-                        },
-                        enc.len()
-                    );
+                    // TODO: Update `seq` and `time` for each message.
+
+                    let ty = match msg {
+                        sync::subscribe_repos::Message::Account(_) => "#account",
+                        sync::subscribe_repos::Message::Commit(_) => "#commit",
+                        sync::subscribe_repos::Message::Handle(_) => "#handle",
+                        sync::subscribe_repos::Message::Identity(_) => "#identity",
+                        sync::subscribe_repos::Message::Info(_) => "#info",
+                        sync::subscribe_repos::Message::Migrate(_) => "#migrate",
+                        sync::subscribe_repos::Message::Tombstone(_) => "#tombstone",
+                    };
+
+                    info!("Broadcasting message {} ({} bytes)", ty, enc.len());
+
+                    let hdr = FrameHeader::Message(ty.to_string());
+
+                    let mut frame = Vec::new();
+                    serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
+                    serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
+
+                    for client in &mut clients {
+                        let _ = client.send(Message::binary(frame.clone())).await;
+                    }
                 }
                 FirehoseMessage::Connect(ws) => {
                     clients.push(ws);
