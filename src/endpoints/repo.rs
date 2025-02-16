@@ -1,11 +1,21 @@
-use anyhow::Context;
+use std::collections::HashSet;
+
+use anyhow::{anyhow, bail, Context};
 use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
-    types::string::Tid,
+    types::{
+        string::{AtIdentifier, Nsid, Tid},
+        TryIntoUnknown, Unknown,
+    },
 };
 use atrium_repo::{blockstore::CarStore, Cid};
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{
+    extract::{Query, State},
+    routing::{get, post},
+    Json, Router,
+};
 use constcat::concat;
+use futures::TryStreamExt;
 
 use crate::{
     auth::AuthenticatedUser,
@@ -53,6 +63,40 @@ async fn swap_commit(
 
         Ok(true)
     }
+}
+
+async fn resolve_did(
+    db: &Db,
+    ident: &AtIdentifier,
+) -> anyhow::Result<(
+    atrium_api::types::string::Did,
+    atrium_api::types::string::Handle,
+)> {
+    let (handle, did) = match &ident {
+        AtIdentifier::Handle(handle) => {
+            let handle = handle.as_str();
+            let did = sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
+                .fetch_one(db)
+                .await
+                .context("failed to query did")?;
+
+            (handle.to_string(), did)
+        }
+        AtIdentifier::Did(did) => {
+            let did = did.as_str();
+            let handle = sqlx::query_scalar!(r#"SELECT handle FROM handles WHERE did = ?"#, did)
+                .fetch_one(db)
+                .await
+                .context("failed to query did")?;
+
+            (handle, did.to_string())
+        }
+    };
+
+    Ok((
+        atrium_api::types::string::Did::new(did).unwrap(),
+        atrium_api::types::string::Handle::new(handle).unwrap(),
+    ))
 }
 
 async fn apply_writes(
@@ -502,6 +546,79 @@ async fn delete_record(
     ))
 }
 
+async fn describe_repo(
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    Query(input): Query<repo::describe_repo::Parameters>,
+) -> Result<Json<repo::describe_repo::Output>> {
+    // Lookup the DID by the provided handle.
+    let (did, handle) = resolve_did(&db, &input.repo)
+        .await
+        .context("failed to resolve handle")?;
+
+    let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
+        .await
+        .context("failed to open user repo")?;
+
+    let mut collections = HashSet::new();
+
+    let mut tree = repo.tree();
+    let mut it = Box::pin(tree.keys());
+    while let Some(key) = it.try_next().await.context("failed to iterate repo keys")? {
+        if let Some((collection, _rkey)) = key.split_once('/') {
+            collections.insert(collection.to_string());
+        }
+    }
+
+    Ok(Json(
+        repo::describe_repo::OutputData {
+            collections: collections
+                .into_iter()
+                .map(|s| Nsid::new(s).unwrap())
+                .collect::<Vec<_>>(),
+            did: did.clone(),
+            did_doc: Unknown::Null,
+            handle: handle.clone(),
+            handle_is_correct: true, // TODO
+        }
+        .into(),
+    ))
+}
+
+async fn get_record(
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    Query(input): Query<repo::get_record::Parameters>,
+) -> Result<Json<repo::get_record::Output>> {
+    // Lookup the DID by the provided handle.
+    let (did, _handle) = resolve_did(&db, &input.repo)
+        .await
+        .context("failed to resolve handle")?;
+
+    let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
+        .await
+        .context("failed to open user repo")?;
+
+    let key = format!("{}/{}", input.collection.as_str(), input.rkey);
+    let uri = format!("at://{}/{}", did.as_str(), &key);
+
+    let record: Option<serde_json::Value> =
+        repo.get_raw(&key).await.context("failed to read record")?;
+
+    if let Some(record) = record {
+        Ok(Json(
+            repo::get_record::OutputData {
+                cid: None, // TODO
+                uri,
+                value: record.try_into_unknown().unwrap(),
+            }
+            .into(),
+        ))
+    } else {
+        return Err(anyhow!("failed to find record").into());
+    }
+}
+
 pub fn routes() -> Router<AppState> {
     // AP /xrpc/com.atproto.repo.applyWrites
     // AP /xrpc/com.atproto.repo.createRecord
@@ -516,4 +633,6 @@ pub fn routes() -> Router<AppState> {
         .route(concat!("/", repo::create_record::NSID), post(create_record))
         .route(concat!("/", repo::put_record::NSID), post(put_record))
         .route(concat!("/", repo::delete_record::NSID), post(delete_record))
+        .route(concat!("/", repo::describe_repo::NSID), get(describe_repo))
+        .route(concat!("/", repo::get_record::NSID), get(get_record))
 }

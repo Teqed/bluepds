@@ -83,7 +83,12 @@ async fn get_blocks(
         .expect("failed to create intermediate carstore");
 
     for cid in &input.cids {
-        if let Ok(Some(c)) = repo.get_raw_cid(cid.as_ref().clone()).await {
+        // FIXME: I don't like this round tripping here. Could end up corrupting some data, probably.
+        if let Ok(Some(c)) = repo
+            .get_raw_cid::<serde_json::Value>(cid.as_ref().clone())
+            .await
+        {
+            let c = serde_ipld_dagcbor::to_vec(&c).context("failed to encode value")?;
             let _ = store.write_block(DAG_CBOR, SHA2_256, &c).await;
         }
     }
