@@ -2,7 +2,7 @@
 This is a barebones implementation of a ATProto PDS using [Axum](https://github.com/tokio-rs/axum) and [Azure app services](https://learn.microsoft.com/en-us/azure/app-service/overview).
 
 ## To-do
-- [ ] UG /xrpc/_health (undocumented, but impl by reference PDS)
+- [X] UG /xrpc/_health (undocumented, but impl by reference PDS)
 - com.atproto.identity
     - [ ] UG /xrpc/com.atproto.identity.resolveHandle
     - [ ] UP /xrpc/com.atproto.identity.updateHandle
