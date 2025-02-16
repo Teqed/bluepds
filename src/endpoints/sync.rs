@@ -128,11 +128,19 @@ async fn list_repos(
         rev: String,
     }
 
+    let limit = input
+        .limit
+        .as_deref()
+        .unwrap_or("1000")
+        .parse::<u32>()
+        .context("invalid limit parameter")?;
+
     let r = if let Some(cursor) = &input.cursor {
         let r = sqlx::query_as!(
             Record,
-            r#"SELECT did, root, rev FROM accounts WHERE did > ? LIMIT 1000"#,
-            cursor
+            r#"SELECT did, root, rev FROM accounts WHERE did > ? LIMIT ?"#,
+            cursor,
+            limit
         )
         .fetch(&db);
 
@@ -140,8 +148,12 @@ async fn list_repos(
             .await
             .context("failed to fetch profiles")?
     } else {
-        let r =
-            sqlx::query_as!(Record, r#"SELECT did, root, rev FROM accounts LIMIT 1000"#).fetch(&db);
+        let r = sqlx::query_as!(
+            Record,
+            r#"SELECT did, root, rev FROM accounts LIMIT ?"#,
+            limit
+        )
+        .fetch(&db);
 
         r.try_collect::<Vec<_>>()
             .await
