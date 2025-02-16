@@ -23,7 +23,7 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [ ] AP /xrpc/com.atproto.repo.uploadBlob
 - com.atproto.sync
     - [X] UG /xrpc/com.atproto.sync.getBlob
-    - [ ] UG /xrpc/com.atproto.sync.getBlocks
+    - [X] UG /xrpc/com.atproto.sync.getBlocks
     - [X] UG /xrpc/com.atproto.sync.getLatestCommit
     - [X] UG /xrpc/com.atproto.sync.getRecord
     - [ ] UG /xrpc/com.atproto.sync.getRepoStatus

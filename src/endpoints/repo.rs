@@ -11,6 +11,16 @@ use crate::{
     auth::AuthenticatedUser, config::AppConfig, storage, AppState, Db, Result, SigningKey,
 };
 
+async fn apply_writes(
+    user: AuthenticatedUser,
+    State(skey): State<SigningKey>,
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    Json(input): Json<repo::apply_writes::Input>,
+) -> Result<Json<repo::apply_writes::Output>> {
+    todo!()
+}
+
 async fn create_record(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -25,9 +35,9 @@ async fn create_record(
     let key = format!(
         "{}/{}",
         input.collection.as_str(),
-        input.rkey.clone().unwrap_or(Tid::now(0).to_string())
+        input.rkey.as_deref().unwrap_or(Tid::now(0).as_str())
     );
-    let builder = repo
+    let (builder, rcid) = repo
         .add_raw(&key, &input.record)
         .await
         .context("failed to add record")?;
@@ -36,13 +46,13 @@ async fn create_record(
         .sign(&builder.hash())
         .context("failed to sign commit")?;
 
-    let rcid = builder
+    let ccid = builder
         .finalize(sig)
         .await
         .context("failed to write signed commit")?;
 
     let mut contents = Vec::new();
-    let mut ret_store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [rcid])
+    let mut ret_store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [ccid])
         .await
         .context("failed to create car store")?;
 
@@ -55,7 +65,7 @@ async fn create_record(
     let uri = format!("at://{}/{}", user.did(), &key);
 
     let rev_str = repo.commit().rev().to_string();
-    let cid_str = rcid.to_string();
+    let cid_str = ccid.to_string();
     let did_str = user.did();
 
     sqlx::query!(
@@ -73,7 +83,7 @@ async fn create_record(
             cid: atrium_api::types::string::Cid::new(rcid),
             commit: Some(
                 CommitMetaData {
-                    cid: atrium_api::types::string::Cid::new(rcid),
+                    cid: atrium_api::types::string::Cid::new(ccid),
                     rev: repo.commit().rev().to_string(),
                 }
                 .into(),
@@ -94,5 +104,7 @@ pub fn routes() -> Router<AppState> {
     // UG /xrpc/com.atproto.repo.getRecord
     // UG /xrpc/com.atproto.repo.listRecords
     // AP /xrpc/com.atproto.repo.uploadBlob
-    Router::new().route(concat!("/", repo::create_record::NSID), post(create_record))
+    Router::new()
+        .route(concat!("/", repo::apply_writes::NSID), post(apply_writes))
+        .route(concat!("/", repo::create_record::NSID), post(create_record))
 }

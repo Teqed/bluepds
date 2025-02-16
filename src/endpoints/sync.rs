@@ -68,6 +68,29 @@ async fn get_blob(
     todo!()
 }
 
+async fn get_blocks(
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    Query(input): Query<sync::get_blocks::Parameters>,
+) -> Result<Bytes> {
+    let mut repo = open_repo(&config.repo, &db, input.did.as_str())
+        .await
+        .context("failed to open repository")?;
+
+    let mut mem = Vec::new();
+    let mut store = CarStore::create(std::io::Cursor::new(&mut mem))
+        .await
+        .expect("failed to create intermediate carstore");
+
+    for cid in &input.cids {
+        if let Ok(Some(c)) = repo.get_raw_cid(cid.as_ref().clone()).await {
+            let _ = store.write_block(DAG_CBOR, SHA2_256, &c).await;
+        }
+    }
+
+    Ok(Bytes::from_owner(mem))
+}
+
 async fn get_latest_commit(
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -113,7 +136,7 @@ async fn get_record(
         .await
         .context("failed to extract records")?;
 
-    Ok(Bytes::copy_from_slice(contents.as_slice()))
+    Ok(Bytes::from_owner(contents))
 }
 
 // HACK: `limit` may be passed as a string, so we must treat it as one.
@@ -195,6 +218,7 @@ pub fn routes() -> axum::Router<AppState> {
     // UG /xrpc/com.atproto.sync.subscribeRepos
     Router::new()
         .route(concat!("/", sync::get_blob::NSID), get(get_blob))
+        .route(concat!("/", sync::get_blocks::NSID), get(get_blocks))
         .route(
             concat!("/", sync::get_latest_commit::NSID),
             get(get_latest_commit),
