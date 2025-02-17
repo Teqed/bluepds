@@ -148,24 +148,29 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
     let handle = tokio::spawn(async move {
         let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
+        let mut seq = 0i64; // TODO: This should be saved in the database.
 
         while let Some(msg) = rx.recv().await {
             match msg {
-                FirehoseMessage::Broadcast(msg) => {
+                FirehoseMessage::Broadcast(mut msg) => {
                     let enc = serde_ipld_dagcbor::to_vec(&msg).unwrap().into_boxed_slice();
-                    history.push_back(enc.clone());
 
-                    // TODO: Update `seq` and `time` for each message.
-
-                    let ty = match msg {
-                        sync::subscribe_repos::Message::Account(_) => "#account",
-                        sync::subscribe_repos::Message::Commit(_) => "#commit",
-                        sync::subscribe_repos::Message::Handle(_) => "#handle",
-                        sync::subscribe_repos::Message::Identity(_) => "#identity",
-                        sync::subscribe_repos::Message::Info(_) => "#info",
-                        sync::subscribe_repos::Message::Migrate(_) => "#migrate",
-                        sync::subscribe_repos::Message::Tombstone(_) => "#tombstone",
+                    let mut dummy_seq = 0i64;
+                    let (ty, nseq) = match &mut msg {
+                        sync::subscribe_repos::Message::Account(m) => ("#account", &mut m.seq),
+                        sync::subscribe_repos::Message::Commit(m) => ("#commit", &mut m.seq),
+                        sync::subscribe_repos::Message::Handle(m) => ("#handle", &mut m.seq),
+                        sync::subscribe_repos::Message::Identity(m) => ("#identity", &mut m.seq),
+                        sync::subscribe_repos::Message::Info(_m) => ("#info", &mut dummy_seq),
+                        sync::subscribe_repos::Message::Migrate(m) => ("#migrate", &mut m.seq),
+                        sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
                     };
+
+                    // Increment the sequence number.
+                    *nseq = seq;
+                    seq += 1;
+
+                    history.push_back(msg.clone());
 
                     info!("Broadcasting message {} ({} bytes)", ty, enc.len());
 
