@@ -19,20 +19,18 @@ use axum::{
 };
 use constcat::concat;
 use sha2::Digest;
-use tokio::fs::File;
 use tracing::info;
 use uuid::Uuid;
 
 use crate::{
     auth::AuthenticatedUser,
     config::AppConfig,
-    firehose::FirehoseProducer,
+    firehose::{Commit, FirehoseProducer},
     plc::{PlcOperation, PlcService, PlcVerificationMethod},
     AppState, Db, Error, Result, RotationKey, SigningKey,
 };
 
 async fn create_invite_code(
-    State(config): State<AppConfig>,
     State(db): State<Db>,
     Json(input): Json<server::create_invite_code::Input>,
 ) -> Result<Json<server::create_invite_code::Output>> {
@@ -78,7 +76,7 @@ async fn create_account(
     // Unless committed, the transaction will be automatically rolled back.
     let tx = db.begin().await.context("failed to begin transaction")?;
 
-    let invite = match &input.invite_code {
+    let _invite = match &input.invite_code {
         Some(code) => {
             let invite: Option<String> = sqlx::query_scalar!(
                 r#"
@@ -145,7 +143,7 @@ async fn create_account(
         let file = tokio::fs::File::create(config.repo.path.join(format!("{}.car", did_hash)))
             .await
             .context("failed to create repo file")?;
-        let mut store = atrium_repo::blockstore::CarStore::create(file)
+        let mut store = CarStore::create(file)
             .await
             .context("failed to create carstore")?;
 
@@ -157,7 +155,7 @@ async fn create_account(
         let sig = skey
             .sign(&repo_builder.hash())
             .context("failed to sign root commit")?;
-        let repo = repo_builder
+        let mut repo = repo_builder
             .finalize(sig)
             .await
             .context("failed to attach signature to root commit")?;
@@ -165,13 +163,23 @@ async fn create_account(
         let root = repo.root();
         let rev = repo.commit().rev();
 
-        Ok::<(Cid, Tid, CarStore<File>), anyhow::Error>((root, rev, store))
+        let mut mem = Vec::new();
+        let mut firehose_store =
+            CarStore::create_with_roots(std::io::Cursor::new(&mut mem), [repo.root()])
+                .await
+                .context("failed to create temp carstore")?;
+
+        repo.export_into(&mut firehose_store)
+            .await
+            .context("failed to export repository")?;
+
+        Ok::<(Cid, Tid, Vec<u8>), anyhow::Error>((root, rev, mem))
     }
     .await
     .context("failed to create user repo")?;
 
-    let cid = cid.to_string();
-    let rev = rev.as_str();
+    let cid_str = cid.to_string();
+    let rev_str = rev.as_str();
 
     sqlx::query!(
         r#"
@@ -188,8 +196,8 @@ async fn create_account(
         did,
         email,
         pass,
-        cid,
-        rev,
+        cid_str,
+        rev_str,
         did,
         handle
     )
@@ -220,7 +228,7 @@ async fn create_account(
         .await
         .context("failed to create did doc")?;
 
-    let mut doc = atrium_repo::blockstore::CarStore::create(doc)
+    let mut doc = CarStore::create(doc)
         .await
         .context("failed to create did doc")?;
 
@@ -257,9 +265,17 @@ async fn create_account(
     )
     .await;
 
-    // TODO: Broadcast the `#commit` event using `store`.
-
     info!("new account: {did} {email} {pass}");
+    let did = Did::from_str(&did).unwrap();
+
+    fhp.commit(Commit {
+        car: store,
+        ops: Vec::new(),
+        cid: cid,
+        rev: rev.to_string(),
+        did: did.clone(),
+    })
+    .await;
 
     Ok(Json(
         server::create_account::OutputData {
@@ -319,7 +335,7 @@ async fn create_session(
         &PasswordHash::new(account.password.as_str()).context("invalid password hash in db")?,
     ) {
         Ok(_) => {}
-        Err(e) => {
+        Err(_e) => {
             return Err(Error::with_status(
                 StatusCode::UNAUTHORIZED,
                 anyhow!("failed to validate credentials"),

@@ -21,7 +21,7 @@ use futures::TryStreamExt;
 use crate::{
     auth::AuthenticatedUser,
     config::AppConfig,
-    firehose::{self, FirehoseProducer},
+    firehose::{self, FirehoseProducer, RepoOp},
     storage, AppState, Db, Error, Result, SigningKey,
 };
 
@@ -116,6 +116,7 @@ async fn apply_writes(
     let orig_rev = repo.commit().rev();
 
     let mut res = vec![];
+    let mut ops = vec![];
     let mut keys = vec![];
     for write in &input.writes {
         let (builder, key) = match write {
@@ -131,6 +132,11 @@ async fn apply_writes(
                     .add_raw(&key, &object.value)
                     .await
                     .context("failed to add record")?;
+
+                ops.push(RepoOp::Create {
+                    cid: c,
+                    path: key.clone(),
+                });
 
                 res.push(OutputResultsItem::CreateResult(Box::new(
                     apply_writes::CreateResultData {
@@ -152,6 +158,11 @@ async fn apply_writes(
                     .await
                     .context("failed to add record")?;
 
+                ops.push(RepoOp::Update {
+                    cid: c,
+                    path: key.clone(),
+                });
+
                 res.push(OutputResultsItem::UpdateResult(Box::new(
                     apply_writes::UpdateResultData {
                         cid: atrium_api::types::string::Cid::new(c),
@@ -165,6 +176,8 @@ async fn apply_writes(
             }
             InputWritesItem::Delete(object) => {
                 let key = format!("{}/{}", object.collection.as_str(), object.rkey);
+
+                ops.push(RepoOp::Delete { path: key.clone() });
 
                 res.push(OutputResultsItem::DeleteResult(Box::new(
                     apply_writes::DeleteResultData {}.into(),
@@ -204,7 +217,14 @@ async fn apply_writes(
             .context("failed to extract key")?;
     }
 
-    // TODO: Generate a firehose record.
+    fhp.commit(firehose::Commit {
+        car: mem,
+        ops: ops,
+        cid: repo.root(),
+        rev: repo.commit().rev().to_string(),
+        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
+    })
+    .await;
 
     if !swap_commit(
         &db,
