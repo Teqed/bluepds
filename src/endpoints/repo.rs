@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
 use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
     types::{

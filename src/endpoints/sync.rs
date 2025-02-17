@@ -33,7 +33,6 @@ async fn get_blob(
 
 async fn get_blocks(
     State(config): State<AppConfig>,
-    State(db): State<Db>,
     Query(input): Query<sync::get_blocks::Parameters>,
 ) -> Result<Bytes> {
     let mut repo = open_store(&config.repo, input.did.as_str())
