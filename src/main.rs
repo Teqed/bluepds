@@ -40,6 +40,7 @@ mod storage;
 
 pub type Result<T> = std::result::Result<T, error::Error>;
 pub use error::Error;
+use uuid::Uuid;
 
 pub type Db = sqlx::SqlitePool;
 pub type Cred = Arc<dyn TokenCredential>;
@@ -284,7 +285,7 @@ async fn run() -> anyhow::Result<()> {
         .with_state(AppState {
             cred,
             config,
-            db,
+            db: db.clone(),
             firehose: fhp,
             signing_key: skey,
             rotation_key: rkey,
@@ -292,6 +293,43 @@ async fn run() -> anyhow::Result<()> {
 
     info!("listening on {addr}");
     info!("connect to: http://127.0.0.1:{}", addr.port());
+
+    // Determine whether or not this was the first startup (i.e. no accounts exist and no invite codes were created).
+    // If so, create an invite code and share it via the console.
+    let c = sqlx::query_scalar!(
+        r#"
+        SELECT
+            (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites)
+            AS total_count
+        "#
+    )
+    .fetch_one(&db)
+    .await
+    .context("failed to query database")?;
+
+    if c == 0 {
+        let uuid = Uuid::new_v4().to_string();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO invites (id, did, count, created_at)
+                VALUES (?, NULL, 1, datetime('now'))
+            "#,
+            uuid,
+        )
+        .execute(&db)
+        .await
+        .context("failed to create new invite code")?;
+
+        // N.B: This is a sensitive message, so we're bypassing `tracing` here and
+        // logging it directly to console.
+        println!("=====================================");
+        println!("            FIRST STARTUP            ");
+        println!("=====================================");
+        println!("Use this code to create an account:");
+        println!("{uuid}");
+        println!("=====================================");
+    }
 
     axum::serve(listener, app.into_make_service())
         .await

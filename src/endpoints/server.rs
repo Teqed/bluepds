@@ -31,6 +31,7 @@ use crate::{
 };
 
 async fn create_invite_code(
+    _user: AuthenticatedUser,
     State(db): State<Db>,
     Json(input): Json<server::create_invite_code::Input>,
 ) -> Result<Json<server::create_invite_code::Output>> {
