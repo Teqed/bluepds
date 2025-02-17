@@ -1,7 +1,7 @@
 param webAppName string
 param location string = resourceGroup().location // Location for all resources
 
-param sku string = 'F1' // The SKU of App Service Plan
+param sku string = 'B1' // The SKU of App Service Plan
 param dockerContainerName string = '${webAppName}:latest'
 param repositoryUrl string = 'https://github.com/DrChat/bluepds'
 param branch string = 'main'
@@ -9,6 +9,7 @@ param branch string = 'main'
 var acrName = toLower('${webAppName}${uniqueString(resourceGroup().id)}')
 var aspName = toLower('${webAppName}-asp')
 var webName = toLower('${webAppName}${uniqueString(resourceGroup().id)}')
+var sanName = toLower('${webAppName}${uniqueString(resourceGroup().id)}')
 
 resource appServicePlan 'Microsoft.Web/serverfarms@2020-06-01' = {
   name: aspName
@@ -33,6 +34,20 @@ resource acrResource 'Microsoft.ContainerRegistry/registries@2023-01-01-preview'
   }
 }
 
+resource appStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: sanName
+  location: location
+  kind: 'StorageV2'
+  sku: {
+    name: 'Standard_LRS'
+  }
+}
+
+resource fileShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  name: '${appStorage.name}/default/data'
+  properties: {}
+}
+
 resource appService 'Microsoft.Web/sites@2020-06-01' = {
   name: webName
   location: location
@@ -53,6 +68,21 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
         }
       ]
       linuxFxVersion: 'DOCKER|${acrName}.azurecr.io/${dockerContainerName}'
+    }
+  }
+}
+
+resource appServiceStorageConfig 'Microsoft.Web/sites/config@2024-04-01' = {
+  name: 'azurestorageaccounts'
+  parent: appService
+  properties: {
+    data: {
+      type: 'AzureFiles'
+      shareName: 'data'
+      mountPath: '/app/data'
+      accountName: appStorage.name
+      // WTF? Where's the ability to mount storage via managed identity?
+      accessKey: appStorage.listKeys().keys[0].value
     }
   }
 }

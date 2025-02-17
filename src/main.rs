@@ -257,8 +257,9 @@ async fn run() -> anyhow::Result<()> {
 
     let cred =
         azure_identity::create_default_credential().context("failed to create Azure credential")?;
-    let opts =
-        SqliteConnectOptions::from_str(&config.db).context("failed to parse database options")?;
+    let opts = SqliteConnectOptions::from_str(&config.db)
+        .context("failed to parse database options")?
+        .create_if_missing(true);
     let db = SqlitePool::connect_with(opts).await?;
 
     sqlx::migrate!()

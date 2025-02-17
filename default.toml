@@ -5,6 +5,8 @@ admin_pw = "admin1"
 host_name = "pds.example.com"
 # The path to the primary sqlite database.
 db = "sqlite://data/sqlite.db"
+# The address to listen to for incoming requests.
+listen_address = "0.0.0.0:8000"
 
 # File to store private keys.
 # Care must be taken to ensure that the contents of this file aren't exposed!

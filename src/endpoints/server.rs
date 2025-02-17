@@ -141,7 +141,7 @@ async fn create_account(
     // Write out an initial commit for the user.
     // https://atproto.com/guides/account-lifecycle
     let (cid, rev, store) = async {
-        let file = tokio::fs::File::create(config.repo.path.join(format!("{}.car", did_hash)))
+        let file = tokio::fs::File::create_new(config.repo.path.join(format!("{}.car", did_hash)))
             .await
             .context("failed to create repo file")?;
         let mut store = CarStore::create(file)
