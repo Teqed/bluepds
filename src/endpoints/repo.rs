@@ -5,7 +5,7 @@ use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
     types::{
         string::{AtIdentifier, Nsid, Tid},
-        TryIntoUnknown, Unknown,
+        LimitedU32, TryIntoUnknown, Unknown,
     },
 };
 use atrium_repo::{blockstore::CarStore, Cid};
@@ -124,7 +124,10 @@ async fn apply_writes(
                 let key = format!(
                     "{}/{}",
                     object.collection.as_str(),
-                    object.rkey.as_deref().unwrap_or(Tid::now(0).as_str())
+                    object
+                        .rkey
+                        .as_deref()
+                        .unwrap_or(Tid::now(LimitedU32::MIN).as_str())
                 );
                 let uri = format!("at://{}/{}", user.did(), key);
 
@@ -285,7 +288,10 @@ async fn create_record(
     let key = format!(
         "{}/{}",
         input.collection.as_str(),
-        input.rkey.as_deref().unwrap_or(Tid::now(0).as_str())
+        input
+            .rkey
+            .as_deref()
+            .unwrap_or(Tid::now(LimitedU32::MIN).as_str())
     );
     let uri = format!("at://{}/{}", user.did(), &key);
 
