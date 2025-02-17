@@ -26,7 +26,7 @@ use crate::{
     auth::AuthenticatedUser,
     config::AppConfig,
     firehose::{Commit, FirehoseProducer},
-    plc::{PlcOperation, PlcService, PlcVerificationMethod},
+    plc::{self, PlcOperation, PlcService, PlcVerificationMethod},
     AppState, Db, Error, Result, RotationKey, SigningKey,
 };
 
@@ -121,11 +121,11 @@ async fn create_account(
     let bytes = rkey.sign(&bytes).context("failed to sign genesis op")?;
 
     let op = op.sign(bytes);
-    let op = serde_ipld_dagcbor::to_vec(&op).context("failed to encode genesis op")?;
+    let op_bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode genesis op")?;
 
     let digest = base32::encode(
         base32::Alphabet::Rfc4648Lower { padding: false },
-        sha2::Sha256::digest(&op).as_slice(),
+        sha2::Sha256::digest(&op_bytes).as_slice(),
     );
 
     let did_hash = &digest[..24];
@@ -233,14 +233,19 @@ async fn create_account(
         .context("failed to create did doc")?;
 
     let _cid = doc
-        .write_block(DAG_CBOR, SHA2_256, &op)
+        .write_block(DAG_CBOR, SHA2_256, &op_bytes)
         .await
         .context("failed to write genesis commit")?;
 
     // The account is fully created. Commit the SQL transaction to the database.
     tx.commit().await.context("failed to commit transaction")?;
 
-    // TODO: Send the new account's data to the PLC directory.
+    if config.plc.update {
+        // Send the new account's data to the PLC directory.
+        plc::submit(&did, &op)
+            .await
+            .context("failed to submit PLC operation to directory")?;
+    }
 
     // Broadcast the identity event now that the new identity is resolvable on the public directory.
     fhp.identity(
