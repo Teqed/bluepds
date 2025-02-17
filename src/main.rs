@@ -197,7 +197,7 @@ async fn run() -> anyhow::Result<()> {
     // UG /xrpc/_health (undocumented, but impl by reference PDS)
     //
     // UG /xrpc/com.atproto.identity.resolveHandle
-    // UP /xrpc/com.atproto.identity.updateHandle
+    // AP /xrpc/com.atproto.identity.updateHandle
     //
     // UG /xrpc/com.atproto.server.describeServer
     // UP /xrpc/com.atproto.server.createAccount

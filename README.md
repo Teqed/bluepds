@@ -5,8 +5,8 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
 - [ ] [AppView proxying](https://atproto.com/specs/xrpc#service-proxying)
 - [X] UG /xrpc/_health (undocumented, but impl by reference PDS)
 - com.atproto.identity
-    - [ ] UG /xrpc/com.atproto.identity.resolveHandle
-    - [ ] UP /xrpc/com.atproto.identity.updateHandle
+    - [X] UG /xrpc/com.atproto.identity.resolveHandle
+    - [ ] AP /xrpc/com.atproto.identity.updateHandle
 - com.atproto.server
     - [X] UG /xrpc/com.atproto.server.describeServer
     - [X] UP /xrpc/com.atproto.server.createAccount
