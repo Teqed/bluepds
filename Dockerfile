@@ -3,6 +3,7 @@ FROM rust:alpine AS builder
 COPY Cargo.lock /build/
 COPY Cargo.toml /build/
 COPY src /build/src
+COPY migrations /build/migrations
 
 WORKDIR /build
 
