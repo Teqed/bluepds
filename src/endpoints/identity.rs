@@ -37,16 +37,11 @@ async fn update_handle(
     todo!()
 }
 
+#[rustfmt::skip]
 pub fn routes() -> Router<AppState> {
     // UG /xrpc/com.atproto.identity.resolveHandle
     // AP /xrpc/com.atproto.identity.updateHandle
     Router::new()
-        .route(
-            concat!("/", identity::resolve_handle::NSID),
-            get(resolve_handle),
-        )
-        .route(
-            concat!("/", identity::update_handle::NSID),
-            post(update_handle),
-        )
+        .route(concat!("/", identity::resolve_handle::NSID), get(resolve_handle))
+        .route(concat!("/", identity::update_handle::NSID),  post(update_handle))
 }

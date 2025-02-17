@@ -696,6 +696,7 @@ async fn list_records(
     ))
 }
 
+#[rustfmt::skip]
 pub fn routes() -> Router<AppState> {
     // AP /xrpc/com.atproto.repo.applyWrites
     // AP /xrpc/com.atproto.repo.createRecord
@@ -706,11 +707,11 @@ pub fn routes() -> Router<AppState> {
     // UG /xrpc/com.atproto.repo.listRecords
     // AP /xrpc/com.atproto.repo.uploadBlob
     Router::new()
-        .route(concat!("/", repo::apply_writes::NSID), post(apply_writes))
+        .route(concat!("/", repo::apply_writes::NSID),  post(apply_writes))
         .route(concat!("/", repo::create_record::NSID), post(create_record))
-        .route(concat!("/", repo::put_record::NSID), post(put_record))
+        .route(concat!("/", repo::put_record::NSID),    post(put_record))
         .route(concat!("/", repo::delete_record::NSID), post(delete_record))
         .route(concat!("/", repo::describe_repo::NSID), get(describe_repo))
-        .route(concat!("/", repo::get_record::NSID), get(get_record))
-        .route(concat!("/", repo::list_records::NSID), get(list_records))
+        .route(concat!("/", repo::get_record::NSID),    get(get_record))
+        .route(concat!("/", repo::list_records::NSID),  get(list_records))
 }

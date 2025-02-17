@@ -447,6 +447,7 @@ async fn describe_server(
     ))
 }
 
+#[rustfmt::skip]
 pub fn routes() -> Router<AppState> {
     // UG /xrpc/com.atproto.server.describeServer
     // UP /xrpc/com.atproto.server.createAccount
@@ -454,21 +455,9 @@ pub fn routes() -> Router<AppState> {
     // AG /xrpc/com.atproto.server.getSession
     // AP /xrpc/com.atproto.server.createInviteCode
     Router::new()
-        .route(
-            concat!("/", server::describe_server::NSID),
-            get(describe_server),
-        )
-        .route(
-            concat!("/", server::create_account::NSID),
-            post(create_account),
-        )
-        .route(
-            concat!("/", server::create_session::NSID),
-            post(create_session),
-        )
-        .route(concat!("/", server::get_session::NSID), get(get_session))
-        .route(
-            concat!("/", server::create_invite_code::NSID),
-            post(create_invite_code),
-        )
+        .route(concat!("/", server::describe_server::NSID),    get(describe_server))
+        .route(concat!("/", server::create_account::NSID),     post(create_account))
+        .route(concat!("/", server::create_session::NSID),     post(create_session))
+        .route(concat!("/", server::get_session::NSID),        get(get_session))
+        .route(concat!("/", server::create_invite_code::NSID), post(create_invite_code))
 }

@@ -241,6 +241,7 @@ async fn subscribe_repos(
     })
 }
 
+#[rustfmt::skip]
 pub fn routes() -> axum::Router<AppState> {
     // UG /xrpc/com.atproto.sync.getBlob
     // UG /xrpc/com.atproto.sync.getBlocks
@@ -252,21 +253,12 @@ pub fn routes() -> axum::Router<AppState> {
     // UG /xrpc/com.atproto.sync.listRepos
     // UG /xrpc/com.atproto.sync.subscribeRepos
     Router::new()
-        .route(concat!("/", sync::get_blob::NSID), get(get_blob))
-        .route(concat!("/", sync::get_blocks::NSID), get(get_blocks))
-        .route(
-            concat!("/", sync::get_latest_commit::NSID),
-            get(get_latest_commit),
-        )
-        .route(concat!("/", sync::get_record::NSID), get(get_record))
-        .route(
-            concat!("/", sync::get_repo_status::NSID),
-            get(get_repo_status),
-        )
-        .route(concat!("/", sync::get_repo::NSID), get(get_repo))
-        .route(concat!("/", sync::list_repos::NSID), get(list_repos))
-        .route(
-            concat!("/", sync::subscribe_repos::NSID),
-            get(subscribe_repos),
-        )
+        .route(concat!("/", sync::get_blob::NSID),          get(get_blob))
+        .route(concat!("/", sync::get_blocks::NSID),        get(get_blocks))
+        .route(concat!("/", sync::get_latest_commit::NSID), get(get_latest_commit))
+        .route(concat!("/", sync::get_record::NSID),        get(get_record))
+        .route(concat!("/", sync::get_repo_status::NSID),   get(get_repo_status))
+        .route(concat!("/", sync::get_repo::NSID),          get(get_repo))
+        .route(concat!("/", sync::list_repos::NSID),        get(list_repos))
+        .route(concat!("/", sync::subscribe_repos::NSID),   get(subscribe_repos))
 }
