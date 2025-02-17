@@ -8,6 +8,7 @@
 !/.gitignore
 !/Cargo.lock
 !/Cargo.toml
+!/default.toml
 !/deployment.bicep
 !/Dockerfile
 !/README.md

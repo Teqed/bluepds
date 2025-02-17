@@ -275,37 +275,6 @@ async fn run() -> anyhow::Result<()> {
         .await
         .context("failed to bind address")?;
 
-    // Required endpoints:
-    // UG /xrpc/_health (undocumented, but impl by reference PDS)
-    //
-    // UG /xrpc/com.atproto.identity.resolveHandle
-    // AP /xrpc/com.atproto.identity.updateHandle
-    //
-    // UG /xrpc/com.atproto.server.describeServer
-    // UP /xrpc/com.atproto.server.createAccount
-    // AP /xrpc/com.atproto.server.createInviteCode
-    // UP /xrpc/com.atproto.server.createSession
-    // AG /xrpc/com.atproto.server.getSession
-    //
-    // AP /xrpc/com.atproto.repo.applyWrites
-    // AP /xrpc/com.atproto.repo.createRecord
-    // AP /xrpc/com.atproto.repo.putRecord
-    // AP /xrpc/com.atproto.repo.deleteRecord
-    // UG /xrpc/com.atproto.repo.describeRepo
-    // UG /xrpc/com.atproto.repo.getRecord
-    // UG /xrpc/com.atproto.repo.listRecords
-    // AP /xrpc/com.atproto.repo.uploadBlob
-    //
-    // UG /xrpc/com.atproto.sync.getBlob
-    // UG /xrpc/com.atproto.sync.getBlocks
-    // UG /xrpc/com.atproto.sync.getLatestCommit
-    // UG /xrpc/com.atproto.sync.getRecord
-    // UG /xrpc/com.atproto.sync.getRepoStatus
-    // UG /xrpc/com.atproto.sync.getRepo
-    // UG /xrpc/com.atproto.sync.listBlobs
-    // UG /xrpc/com.atproto.sync.listRepos
-    // UG /xrpc/com.atproto.sync.subscribeRepos
-
     let app = Router::new()
         .route("/", get(index))
         .nest("/xrpc", endpoints::routes().fallback(service_proxy))

@@ -1,0 +1,18 @@
+# The superuser password. This only works with connections from localhost.
+# Comment this out to disable the superuser.
+admin_pw = "admin1"
+# The public hostname of the PDS.
+host_name = "pds.example.com"
+# The path to the primary sqlite database.
+db = "sqlite://data/sqlite.db"
+
+# File to store private keys.
+# Care must be taken to ensure that the contents of this file aren't exposed!
+key = "data/default.key"
+
+[repo]
+path = "data/repo"
+
+[plc]
+path = "data/plc"
+update = false # Do not write updates to the global PLC directory.

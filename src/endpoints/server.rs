@@ -237,15 +237,15 @@ async fn create_account(
         .await
         .context("failed to write genesis commit")?;
 
-    // The account is fully created. Commit the SQL transaction to the database.
-    tx.commit().await.context("failed to commit transaction")?;
-
     if config.plc.update {
         // Send the new account's data to the PLC directory.
         plc::submit(&did, &op)
             .await
             .context("failed to submit PLC operation to directory")?;
     }
+
+    // The account is fully created. Commit the SQL transaction to the database.
+    tx.commit().await.context("failed to commit transaction")?;
 
     // Broadcast the identity event now that the new identity is resolvable on the public directory.
     fhp.identity(
