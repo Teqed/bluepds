@@ -4,6 +4,7 @@
 !/src
 !/static
 !/templates
+!/.env
 !/.gitattributes
 !/.gitignore
 !/Cargo.lock

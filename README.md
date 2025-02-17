@@ -1,5 +1,25 @@
 # Bluesky PDS
-This is a barebones implementation of a ATProto PDS using [Axum](https://github.com/tokio-rs/axum) and [Azure app services](https://learn.microsoft.com/en-us/azure/app-service/overview).
+This is an implementation of a ATProto PDS using [Axum](https://github.com/tokio-rs/axum) and [Azure app services](https://learn.microsoft.com/en-us/azure/app-service/overview).
+
+## Quick Start
+```
+# Install sqlx CLI at https://github.com/launchbadge/sqlx/tree/main/sqlx-cli
+cargo sqlx database setup
+cargo run
+```
+
+## Code map
+* `migrations/`: SQLite database migrations
+* `src/`
+  * `endpoints/`: ATProto API endpoints
+  * `auth.rs`: Authentication primitives
+  * `config.rs`: Application configuration
+  * `did.rs`: Decentralized IDentifier helpers
+  * `error.rs`: Axum error helpers
+  * `firehose.rs`: ATProto firehose producer
+  * `main.rs`: Main entrypoint
+  * `plc.rs`: Functionality to access the Public Ledger of Credentials
+  * `storage.rs`: Helpers to access user repository storage
 
 ## To-do
 - [X] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)
@@ -32,13 +52,6 @@ This is a barebones implementation of a ATProto PDS using [Axum](https://github.
     - [ ] UG /xrpc/com.atproto.sync.listBlobs
     - [X] UG /xrpc/com.atproto.sync.listRepos
     - [X] UG /xrpc/com.atproto.sync.subscribeRepos
-
-## Quick Start
-```
-# Install sqlx CLI at https://github.com/launchbadge/sqlx/tree/main/sqlx-cli
-cargo sqlx database setup
-cargo run
-```
 
 ## Quick Deployment (Azure CLI)
 ```
