@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use atrium_api::{com::atproto::sync, types::string::Did};
 use atrium_repo::{
     blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
@@ -9,6 +9,7 @@ use atrium_repo::{
 use axum::{
     body::Bytes,
     extract::{Query, State, WebSocketUpgrade},
+    http::StatusCode,
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -20,7 +21,7 @@ use crate::{
     config::AppConfig,
     firehose::FirehoseProducer,
     storage::{open_repo_db, open_store},
-    AppState, Db, Result,
+    AppState, Db, Error, Result,
 };
 
 async fn get_blob(
@@ -106,6 +107,39 @@ async fn get_record(
         .context("failed to extract records")?;
 
     Ok(Bytes::from_owner(contents))
+}
+
+async fn get_repo_status(
+    State(db): State<Db>,
+    Query(input): Query<sync::get_repo::Parameters>,
+) -> Result<Json<sync::get_repo_status::Output>> {
+    let did = input.did.as_str();
+    let r = sqlx::query!(r#"SELECT rev, status FROM accounts WHERE did = ?"#, did)
+        .fetch_optional(&db)
+        .await
+        .context("failed to execute query")?;
+
+    let r = if let Some(r) = r {
+        r
+    } else {
+        return Err(Error::with_status(
+            StatusCode::NOT_FOUND,
+            anyhow!("account not found"),
+        ))?;
+    };
+
+    let active = r.status == "active";
+    let status = if active { None } else { Some(r.status) };
+
+    Ok(Json(
+        sync::get_repo_status::OutputData {
+            active,
+            status,
+            did: input.did.clone(),
+            rev: Some(r.rev),
+        }
+        .into(),
+    ))
 }
 
 async fn get_repo(
@@ -226,6 +260,10 @@ pub fn routes() -> axum::Router<AppState> {
             get(get_latest_commit),
         )
         .route(concat!("/", sync::get_record::NSID), get(get_record))
+        .route(
+            concat!("/", sync::get_repo_status::NSID),
+            get(get_repo_status),
+        )
         .route(concat!("/", sync::get_repo::NSID), get(get_repo))
         .route(concat!("/", sync::list_repos::NSID), get(list_repos))
         .route(
