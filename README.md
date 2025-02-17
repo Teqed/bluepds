@@ -9,17 +9,19 @@ cargo run
 ```
 
 ## Code map
-* `migrations/`: SQLite database migrations
-* `src/`
-  * `endpoints/`: ATProto API endpoints
-  * `auth.rs`: Authentication primitives
-  * `config.rs`: Application configuration
-  * `did.rs`: Decentralized IDentifier helpers
-  * `error.rs`: Axum error helpers
-  * `firehose.rs`: ATProto firehose producer
-  * `main.rs`: Main entrypoint
-  * `plc.rs`: Functionality to access the Public Ledger of Credentials
-  * `storage.rs`: Helpers to access user repository storage
+```
+* migrations/   - SQLite database migrations
+* src/
+  * endpoints/  - ATProto API endpoints
+  * auth.rs     - Authentication primitives
+  * config.rs   - Application configuration
+  * did.rs      - Decentralized Identifier helpers
+  * error.rs    - Axum error helpers
+  * firehose.rs - ATProto firehose producer
+  * main.rs     - Main entrypoint
+  * plc.rs      - Functionality to access the Public Ledger of Credentials
+  * storage.rs  - Helpers to access user repository storage
+```
 
 ## To-do
 - [X] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)
