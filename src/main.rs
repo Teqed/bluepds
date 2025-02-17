@@ -5,8 +5,16 @@ use std::{
     sync::Arc,
 };
 
+use atrium_api::types::string::Did;
 use atrium_crypto::keypair::{Export, Secp256k1Keypair};
-use axum::{extract::FromRef, response::IntoResponse, routing::get, Router};
+use axum::{
+    body::Body,
+    extract::{FromRef, Request, State},
+    http::{HeaderMap, Response, StatusCode, Uri},
+    response::IntoResponse,
+    routing::get,
+    Router,
+};
 use azure_core::auth::TokenCredential;
 use clap::Parser;
 use clap_verbosity_flag::{log::LevelFilter, InfoLevel, Verbosity};
@@ -18,7 +26,7 @@ use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use anyhow::Context;
+use anyhow::{anyhow, bail, Context};
 use tracing::{info, warn};
 
 mod auth;
@@ -107,6 +115,79 @@ Most API routes are under /xrpc/
       Code: https://github.com/DrChat/bluepds
   Protocol: https://atproto.com
     "#
+}
+
+/// Service proxy.
+///
+/// Reference: https://atproto.com/specs/xrpc#service-proxying
+async fn service_proxy(
+    headers: HeaderMap,
+    url: Uri,
+    State(skey): State<SigningKey>,
+    request: Request<Body>,
+) -> Result<Response<Body>> {
+    let (did, id) = match headers.get("atproto-proxy") {
+        Some(val) => {
+            let val =
+                std::str::from_utf8(val.as_bytes()).context("proxy header not valid utf-8")?;
+
+            let mut s = val.splitn(2, '#');
+            let did = s.next().context("invalid proxy header")?;
+            let id = s.next().context("invalid proxy header")?;
+
+            let did =
+                Did::from_str(did).map_err(|e| anyhow!("atproto proxy not a valid DID: {e}"))?;
+
+            (did, id.to_string())
+        }
+        None => {
+            return Err(Error::with_status(
+                StatusCode::NOT_FOUND,
+                anyhow!("endpoint not found and no `atproto-proxy` header specified"),
+            ));
+        }
+    };
+
+    // TODO: Use some form of caching just so we don't repeatedly try to resolve a DID.
+    let did_doc = did::resolve(did.clone())
+        .await
+        .context("failed to resolve did document")?;
+
+    let service = match did_doc.service.iter().find(|s| s.id == id) {
+        Some(service) => service,
+        None => {
+            return Err(Error::with_status(
+                StatusCode::BAD_REQUEST,
+                anyhow!("could not find resolve service #{id}"),
+            ))
+        }
+    };
+
+    let url = service
+        .service_endpoint
+        .join(url.path())
+        .context("failed to construct target url")?;
+
+    // TODO: Mint a bearer token by signing a JSON web token.
+    // https://github.com/DavidBuchanan314/millipds/blob/5c7529a739d394e223c0347764f1cf4e8fd69f94/src/millipds/appview_proxy.py#L47-L59
+
+    let r = reqwest::Client::new()
+        .request(request.method().clone(), url)
+        .body(reqwest::Body::wrap_stream(
+            request.into_body().into_data_stream(),
+        ))
+        .send()
+        .await
+        .context("failed to send request")?;
+
+    let mut resp = Response::builder().status(r.status());
+    *resp.headers_mut().unwrap() = r.headers().clone();
+
+    let resp = resp
+        .body(Body::from_stream(r.bytes_stream()))
+        .context("failed to construct response")?;
+
+    Ok(resp)
 }
 
 async fn run() -> anyhow::Result<()> {
@@ -227,7 +308,7 @@ async fn run() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(index))
-        .nest("/xrpc", endpoints::routes())
+        .nest("/xrpc", endpoints::routes().fallback(service_proxy))
         // .layer(RateLimitLayer::new(30, Duration::from_secs(30)))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
