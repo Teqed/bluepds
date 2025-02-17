@@ -23,6 +23,7 @@ use tracing::{info, warn};
 
 mod auth;
 mod config;
+mod did;
 mod endpoints;
 mod error;
 mod firehose;

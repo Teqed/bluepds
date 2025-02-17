@@ -111,7 +111,7 @@ async fn create_account(
         services: HashMap::from([(
             "atproto_pds".to_string(),
             PlcService::Pds {
-                endpoint: config.host_name.clone(),
+                service_endpoint: config.host_name.clone(),
             },
         )]),
         prev: None,

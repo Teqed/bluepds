@@ -11,7 +11,7 @@ const PLC_DIRECTORY: &str = "https://plc.directory/";
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum PlcService {
     #[serde(rename = "AtprotoPersonalDataServer")]
-    Pds { endpoint: String },
+    Pds { service_endpoint: String },
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
