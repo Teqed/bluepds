@@ -110,6 +110,9 @@ async fn apply_writes(
 ) -> Result<Json<repo::apply_writes::Output>> {
     use atrium_api::com::atproto::repo::apply_writes::{self, InputWritesItem, OutputResultsItem};
 
+    // TODO: `input.repo`
+    // TODO: `input.validate`
+
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
         .await
         .context("failed to open user repo")?;
@@ -280,6 +283,9 @@ async fn create_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::create_record::Input>,
 ) -> Result<Json<repo::create_record::Output>> {
+    // TODO: `input.repo`
+    // TODO: `input.validate`
+
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
         .await
         .context("failed to open user repo")?;
@@ -386,6 +392,10 @@ async fn put_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::put_record::Input>,
 ) -> Result<Json<repo::put_record::Output>> {
+    // TODO: `input.repo`
+    // TODO: `input.swap_record`
+    // TODO: `input.validate`
+
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
         .await
         .context("failed to open user repo")?;
@@ -493,6 +503,10 @@ async fn delete_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::delete_record::Input>,
 ) -> Result<Json<repo::delete_record::Output>> {
+    // TODO: `input.repo`
+    // TODO: `input.swap_record`
+    // TODO: `input.validate`
+
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
         .await
         .context("failed to open user repo")?;
@@ -604,7 +618,7 @@ async fn describe_repo(
                 .map(|s| Nsid::new(s).unwrap())
                 .collect::<Vec<_>>(),
             did: did.clone(),
-            did_doc: Unknown::Null,
+            did_doc: Unknown::Null, // TODO: Fetch the DID document from the PLC directory
             handle: handle.clone(),
             handle_is_correct: true, // TODO
         }
@@ -617,6 +631,12 @@ async fn get_record(
     State(db): State<Db>,
     Query(input): Query<repo::get_record::Parameters>,
 ) -> Result<Json<repo::get_record::Output>> {
+    if input.cid.is_some() {
+        return Err(Error::unimplemented(anyhow!(
+            "looking up old records is unsupported"
+        )));
+    }
+
     // Lookup the DID by the provided handle.
     let (did, _handle) = resolve_did(&db, &input.repo)
         .await
@@ -654,6 +674,8 @@ async fn list_records(
     State(db): State<Db>,
     Query(input): Query<repo::list_records::Parameters>,
 ) -> Result<Json<repo::list_records::Output>> {
+    // TODO: `input.reverse`
+
     // Lookup the DID by the provided handle.
     let (did, _handle) = resolve_did(&db, &input.repo)
         .await

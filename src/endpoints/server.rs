@@ -73,6 +73,12 @@ async fn create_account(
     let email = input.email.as_deref().context("no email provided")?;
     let pass = input.password.as_deref().context("no password provided")?;
 
+    // TODO: `input.plc_op`
+    // TODO: `input.recovery_key`
+    if input.plc_op.is_some() || input.recovery_key.is_some() {
+        return Err(Error::unimplemented(anyhow!("plc_op / recovery_key")));
+    }
+
     // Begin a new transaction to actually create the user's profile.
     // Unless committed, the transaction will be automatically rolled back.
     let tx = db.begin().await.context("failed to begin transaction")?;
@@ -301,6 +307,9 @@ async fn create_session(
 ) -> Result<Json<server::create_session::Output>> {
     let handle = &input.identifier;
     let password = &input.password;
+
+    // TODO: `input.allow_takedown`
+    // TODO: `input.auth_factor_token`
 
     let account = sqlx::query!(
         r#"

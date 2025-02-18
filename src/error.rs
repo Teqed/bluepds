@@ -14,6 +14,10 @@ pub struct Error {
 }
 
 impl Error {
+    pub fn unimplemented(err: impl Into<anyhow::Error>) -> Self {
+        Self::with_status(StatusCode::NOT_IMPLEMENTED, err)
+    }
+
     pub fn with_status(status: StatusCode, err: impl Into<anyhow::Error>) -> Self {
         Self {
             status,

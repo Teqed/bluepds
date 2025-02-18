@@ -132,9 +132,7 @@ async fn service_proxy(
             let val =
                 std::str::from_utf8(val.as_bytes()).context("proxy header not valid utf-8")?;
 
-            let mut s = val.splitn(2, '#');
-            let did = s.next().context("invalid proxy header")?;
-            let id = s.next().context("invalid proxy header")?;
+            let (did, id) = val.split_once('#').context("invalid proxy header")?;
 
             let did =
                 Did::from_str(did).map_err(|e| anyhow!("atproto proxy not a valid DID: {e}"))?;
