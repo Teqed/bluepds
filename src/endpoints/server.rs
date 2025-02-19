@@ -26,7 +26,7 @@ use crate::{
     auth::AuthenticatedUser,
     config::AppConfig,
     firehose::{Commit, FirehoseProducer},
-    plc::{self, PlcOperation, PlcService, PlcVerificationMethod},
+    plc::{self, PlcOperation, PlcService},
     AppState, Db, Error, Result, RotationKey, SigningKey,
 };
 
@@ -81,13 +81,13 @@ async fn create_account(
 
     // Begin a new transaction to actually create the user's profile.
     // Unless committed, the transaction will be automatically rolled back.
-    let tx = db.begin().await.context("failed to begin transaction")?;
+    let mut tx = db.begin().await.context("failed to begin transaction")?;
 
     let _invite = match &input.invite_code {
         Some(code) => {
             let invite: Option<String> = sqlx::query_scalar!(
                 r#"
-                UPDATE OR ROLLBACK invites
+                UPDATE invites
                     SET count = count - 1
                     WHERE id = ?
                     AND count > 0
@@ -95,7 +95,7 @@ async fn create_account(
                 "#,
                 code
             )
-            .fetch_optional(&db)
+            .fetch_optional(&mut *tx)
             .await
             .context("failed to check invite code")?;
 
@@ -111,23 +111,20 @@ async fn create_account(
     let op = PlcOperation {
         typ: "plc_operation".to_string(),
         rotation_keys: vec![rkey.did().to_string()],
-        verification_methods: vec![PlcVerificationMethod {
-            atproto: skey.did().to_string(),
-        }],
-        also_known_as: vec![input.handle.as_str().to_string()],
+        verification_methods: HashMap::from([("atproto".to_string(), skey.did().to_string())]),
+        also_known_as: vec![format!("at://{}", input.handle.as_str())],
         services: HashMap::from([(
             "atproto_pds".to_string(),
             PlcService::Pds {
-                service_endpoint: config.host_name.clone(),
+                endpoint: format!("https://{}", config.host_name),
             },
         )]),
         prev: None,
     };
 
-    let bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode genesis op")?;
-    let bytes = rkey.sign(&bytes).context("failed to sign genesis op")?;
-
-    let op = op.sign(bytes);
+    let op = plc::sign_op(&rkey, op)
+        .await
+        .context("failed to sign genesis op")?;
     let op_bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode genesis op")?;
 
     let digest = base32::encode(
@@ -137,6 +134,28 @@ async fn create_account(
 
     let did_hash = &digest[..24];
     let did = format!("did:plc:{}", did_hash);
+
+    let doc = tokio::fs::File::create(config.plc.path.join(format!("{}.car", did_hash)))
+        .await
+        .context("failed to create did doc")?;
+
+    let mut plc_doc = CarStore::create(doc)
+        .await
+        .context("failed to create did doc")?;
+
+    let plc_cid = plc_doc
+        .write_block(DAG_CBOR, SHA2_256, &op_bytes)
+        .await
+        .context("failed to write genesis commit")?;
+
+    if config.plc.update {
+        // Send the new account's data to the PLC directory.
+        plc::submit(&did, &op)
+            .await
+            .context("failed to submit PLC operation to directory")?;
+    }
+
+    // Now hash the user's password.
     let salt = SaltString::generate(&mut rand::thread_rng());
     let pass = Argon2::default()
         .hash_password(pass.as_bytes(), salt.as_salt())
@@ -185,15 +204,16 @@ async fn create_account(
     .await
     .context("failed to create user repo")?;
 
+    let plc_cid = plc_cid.to_string();
     let cid_str = cid.to_string();
     let rev_str = rev.as_str();
 
     sqlx::query!(
         r#"
-        INSERT OR ROLLBACK INTO accounts (did, email, password, root, rev, created_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'));
+        INSERT INTO accounts (did, email, password, root, plc_root, rev, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'));
 
-        INSERT OR ROLLBACK INTO handles (did, handle, created_at)
+        INSERT INTO handles (did, handle, created_at)
             VALUES (?, ?, datetime('now'));
 
         -- Cleanup stale invite codes
@@ -204,11 +224,12 @@ async fn create_account(
         email,
         pass,
         cid_str,
+        plc_cid,
         rev_str,
         did,
         handle
     )
-    .execute(&db)
+    .execute(&mut *tx)
     .await
     .context("failed to create new account")?;
 
@@ -227,29 +248,9 @@ async fn create_account(
         session_id,
         did
     )
-    .execute(&db)
+    .execute(&mut *tx)
     .await
     .context("failed to create new session")?;
-
-    let doc = tokio::fs::File::create(config.plc.path.join(format!("{}.car", did_hash)))
-        .await
-        .context("failed to create did doc")?;
-
-    let mut doc = CarStore::create(doc)
-        .await
-        .context("failed to create did doc")?;
-
-    let _cid = doc
-        .write_block(DAG_CBOR, SHA2_256, &op_bytes)
-        .await
-        .context("failed to write genesis commit")?;
-
-    if config.plc.update {
-        // Send the new account's data to the PLC directory.
-        plc::submit(&did, &op)
-            .await
-            .context("failed to submit PLC operation to directory")?;
-    }
 
     // The account is fully created. Commit the SQL transaction to the database.
     tx.commit().await.context("failed to commit transaction")?;

@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
+
+use crate::RotationKey;
 
 /// The URL of the public PLC directory.
 const PLC_DIRECTORY: &str = "https://plc.directory/";
@@ -11,13 +14,7 @@ const PLC_DIRECTORY: &str = "https://plc.directory/";
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum PlcService {
     #[serde(rename = "AtprotoPersonalDataServer")]
-    Pds { service_endpoint: String },
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct PlcVerificationMethod {
-    pub atproto: String,
+    Pds { endpoint: String },
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -26,7 +23,7 @@ pub struct PlcOperation {
     #[serde(rename = "type")]
     pub typ: String,
     pub rotation_keys: Vec<String>,
-    pub verification_methods: Vec<PlcVerificationMethod>,
+    pub verification_methods: HashMap<String, String>,
     pub also_known_as: Vec<String>,
     pub services: HashMap<String, PlcService>,
     pub prev: Option<String>,
@@ -41,7 +38,7 @@ impl PlcOperation {
             also_known_as: self.also_known_as,
             services: self.services,
             prev: self.prev,
-            sig: base64::prelude::BASE64_URL_SAFE.encode(sig),
+            sig: base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(sig),
         }
     }
 }
@@ -52,23 +49,42 @@ pub struct SignedPlcOperation {
     #[serde(rename = "type")]
     pub typ: String,
     pub rotation_keys: Vec<String>,
-    pub verification_methods: Vec<PlcVerificationMethod>,
+    pub verification_methods: HashMap<String, String>,
     pub also_known_as: Vec<String>,
     pub services: HashMap<String, PlcService>,
     pub prev: Option<String>,
     pub sig: String,
 }
 
+pub async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Result<SignedPlcOperation> {
+    let bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode op")?;
+    let bytes = rkey.sign(&bytes).context("failed to sign op")?;
+
+    Ok(op.sign(bytes))
+}
+
 /// Submit a PLC operation to the public directory.
 pub async fn submit(did: &str, op: &SignedPlcOperation) -> anyhow::Result<()> {
+    debug!("submitting {} {}", did, serde_json::to_string(&op).unwrap());
+
     let res = reqwest::Client::new()
         .post(format!("{PLC_DIRECTORY}{did}"))
-        .json(op)
+        .json(&op)
         .send()
         .await
         .context("failed to send directory request")?;
 
-    res.error_for_status()
-        .context("plc directory returned an error")?;
-    Ok(())
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        let e = res
+            .json::<serde_json::Value>()
+            .await
+            .context("failed to read error response")?;
+
+        bail!(
+            "error from PLC directory: {}",
+            serde_json::to_string(&e).unwrap()
+        );
+    }
 }

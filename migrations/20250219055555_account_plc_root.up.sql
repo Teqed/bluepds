@@ -1,0 +1,1 @@
+ALTER TABLE accounts ADD COLUMN plc_root TEXT NOT NULL;

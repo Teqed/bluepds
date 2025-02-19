@@ -64,6 +64,10 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
       acrUseManagedIdentityCreds: true
       appSettings: [
         {
+          name: 'BLUEPDS_HOST_NAME'
+          value: '${webName}.azurewebsites.net'
+        }
+        {
           name: 'WEBSITES_PORT'
           value: '8000'
         }

@@ -17,4 +17,4 @@ path = "data/repo"
 
 [plc]
 path = "data/plc"
-update = false # Do not write updates to the global PLC directory.
+update = true # Do not write updates to the global PLC directory.

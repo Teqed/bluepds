@@ -219,8 +219,8 @@ async fn run() -> anyhow::Result<()> {
 
     // Read and parse the user-provided configuration.
     let config: AppConfig = Figment::new()
-        .merge(figment::providers::Toml::file(args.config))
-        .merge(figment::providers::Env::prefixed("BLUEPDS_"))
+        .admerge(figment::providers::Toml::file(args.config))
+        .admerge(figment::providers::Env::prefixed("BLUEPDS_"))
         .extract()
         .context("failed to load configuration")?;
 
