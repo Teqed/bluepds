@@ -1,5 +1,6 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
+use anyhow::Result;
 use atrium_api::{
     com::atproto::sync::{self},
     types::string::{Datetime, Did},
@@ -140,6 +141,123 @@ impl FirehoseProducer {
     }
 }
 
+async fn broadcast_message(
+    clients: &mut Vec<WebSocket>,
+    history: &mut VecDeque<(i64, &str, sync::subscribe_repos::Message)>,
+    seq: &mut i64,
+    mut msg: sync::subscribe_repos::Message,
+) -> Result<()> {
+    let enc = serde_ipld_dagcbor::to_vec(&msg).unwrap().into_boxed_slice();
+
+    let mut dummy_seq = 0i64;
+    let (ty, nseq) = match &mut msg {
+        sync::subscribe_repos::Message::Account(m) => ("#account", &mut m.seq),
+        sync::subscribe_repos::Message::Commit(m) => ("#commit", &mut m.seq),
+        sync::subscribe_repos::Message::Handle(m) => ("#handle", &mut m.seq),
+        sync::subscribe_repos::Message::Identity(m) => ("#identity", &mut m.seq),
+        sync::subscribe_repos::Message::Info(_m) => ("#info", &mut dummy_seq),
+        sync::subscribe_repos::Message::Migrate(m) => ("#migrate", &mut m.seq),
+        sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
+    };
+
+    // Increment the sequence number.
+    *nseq = *seq;
+
+    history.push_back((*seq, ty, msg.clone()));
+    *seq += 1;
+
+    info!("Broadcasting message {} ({} bytes)", ty, enc.len());
+
+    let hdr = FrameHeader::Message(ty.to_string());
+
+    let mut frame = Vec::new();
+    serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
+    serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
+
+    for i in (0..clients.len()).rev() {
+        let client = &mut clients[i];
+        if let Err(e) = client.send(Message::binary(frame.clone())).await {
+            info!("Firehose client disconnected: {e}");
+            clients.remove(i);
+        }
+    }
+
+    Ok(())
+}
+
+async fn broadcast_ping(clients: &mut Vec<WebSocket>) -> Result<()> {
+    let mut frame = Vec::new();
+
+    let hdr = FrameHeader::Message("#info".to_string());
+    let msg = sync::subscribe_repos::Message::Info(Box::new(
+        sync::subscribe_repos::InfoData {
+            message: None,
+            name: "ping".to_string(),
+        }
+        .into(),
+    ));
+
+    serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
+    serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
+
+    for i in (0..clients.len()).rev() {
+        let client = &mut clients[i];
+        if let Err(e) = client.send(Message::binary(frame.clone())).await {
+            info!("Firehose client disconnected: {e}");
+            clients.remove(i);
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_connect(
+    mut ws: WebSocket,
+    seq: i64,
+    history: &VecDeque<(i64, &str, sync::subscribe_repos::Message)>,
+    cursor: Option<i64>,
+) -> Option<WebSocket> {
+    if let Some(cursor) = cursor {
+        let mut frame = Vec::new();
+
+        // Cursor specified; attempt to backfill the consumer.
+        if cursor > seq {
+            let hdr = FrameHeader::Error;
+            let msg = sync::subscribe_repos::Error::FutureCursor(Some(format!(
+                "cursor {cursor} is greater than the current sequence number {seq}"
+            )));
+
+            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
+            serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
+
+            // Drop the connection.
+            let _ = ws.send(Message::binary(frame)).await;
+            return None;
+        }
+
+        let mut it = history.iter();
+        while let Some((seq, ty, msg)) = it.next() {
+            if *seq > cursor {
+                break;
+            }
+
+            let hdr = FrameHeader::Message(ty.to_string());
+            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
+            serde_ipld_dagcbor::to_writer(&mut frame, msg).unwrap();
+
+            if let Err(e) = ws.send(Message::binary(frame.clone())).await {
+                info!("Firehose client disconnected during backfill: {e}");
+                break;
+            }
+
+            // Clear out the frame to begin a new one.
+            frame.clear();
+        }
+    }
+
+    Some(ws)
+}
+
 pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1000);
     let handle = tokio::spawn(async move {
@@ -147,84 +265,24 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
         let mut history = VecDeque::with_capacity(1000);
         let mut seq = 0i64; // TODO: This should be saved in the database.
 
-        while let Some(msg) = rx.recv().await {
-            match msg {
-                FirehoseMessage::Broadcast(mut msg) => {
-                    let enc = serde_ipld_dagcbor::to_vec(&msg).unwrap().into_boxed_slice();
-
-                    let mut dummy_seq = 0i64;
-                    let (ty, nseq) = match &mut msg {
-                        sync::subscribe_repos::Message::Account(m) => ("#account", &mut m.seq),
-                        sync::subscribe_repos::Message::Commit(m) => ("#commit", &mut m.seq),
-                        sync::subscribe_repos::Message::Handle(m) => ("#handle", &mut m.seq),
-                        sync::subscribe_repos::Message::Identity(m) => ("#identity", &mut m.seq),
-                        sync::subscribe_repos::Message::Info(_m) => ("#info", &mut dummy_seq),
-                        sync::subscribe_repos::Message::Migrate(m) => ("#migrate", &mut m.seq),
-                        sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
-                    };
-
-                    // Increment the sequence number.
-                    *nseq = seq;
-
-                    history.push_back((seq, ty, msg.clone()));
-                    seq += 1;
-
-                    info!("Broadcasting message {} ({} bytes)", ty, enc.len());
-
-                    let hdr = FrameHeader::Message(ty.to_string());
-
-                    let mut frame = Vec::new();
-                    serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
-                    serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
-
-                    for i in (0..clients.len()).rev() {
-                        let client = &mut clients[i];
-                        if let Err(e) = client.send(Message::binary(frame.clone())).await {
-                            info!("Firehose client disconnected: {e}");
-                            clients.remove(i);
+        loop {
+            match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
+                Ok(msg) => match msg {
+                    Some(FirehoseMessage::Broadcast(msg)) => {
+                        broadcast_message(&mut clients, &mut history, &mut seq, msg)
+                            .await
+                            .unwrap()
+                    }
+                    Some(FirehoseMessage::Connect((ws, cursor))) => {
+                        if let Some(ws) = handle_connect(ws, seq, &mut history, cursor).await {
+                            clients.push(ws);
                         }
                     }
-                }
-                FirehoseMessage::Connect((mut ws, cursor)) => {
-                    if let Some(cursor) = cursor {
-                        let mut frame = Vec::new();
-
-                        // Cursor specified; attempt to backfill the consumer.
-                        if cursor > seq {
-                            let hdr = FrameHeader::Error;
-                            let msg = sync::subscribe_repos::Error::FutureCursor(Some(format!(
-                                "cursor {cursor} is greater than the current sequence number {seq}"
-                            )));
-
-                            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
-                            serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
-
-                            // Drop the connection.
-                            let _ = ws.send(Message::binary(frame)).await;
-                            continue;
-                        }
-
-                        let mut it = history.iter();
-                        while let Some((seq, ty, msg)) = it.next() {
-                            if *seq > cursor {
-                                break;
-                            }
-
-                            let hdr = FrameHeader::Message(ty.to_string());
-                            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
-                            serde_ipld_dagcbor::to_writer(&mut frame, msg).unwrap();
-
-                            if let Err(e) = ws.send(Message::binary(frame.clone())).await {
-                                info!("Firehose client disconnected during backfill: {e}");
-                                break;
-                            }
-
-                            // Clear out the frame to begin a new one.
-                            frame.clear();
-                        }
-                    }
-
-                    clients.push(ws);
+                    // All producers have been destroyed.
+                    None => break,
+                },
+                Err(_) => {
+                    let _ = broadcast_ping(&mut clients).await;
                 }
             }
         }
