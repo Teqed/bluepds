@@ -271,7 +271,7 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
     let handle = tokio::spawn(async move {
         let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
-        let mut seq = 0i64; // TODO: This should be saved in the database.
+        let mut seq = 1i64;
 
         loop {
             match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
