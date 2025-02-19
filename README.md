@@ -1,6 +1,8 @@
 # Bluesky PDS
 This is an implementation of an ATProto PDS using [Axum](https://github.com/tokio-rs/axum) and [Azure app services](https://learn.microsoft.com/en-us/azure/app-service/overview).
 
+This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
+
 ## Quick Start
 ```
 # Install sqlx CLI at https://github.com/launchbadge/sqlx/tree/main/sqlx-cli

@@ -11,7 +11,7 @@ use tracing::info;
 
 enum FirehoseMessage {
     Broadcast(sync::subscribe_repos::Message),
-    Connect(axum::extract::ws::WebSocket),
+    Connect((axum::extract::ws::WebSocket, Option<i64>)),
 }
 
 enum FrameHeader {
@@ -36,9 +36,6 @@ impl Serialize for FrameHeader {
             FrameHeader::Error => {
                 map.serialize_key("op")?;
                 map.serialize_value(&-1)?;
-
-                // TODO...
-                todo!()
             }
         }
 
@@ -138,8 +135,8 @@ impl FirehoseProducer {
             .await;
     }
 
-    pub async fn client_connection(&self, ws: WebSocket) {
-        let _ = self.tx.send(FirehoseMessage::Connect(ws)).await;
+    pub async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
+        let _ = self.tx.send(FirehoseMessage::Connect((ws, cursor))).await;
     }
 }
 
@@ -168,9 +165,9 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
 
                     // Increment the sequence number.
                     *nseq = seq;
-                    seq += 1;
 
-                    history.push_back(msg.clone());
+                    history.push_back((seq, ty, msg.clone()));
+                    seq += 1;
 
                     info!("Broadcasting message {} ({} bytes)", ty, enc.len());
 
@@ -180,11 +177,53 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
                     serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
                     serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
 
-                    for client in &mut clients {
-                        let _ = client.send(Message::binary(frame.clone())).await;
+                    for i in (0..clients.len()).rev() {
+                        let client = &mut clients[i];
+                        if let Err(e) = client.send(Message::binary(frame.clone())).await {
+                            info!("Firehose client disconnected: {e}");
+                            clients.remove(i);
+                        }
                     }
                 }
-                FirehoseMessage::Connect(ws) => {
+                FirehoseMessage::Connect((mut ws, cursor)) => {
+                    if let Some(cursor) = cursor {
+                        let mut frame = Vec::new();
+
+                        // Cursor specified; attempt to backfill the consumer.
+                        if cursor > seq {
+                            let hdr = FrameHeader::Error;
+                            let msg = sync::subscribe_repos::Error::FutureCursor(Some(format!(
+                                "cursor {cursor} is greater than the current sequence number {seq}"
+                            )));
+
+                            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
+                            serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
+
+                            // Drop the connection.
+                            let _ = ws.send(Message::binary(frame)).await;
+                            continue;
+                        }
+
+                        let mut it = history.iter();
+                        while let Some((seq, ty, msg)) = it.next() {
+                            if *seq > cursor {
+                                break;
+                            }
+
+                            let hdr = FrameHeader::Message(ty.to_string());
+                            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
+                            serde_ipld_dagcbor::to_writer(&mut frame, msg).unwrap();
+
+                            if let Err(e) = ws.send(Message::binary(frame.clone())).await {
+                                info!("Firehose client disconnected during backfill: {e}");
+                                break;
+                            }
+
+                            // Clear out the frame to begin a new one.
+                            frame.clear();
+                        }
+                    }
+
                     clients.push(ws);
                 }
             }
