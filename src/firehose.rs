@@ -166,7 +166,7 @@ async fn broadcast_message(
     *nseq = *seq;
 
     history.push_back((*seq, ty, msg.clone()));
-    *seq += 1;
+    *seq = seq.wrapping_add(1);
 
     let hdr = FrameHeader::Message(ty.to_string());
 
