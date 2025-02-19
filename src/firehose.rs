@@ -258,6 +258,11 @@ async fn handle_connect(
     Some(ws)
 }
 
+/// The main entrypoint for the firehose.
+///
+/// This will broadcast all updates in this PDS out to anyone who is listening.
+///
+/// Reference: https://atproto.com/specs/sync
 pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1000);
     let handle = tokio::spawn(async move {
