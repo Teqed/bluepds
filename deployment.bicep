@@ -55,6 +55,7 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
     type: 'SystemAssigned'
   }
   properties: {
+    httpsOnly: true
     serverFarmId: appServicePlan.id
     siteConfig: {
       // Sigh. This took _far_ too long to figure out.
