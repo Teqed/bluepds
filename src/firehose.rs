@@ -8,7 +8,7 @@ use atrium_api::{
 use atrium_repo::Cid;
 use axum::extract::ws::{Message, WebSocket};
 use serde::{ser::SerializeMap, Serialize};
-use tracing::info;
+use tracing::{debug, info};
 
 enum FirehoseMessage {
     Broadcast(sync::subscribe_repos::Message),
@@ -177,7 +177,7 @@ async fn broadcast_message(
     for i in (0..clients.len()).rev() {
         let client = &mut clients[i];
         if let Err(e) = client.send(Message::binary(frame.clone())).await {
-            info!("Firehose client disconnected: {e}");
+            debug!("Firehose client disconnected: {e}");
             clients.remove(i);
         }
     }
@@ -206,7 +206,7 @@ async fn broadcast_ping(clients: &mut Vec<WebSocket>) -> Result<()> {
     for i in (0..clients.len()).rev() {
         let client = &mut clients[i];
         if let Err(e) = client.send(Message::binary(frame.clone())).await {
-            info!("Firehose client disconnected: {e}");
+            debug!("Firehose client disconnected: {e}");
             clients.remove(i);
         }
     }
@@ -249,7 +249,7 @@ async fn handle_connect(
             serde_ipld_dagcbor::to_writer(&mut frame, msg).unwrap();
 
             if let Err(e) = ws.send(Message::binary(frame.clone())).await {
-                info!("Firehose client disconnected during backfill: {e}");
+                debug!("Firehose client disconnected during backfill: {e}");
                 break;
             }
 
