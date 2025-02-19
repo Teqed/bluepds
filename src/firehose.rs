@@ -160,13 +160,13 @@ async fn broadcast_message(
         sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
     };
 
+    info!("Broadcasting message {} {} ({} bytes)", *seq, ty, enc.len());
+
     // Increment the sequence number.
     *nseq = *seq;
 
     history.push_back((*seq, ty, msg.clone()));
     *seq += 1;
-
-    info!("Broadcasting message {} ({} bytes)", ty, enc.len());
 
     let hdr = FrameHeader::Message(ty.to_string());
 
@@ -188,6 +188,9 @@ async fn broadcast_message(
 async fn broadcast_ping(clients: &mut Vec<WebSocket>) -> Result<()> {
     let mut frame = Vec::new();
 
+    // FIXME: I'm not actually sure if and how pings are implemented in AT protocol.
+    // However, these are necessary to keep websocket connections alive, so we'll send
+    // `#info` frames for now.
     let hdr = FrameHeader::Message("#info".to_string());
     let msg = sync::subscribe_repos::Message::Info(Box::new(
         sync::subscribe_repos::InfoData {
@@ -271,12 +274,10 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
         let mut seq = 0i64; // TODO: This should be saved in the database.
 
         loop {
-            match tokio::time::timeout(Duration::from_secs(1), rx.recv()).await {
+            match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
                 Ok(msg) => match msg {
                     Some(FirehoseMessage::Broadcast(msg)) => {
-                        broadcast_message(&mut clients, &mut history, &mut seq, msg)
-                            .await
-                            .unwrap()
+                        let _ = broadcast_message(&mut clients, &mut history, &mut seq, msg).await;
                     }
                     Some(FirehoseMessage::Connect((ws, cursor))) => {
                         if let Some(ws) = handle_connect(ws, seq, &mut history, cursor).await {
