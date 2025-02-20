@@ -66,6 +66,7 @@ async fn create_account(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
     State(rkey): State<RotationKey>,
+    State(client): State<reqwest::Client>,
     State(config): State<AppConfig>,
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<server::create_account::Input>,
@@ -150,7 +151,7 @@ async fn create_account(
 
     if config.plc.update {
         // Send the new account's data to the PLC directory.
-        plc::submit(&did, &op)
+        plc::submit(&client, &did, &op)
             .await
             .context("failed to submit PLC operation to directory")?;
     }

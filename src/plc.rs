@@ -64,10 +64,14 @@ pub async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Result<Sig
 }
 
 /// Submit a PLC operation to the public directory.
-pub async fn submit(did: &str, op: &SignedPlcOperation) -> anyhow::Result<()> {
+pub async fn submit(
+    client: &reqwest::Client,
+    did: &str,
+    op: &SignedPlcOperation,
+) -> anyhow::Result<()> {
     debug!("submitting {} {}", did, serde_json::to_string(&op).unwrap());
 
-    let res = reqwest::Client::new()
+    let res = client
         .post(format!("{PLC_DIRECTORY}{did}"))
         .json(&op)
         .send()
