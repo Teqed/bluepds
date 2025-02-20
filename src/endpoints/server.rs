@@ -12,7 +12,7 @@ use atrium_repo::{
     Cid, Repository,
 };
 use axum::{
-    extract::State,
+    extract::{Request, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -23,7 +23,7 @@ use tracing::info;
 use uuid::Uuid;
 
 use crate::{
-    auth::AuthenticatedUser,
+    auth::{self, AuthenticatedUser},
     config::AppConfig,
     firehose::{Commit, FirehoseProducer},
     plc::{self, PlcOperation, PlcService},
@@ -304,6 +304,8 @@ async fn create_account(
 
 async fn create_session(
     State(db): State<Db>,
+    State(skey): State<SigningKey>,
+    State(config): State<AppConfig>,
     Json(input): Json<server::create_session::Input>,
 ) -> Result<Json<server::create_session::Output>> {
     let handle = &input.identifier;
@@ -360,24 +362,33 @@ async fn create_session(
     }
 
     let did = account.did;
-    let session_id = Uuid::new_v4().to_string();
 
-    sqlx::query!(
-        r#"
-        INSERT INTO sessions (id, did, created_at)
-            VALUES (?, ?, datetime('now'))
-        "#,
-        session_id,
-        did
+    let token = auth::sign(
+        &skey,
+        "at+jwt",
+        serde_json::json!({
+            "iss": did.clone(),
+            "aud": format!("did:web:{}", config.host_name),
+            "exp": (chrono::Utc::now() + std::time::Duration::from_secs(2 * 60 * 60)).timestamp()
+        }),
     )
-    .execute(&db)
-    .await
-    .context("failed to create new session")?;
+    .context("failed to sign jwt")?;
+
+    let refresh_token = auth::sign(
+        &skey,
+        "refresh+jwt",
+        serde_json::json!({
+            "iss": did.clone(),
+            "aud": format!("did:web:{}", config.host_name),
+            "exp": (chrono::Utc::now() + std::time::Duration::from_secs(2 * 60 * 60)).timestamp()
+        }),
+    )
+    .context("failed to sign refresh jwt")?;
 
     Ok(Json(
         server::create_session::OutputData {
-            access_jwt: session_id.clone(),
-            refresh_jwt: session_id.clone(),
+            access_jwt: token,
+            refresh_jwt: refresh_token,
 
             active: Some(true),
             did: Did::from_str(&did).unwrap(),
@@ -392,52 +403,136 @@ async fn create_session(
     ))
 }
 
+async fn refresh_session(
+    State(db): State<Db>,
+    State(skey): State<SigningKey>,
+    State(config): State<AppConfig>,
+    req: Request,
+) -> Result<Json<server::refresh_session::Output>> {
+    let auth = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .context("no authorization header provided")?;
+    let token = auth
+        .to_str()
+        .ok()
+        .and_then(|auth| auth.strip_prefix("Bearer "))
+        .context("invalid authentication token")?;
+
+    let (typ, claims) =
+        auth::verify(&skey.did(), token).context("failed to verify refresh token")?;
+    if typ != "refresh+jwt" {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("invalid refresh token"),
+        ));
+    }
+
+    let did = claims
+        .get("iss")
+        .and_then(|s| s.as_str())
+        .context("invalid jwt")?;
+
+    let user = sqlx::query!(
+        r#"
+        SELECT a.status, h.handle
+        FROM accounts a
+        JOIN handles h ON a.did = h.did
+        WHERE a.did = ?
+        ORDER BY h.created_at ASC
+        LIMIT 1
+        "#,
+        did
+    )
+    .fetch_one(&db)
+    .await
+    .context("failed to fetch user account")?;
+
+    let token = auth::sign(
+        &skey,
+        "at+jwt",
+        serde_json::json!({
+            "iss": did,
+            "aud": format!("did:web:{}", config.host_name),
+            "exp": (chrono::Utc::now() + std::time::Duration::from_secs(2 * 60 * 60)).timestamp()
+        }),
+    )
+    .context("failed to sign jwt")?;
+
+    let refresh_token = auth::sign(
+        &skey,
+        "refresh+jwt",
+        serde_json::json!({
+            "iss": format!("did:web:{}", config.host_name),
+            "aud": did,
+            "exp": (chrono::Utc::now() + std::time::Duration::from_secs(30 * 60 * 60)).timestamp()
+        }),
+    )
+    .context("failed to sign refresh jwt")?;
+
+    let active = user.status == "active";
+    let status = if active { None } else { Some(user.status) };
+
+    Ok(Json(
+        server::refresh_session::OutputData {
+            access_jwt: token,
+            refresh_jwt: refresh_token,
+
+            active: Some(active), // TODO?
+            did: atrium_api::types::string::Did::new(did.to_string()).unwrap(),
+            did_doc: None,
+            handle: atrium_api::types::string::Handle::new(user.handle).unwrap(),
+            status: status,
+        }
+        .into(),
+    ))
+}
+
 async fn get_session(
     user: AuthenticatedUser,
     State(db): State<Db>,
 ) -> Result<Json<server::get_session::Output>> {
     let did = user.did();
-    let session_id = user.session();
 
-    let session = sqlx::query!(
+    let user = sqlx::query!(
         r#"
-        SELECT s.id, s.did, a.email, (
+        SELECT a.email, a.status, (
             SELECT h.handle
             FROM handles h
-            WHERE h.did = s.did
+            WHERE h.did = a.did
             ORDER BY h.created_at ASC
             LIMIT 1
         ) AS handle
-        FROM sessions s
-        JOIN accounts a ON s.did = a.did
-        WHERE s.id = ?
-        AND s.did = ?
+        FROM accounts a
+        WHERE a.did = ?
         "#,
-        session_id,
         did
     )
     .fetch_optional(&db)
     .await
     .context("failed to fetch session")?;
 
-    if let Some(session) = session {
+    if let Some(user) = user {
+        let active = user.status == "active";
+        let status = if active { None } else { Some(user.status) };
+
         Ok(Json(
             server::get_session::OutputData {
-                active: Some(true),
+                active: Some(active),
                 did: Did::from_str(&did).unwrap(),
                 did_doc: None,
-                email: Some(session.email),
+                email: Some(user.email),
                 email_auth_factor: None,
                 email_confirmed: None,
-                handle: Handle::new(session.handle).unwrap(),
-                status: None,
+                handle: Handle::new(user.handle).unwrap(),
+                status,
             }
             .into(),
         ))
     } else {
         Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
-            anyhow!("session not found"),
+            anyhow!("user not found"),
         ))
     }
 }
@@ -463,12 +558,14 @@ pub fn routes() -> Router<AppState> {
     // UG /xrpc/com.atproto.server.describeServer
     // UP /xrpc/com.atproto.server.createAccount
     // UP /xrpc/com.atproto.server.createSession
+    // AP /xrpc/com.atproto.server.refreshSession
     // AG /xrpc/com.atproto.server.getSession
     // AP /xrpc/com.atproto.server.createInviteCode
     Router::new()
         .route(concat!("/", server::describe_server::NSID),    get(describe_server))
         .route(concat!("/", server::create_account::NSID),     post(create_account))
         .route(concat!("/", server::create_session::NSID),     post(create_session))
+        .route(concat!("/", server::refresh_session::NSID),     post(refresh_session))
         .route(concat!("/", server::get_session::NSID),        get(get_session))
         .route(concat!("/", server::create_invite_code::NSID), post(create_invite_code))
 }

@@ -7,6 +7,7 @@ use std::{
 
 use atrium_api::types::string::Did;
 use atrium_crypto::keypair::{Export, Secp256k1Keypair};
+use auth::AuthenticatedUser;
 use axum::{
     body::Body,
     extract::{FromRef, Request, State},
@@ -26,7 +27,7 @@ use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
 use tracing::{info, warn};
 
 mod auth;
@@ -122,11 +123,19 @@ Most API routes are under /xrpc/
 ///
 /// Reference: https://atproto.com/specs/xrpc#service-proxying
 async fn service_proxy(
-    headers: HeaderMap,
     url: Uri,
+    user: AuthenticatedUser,
     State(skey): State<SigningKey>,
+    headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response<Body>> {
+    let url_path = url.path_and_query().context("invalid service proxy url")?;
+    let lxm = url_path
+        .path()
+        .strip_prefix("/")
+        .with_context(|| format!("invalid service proxy url prefix: {}", url_path.path()))?;
+
+    let user_did = user.did();
     let (did, id) = match headers.get("atproto-proxy") {
         Some(val) => {
             let val =
@@ -137,20 +146,19 @@ async fn service_proxy(
             let did =
                 Did::from_str(did).map_err(|e| anyhow!("atproto proxy not a valid DID: {e}"))?;
 
-            (did, id.to_string())
+            (did, format!("#{id}"))
         }
-        None => {
-            return Err(Error::with_status(
-                StatusCode::NOT_FOUND,
-                anyhow!("endpoint not found and no `atproto-proxy` header specified"),
-            ));
-        }
+        // HACK: Assume the bluesky appview by default.
+        None => (
+            Did::new("did:web:api.bsky.app".to_string()).unwrap(),
+            "#bsky_appview".to_string(),
+        ),
     };
 
     // TODO: Use some form of caching just so we don't repeatedly try to resolve a DID.
     let did_doc = did::resolve(did.clone())
         .await
-        .context("failed to resolve did document")?;
+        .with_context(|| format!("failed to resolve did document {}", did.as_str()))?;
 
     let service = match did_doc.service.iter().find(|s| s.id == id) {
         Some(service) => service,
@@ -164,14 +172,29 @@ async fn service_proxy(
 
     let url = service
         .service_endpoint
-        .join(url.path())
+        .join(&format!("/xrpc{}", url_path))
         .context("failed to construct target url")?;
 
-    // TODO: Mint a bearer token by signing a JSON web token.
+    let exp = (chrono::Utc::now() + std::time::Duration::from_secs(60)).timestamp();
+
+    // Mint a bearer token by signing a JSON web token.
     // https://github.com/DavidBuchanan314/millipds/blob/5c7529a739d394e223c0347764f1cf4e8fd69f94/src/millipds/appview_proxy.py#L47-L59
+    let token = auth::sign(
+        &skey,
+        "JWT",
+        serde_json::json!({
+            "iss": user_did.as_str(),
+            "aud": did.as_str(),
+            "lxm": lxm,
+            "exp": exp,
+            "jti": exp, // FIXME: This should be random.
+        }),
+    )
+    .context("failed to sign jwt")?;
 
     let r = reqwest::Client::new()
         .request(request.method().clone(), url)
+        .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
         .body(reqwest::Body::wrap_stream(
             request.into_body().into_data_stream(),
         ))
@@ -180,7 +203,9 @@ async fn service_proxy(
         .context("failed to send request")?;
 
     let mut resp = Response::builder().status(r.status());
-    *resp.headers_mut().unwrap() = r.headers().clone();
+    if let Some(hdrs) = resp.headers_mut() {
+        *hdrs = r.headers().clone();
+    }
 
     let resp = resp
         .body(Body::from_stream(r.bytes_stream()))

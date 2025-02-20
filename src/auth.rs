@@ -1,22 +1,22 @@
 //! Authentication layers
 
 use anyhow::{anyhow, Context};
+use atrium_crypto::{
+    keypair::{Did, Secp256k1Keypair},
+    verify::Verifier,
+};
 use axum::{extract::FromRequestParts, http::StatusCode};
+use base64::Engine;
 
-use crate::{AppState, Error};
+use crate::{auth, AppState, Error};
 
 pub struct AuthenticatedUser {
     did: String,
-    session: String,
 }
 
 impl AuthenticatedUser {
     pub fn did(&self) -> String {
         self.did.clone()
-    }
-
-    pub fn session(&self) -> String {
-        self.session.clone()
     }
 }
 
@@ -27,23 +27,48 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut axum::http::request::Parts,
         state: &AppState,
     ) -> std::result::Result<Self, Self::Rejection> {
-        let session_id = parts.headers.get("authorization").and_then(|auth| {
-            auth.to_str()
-                .ok()
-                .and_then(|auth| auth.strip_prefix("Bearer "))
-        });
+        let token = parts
+            .headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|auth| {
+                auth.to_str()
+                    .ok()
+                    .and_then(|auth| auth.strip_prefix("Bearer "))
+            });
 
-        if let Some(session_id) = session_id {
-            let did = sqlx::query_scalar!(r#"SELECT did FROM sessions WHERE id = ?"#, session_id)
-                .fetch_optional(&state.db)
+        let token = match token {
+            Some(tok) => tok,
+            None => {
+                return Err(Error::with_status(
+                    StatusCode::UNAUTHORIZED,
+                    anyhow!("no bearer token"),
+                ))
+            }
+        };
+
+        let (typ, claims) = auth::verify(&state.signing_key.did(), token).map_err(|e| {
+            Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                e.context("failed to verify auth token"),
+            )
+        })?;
+
+        if typ != "at+jwt" {
+            return Err(Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                anyhow!("invalid token {typ}"),
+            ));
+        }
+
+        // TODO: Check `exp` claim.
+        if let Some(did) = claims.get("iss").and_then(serde_json::Value::as_str) {
+            let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
+                .fetch_one(&state.db)
                 .await
-                .context("failed to query session")?;
-
-            let did = did.context("session not found")?;
+                .with_context(|| format!("failed to query account {did}"))?;
 
             Ok(AuthenticatedUser {
-                session: session_id.to_string(),
-                did,
+                did: did.to_string(),
             })
         } else {
             Err(Error::with_status(
@@ -52,4 +77,57 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             ))
         }
     }
+}
+
+pub fn sign(
+    key: &Secp256k1Keypair,
+    typ: &str,
+    claims: serde_json::Value,
+) -> anyhow::Result<String> {
+    // RFC 9068
+    let hdr = serde_json::json!({
+        "typ": typ,
+        "alg": "ES256K", // Secp256k1Keypair
+    });
+    let hdr = base64::prelude::BASE64_URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&hdr).context("failed to encode claims")?);
+    let claims = base64::prelude::BASE64_URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&claims).context("failed to encode claims")?);
+    let sig = key
+        .sign(format!("{hdr}.{claims}").as_bytes())
+        .context("failed to sign jwt")?;
+    let sig = base64::prelude::BASE64_URL_SAFE_NO_PAD.encode(sig);
+
+    Ok(format!("{hdr}.{claims}.{sig}"))
+}
+
+pub fn verify(key: &str, token: &str) -> anyhow::Result<(String, serde_json::Value)> {
+    let mut parts = token.splitn(3, '.');
+    let hdr = parts.next().context("no header")?;
+    let claims = parts.next().context("no claims")?;
+    let sig = base64::prelude::BASE64_URL_SAFE_NO_PAD
+        .decode(parts.next().context("no sig")?)
+        .context("failed to decode signature")?;
+
+    let (alg, key) = atrium_crypto::did::parse_did_key(key).context("failed to decode key")?;
+    Verifier::default()
+        .verify(alg, &key, format!("{hdr}.{claims}").as_bytes(), &sig)
+        .context("failed to verify jwt")?;
+
+    let hdr = base64::prelude::BASE64_URL_SAFE_NO_PAD
+        .decode(hdr)
+        .context("failed to decode hdr")?;
+    let hdr =
+        serde_json::from_slice::<serde_json::Value>(&hdr).context("failed to parse hdr as json")?;
+    let typ = hdr
+        .get("typ")
+        .and_then(serde_json::Value::as_str)
+        .context("hdr is invalid")?;
+
+    let claims = base64::prelude::BASE64_URL_SAFE_NO_PAD
+        .decode(claims)
+        .context("failed to decode claims")?;
+    let claims = serde_json::from_slice(&claims).context("failed to parse claims as json")?;
+
+    Ok((typ.to_string(), claims))
 }

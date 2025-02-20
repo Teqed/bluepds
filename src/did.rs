@@ -4,9 +4,10 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 /// URL whitelist for DID document resolution.
-const ALLOWED_URLS: &[&str] = &["api.bsky.app"];
+const ALLOWED_URLS: &[&str] = &["api.bsky.app", "api.bsky.chat"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DidVerificationMethod {
     pub id: String,
     #[serde(rename = "type")]
@@ -16,6 +17,7 @@ pub struct DidVerificationMethod {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DidService {
     pub id: String,
     #[serde(rename = "type")]
@@ -24,17 +26,19 @@ pub struct DidService {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DidDocument {
     #[serde(rename = "@context")]
     pub context: Vec<Url>,
     pub id: Did,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub verification_method: Vec<DidVerificationMethod>,
     pub service: Vec<DidService>,
 }
 
 pub async fn resolve(did: Did) -> Result<DidDocument> {
     let url = match did.method() {
-        "web" => {
+        "did:web" => {
             // N.B: This is a potentially hostile operation, so we are only going to allow
             // certain URLs for now.
             let host = did
@@ -48,7 +52,7 @@ pub async fn resolve(did: Did) -> Result<DidDocument> {
 
             format!("https://{}/.well-known/did.json", host,)
         }
-        "plc" => {
+        "did:plc" => {
             format!(
                 "https://plc.directory/{}",
                 did.as_str()

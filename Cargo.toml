@@ -16,6 +16,7 @@ axum = { version = "0.8.1", features = ["tower-log", "form", "macros", "ws"] }
 azure_core = "0.21.0"
 azure_identity = "0.21.0"
 base64 = "0.22.1"
+chrono = "0.4.39"
 clap = { version = "4.5.23", features = ["derive"] }
 clap-verbosity-flag = "3.0.1"
 constcat = "0.5.1"
