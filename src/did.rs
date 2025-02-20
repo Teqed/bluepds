@@ -28,7 +28,7 @@ pub struct DidService {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DidDocument {
-    #[serde(rename = "@context")]
+    #[serde(rename = "@context", skip_serializing_if = "Vec::is_empty")]
     pub context: Vec<Url>,
     pub id: Did,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -50,15 +50,10 @@ pub async fn resolve(client: &reqwest::Client, did: Did) -> Result<DidDocument> 
                 bail!("forbidden URL {host}");
             }
 
-            format!("https://{}/.well-known/did.json", host,)
+            format!("https://{}/.well-known/did.json", host)
         }
         "did:plc" => {
-            format!(
-                "https://plc.directory/{}",
-                did.as_str()
-                    .strip_prefix("did:plc:")
-                    .context("invalid DID format")?
-            )
+            format!("https://plc.directory/{}", did.as_str())
         }
         m => bail!("unknown did method {m}"),
     }

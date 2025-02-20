@@ -67,16 +67,18 @@ async fn update_handle(
     let did_str = user.did();
     let did = atrium_api::types::string::Did::new(user.did()).unwrap();
 
-    let cnt = sqlx::query_scalar!(r#"SELECT COUNT(*) FROM handles WHERE handle = ?"#, handle)
-        .fetch_one(&db)
+    let existing_did = sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
+        .fetch_optional(&db)
         .await
         .context("failed to query did count")?;
 
-    if cnt != 0 {
-        return Err(Error::with_status(
-            StatusCode::BAD_REQUEST,
-            anyhow!("attempted to update handle to one that is already in use"),
-        ));
+    if let Some(existing_did) = existing_did {
+        if existing_did != did_str {
+            return Err(Error::with_status(
+                StatusCode::BAD_REQUEST,
+                anyhow!("attempted to update handle to one that is already in use"),
+            ));
+        }
     }
 
     let plc_cid = sqlx::query_scalar!(r#"SELECT plc_root FROM accounts WHERE did = ?"#, did_str)
@@ -88,7 +90,7 @@ async fn update_handle(
     // If not, we need to register the original handle.
     let _did = did::resolve(&client, did.clone())
         .await
-        .context("failed to resolve DID")?;
+        .with_context(|| format!("failed to resolve DID for {did_str}"))?;
 
     let op = PlcOperation {
         typ: "plc_operation".to_string(),
@@ -114,6 +116,7 @@ async fn update_handle(
             .context("failed to submit PLC operation")?;
     }
 
+    // FIXME: Properly abstract these implementation details.
     let did_hash = did_str.strip_prefix("did:plc:").unwrap();
     let doc = tokio::fs::File::options()
         .read(true)
