@@ -26,16 +26,31 @@ use crate::{
 
 async fn resolve_handle(
     State(db): State<Db>,
+    State(client): State<reqwest::Client>,
     Query(input): Query<identity::resolve_handle::Parameters>,
 ) -> Result<Json<identity::resolve_handle::Output>> {
     let handle = input.handle.as_str();
-    let did = sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
+    if let Ok(did) = sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
         .fetch_one(&db)
         .await
-        .context("failed to query did")?;
+    {
+        let did = atrium_api::types::string::Did::new(did).unwrap();
+        return Ok(Json(identity::resolve_handle::OutputData { did }.into()));
+    }
 
-    let did = atrium_api::types::string::Did::new(did).unwrap();
-    Ok(Json(identity::resolve_handle::OutputData { did }.into()))
+    // HACK: Query bsky to see if they have this handle cached.
+    let r = client
+        .get(format!(
+            "https://api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={handle}"
+        ))
+        .send()
+        .await
+        .context("failed to query upstream server")?
+        .json()
+        .await
+        .context("failed to decode response as JSON")?;
+
+    Ok(Json(r))
 }
 
 async fn update_handle(
