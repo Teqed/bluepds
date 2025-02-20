@@ -5,11 +5,43 @@ param sku string = 'B1' // The SKU of App Service Plan
 param dockerContainerName string = '${webAppName}:latest'
 param repositoryUrl string = 'https://github.com/DrChat/bluepds'
 param branch string = 'main'
+param customDomain string
+
+@description('Redeploy hostnames without SSL binding. Just specify `true` if this is the first time you\'re deploying the app.')
+param redeployHostnamesHack bool = false
 
 var acrName = toLower('${webAppName}${uniqueString(resourceGroup().id)}')
 var aspName = toLower('${webAppName}-asp')
 var webName = toLower('${webAppName}${uniqueString(resourceGroup().id)}')
 var sanName = toLower('${webAppName}${uniqueString(resourceGroup().id)}')
+
+// resource appInsights 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+//   name: '${webAppName}-ai'
+//   location: location
+//   properties: {
+//     publicNetworkAccessForIngestion: 'Enabled'
+//     workspaceCapping: {
+//       dailyQuotaGb: 1
+//     }
+//     sku: {
+//       name: 'Standalone'
+//     }
+//   }
+// }
+
+// resource appServicePlanDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+//   name: appServicePlan.name
+//   scope: appServicePlan
+//   properties: {
+//     workspaceId: appInsights.id
+//     metrics: [
+//       {
+//         category: 'AllMetrics'
+//         enabled: true
+//       }
+//     ]
+//   }
+// }
 
 resource appServicePlan 'Microsoft.Web/serverfarms@2020-06-01' = {
   name: aspName
@@ -65,7 +97,7 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
       appSettings: [
         {
           name: 'BLUEPDS_HOST_NAME'
-          value: '${webName}.azurewebsites.net'
+          value: empty(customDomain) ? '${webName}.azurewebsites.net' : customDomain
         }
         {
           name: 'WEBSITES_PORT'
@@ -75,6 +107,29 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
       linuxFxVersion: 'DOCKER|${acrName}.azurecr.io/${dockerContainerName}'
     }
   }
+}
+
+resource hostNameBinding 'Microsoft.Web/sites/hostNameBindings@2024-04-01' = if (redeployHostnamesHack) {
+  name: customDomain
+  parent: appService
+  properties: {
+    siteName: appService.name
+    hostNameType: 'Verified'
+    sslState: 'Disabled'
+  }
+}
+
+// This stupidity is required because Azure requires a circular dependency in order to define a custom hostname with SSL.
+// https://stackoverflow.com/questions/73077972/how-to-deploy-app-service-with-managed-ssl-certificate-using-arm
+module certificateBindings './deploymentBindingHack.bicep' = {
+  name: '${deployment().name}-ssl'
+  params: {
+    appServicePlanResourceId: appServicePlan.id
+    customHostnames: [customDomain]
+    location: location
+    webAppName: appService.name
+  }
+  dependsOn: [hostNameBinding]
 }
 
 resource appServiceStorageConfig 'Microsoft.Web/sites/config@2024-04-01' = {
