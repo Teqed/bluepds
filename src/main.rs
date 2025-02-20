@@ -46,6 +46,8 @@ use uuid::Uuid;
 pub type Db = sqlx::SqlitePool;
 pub type Cred = Arc<dyn TokenCredential>;
 
+pub const APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct KeyData {
     /// Primary signing key for all repo operations.
@@ -91,6 +93,7 @@ struct AppState {
     cred: Cred,
     db: Db,
 
+    client: reqwest::Client,
     firehose: FirehoseProducer,
 
     signing_key: SigningKey,
@@ -126,6 +129,7 @@ async fn service_proxy(
     url: Uri,
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
+    State(client): State<reqwest::Client>,
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response<Body>> {
@@ -156,7 +160,7 @@ async fn service_proxy(
     };
 
     // TODO: Use some form of caching just so we don't repeatedly try to resolve a DID.
-    let did_doc = did::resolve(did.clone())
+    let did_doc = did::resolve(&client, did.clone())
         .await
         .with_context(|| format!("failed to resolve did document {}", did.as_str()))?;
 
@@ -192,7 +196,7 @@ async fn service_proxy(
     )
     .context("failed to sign jwt")?;
 
-    let r = reqwest::Client::new()
+    let r = client
         .request(request.method().clone(), url)
         .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
         .body(reqwest::Body::wrap_stream(
@@ -296,9 +300,11 @@ async fn run() -> anyhow::Result<()> {
         .listen_address
         .clone()
         .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8000));
-    let listener = TcpListener::bind(&addr)
-        .await
-        .context("failed to bind address")?;
+
+    let client = reqwest::Client::builder()
+        .user_agent(APP_USER_AGENT)
+        .build()
+        .context("failed to build requester client")?;
 
     let app = Router::new()
         .route("/", get(index))
@@ -310,6 +316,7 @@ async fn run() -> anyhow::Result<()> {
             cred,
             config,
             db: db.clone(),
+            client,
             firehose: fhp,
             signing_key: skey,
             rotation_key: rkey,
@@ -354,6 +361,10 @@ async fn run() -> anyhow::Result<()> {
         println!("{uuid}");
         println!("=====================================");
     }
+
+    let listener = TcpListener::bind(&addr)
+        .await
+        .context("failed to bind address")?;
 
     axum::serve(listener, app.into_make_service())
         .await

@@ -42,6 +42,7 @@ async fn update_handle(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
     State(rkey): State<RotationKey>,
+    State(client): State<reqwest::Client>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
     State(fhp): State<FirehoseProducer>,
@@ -70,7 +71,7 @@ async fn update_handle(
 
     // Ensure the existing DID is resolvable.
     // If not, we need to register the original handle.
-    let _did = did::resolve(did.clone())
+    let _did = did::resolve(&client, did.clone())
         .await
         .context("failed to resolve DID")?;
 

@@ -36,7 +36,7 @@ pub struct DidDocument {
     pub service: Vec<DidService>,
 }
 
-pub async fn resolve(did: Did) -> Result<DidDocument> {
+pub async fn resolve(client: &reqwest::Client, did: Did) -> Result<DidDocument> {
     let url = match did.method() {
         "did:web" => {
             // N.B: This is a potentially hostile operation, so we are only going to allow
@@ -65,7 +65,9 @@ pub async fn resolve(did: Did) -> Result<DidDocument> {
     .parse::<Url>()
     .context("failed to resolve DID URL")?;
 
-    reqwest::get(url)
+    client
+        .get(url)
+        .send()
         .await
         .context("failed to fetch DID document")?
         .json()
