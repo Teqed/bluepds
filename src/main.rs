@@ -122,6 +122,75 @@ Most API routes are under /xrpc/
     "#
 }
 
+/// HACK: store private user preferences in the PDS.
+///
+/// We shouldn't have to know about any bsky endpoints to store private user data.
+/// This will _very likely_ be changed in the future.
+mod actor_endpoints {
+    use atrium_api::app::bsky::actor;
+    use axum::{routing::post, Json};
+    use constcat::concat;
+
+    use super::*;
+
+    async fn put_preferences(
+        user: AuthenticatedUser,
+        State(db): State<Db>,
+        Json(input): Json<actor::put_preferences::Input>,
+    ) -> Result<()> {
+        let did = user.did();
+        let prefs = sqlx::types::Json(input.preferences.clone());
+        sqlx::query!(
+            r#"UPDATE accounts SET private_prefs = ? WHERE did = ?"#,
+            did,
+            prefs
+        )
+        .execute(&db)
+        .await
+        .context("failed to update user preferences")?;
+
+        Ok(())
+    }
+
+    async fn get_preferences(
+        user: AuthenticatedUser,
+        State(db): State<Db>,
+    ) -> Result<Json<actor::get_preferences::Output>> {
+        let did = user.did();
+        let json: Option<sqlx::types::Json<actor::defs::Preferences>> =
+            sqlx::query_scalar(r#"SELECT private_prefs FROM accounts WHERE did = ?"#)
+                .bind(did)
+                .fetch_one(&db)
+                .await
+                .context("failed to fetch preferences")?;
+
+        if let Some(prefs) = json {
+            Ok(Json(
+                actor::get_preferences::OutputData {
+                    preferences: prefs.0,
+                }
+                .into(),
+            ))
+        } else {
+            Ok(Json(
+                actor::get_preferences::OutputData {
+                    preferences: Vec::new(),
+                }
+                .into(),
+            ))
+        }
+    }
+
+    #[rustfmt::skip]
+    pub fn routes() -> Router<AppState> {
+        // AP /xrpc/app.bsky.actor.putPreferences
+        // AG /xrpc/app.bsky.actor.getPreferences
+        Router::new()
+            .route(concat!("/", actor::put_preferences::NSID), post(put_preferences))
+            .route(concat!("/", actor::get_preferences::NSID),  get(get_preferences))
+    }
+}
+
 /// Service proxy.
 ///
 /// Reference: https://atproto.com/specs/xrpc#service-proxying
@@ -308,7 +377,12 @@ async fn run() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(index))
-        .nest("/xrpc", endpoints::routes().fallback(service_proxy))
+        .nest(
+            "/xrpc",
+            endpoints::routes()
+                .merge(actor_endpoints::routes())
+                .fallback(service_proxy),
+        )
         // .layer(RateLimitLayer::new(30, Duration::from_secs(30)))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
