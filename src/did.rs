@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 /// URL whitelist for DID document resolution.
-const ALLOWED_URLS: &[&str] = &["api.bsky.app", "api.bsky.chat"];
+const ALLOWED_URLS: &[&str] = &["bsky.app", "bsky.chat"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,7 +46,7 @@ pub async fn resolve(client: &reqwest::Client, did: Did) -> Result<DidDocument> 
                 .strip_prefix("did:web:")
                 .context("invalid DID format")?;
 
-            if !ALLOWED_URLS.contains(&host) {
+            if !ALLOWED_URLS.iter().any(|u| host.ends_with(u)) {
                 bail!("forbidden URL {host}");
             }
 
