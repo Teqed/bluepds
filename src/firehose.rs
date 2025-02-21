@@ -8,7 +8,9 @@ use atrium_api::{
 use atrium_repo::Cid;
 use axum::extract::ws::{Message, WebSocket};
 use serde::{ser::SerializeMap, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, error, info, warn};
+
+use crate::config::AppConfig;
 
 enum FirehoseMessage {
     Broadcast(sync::subscribe_repos::Message),
@@ -261,12 +263,33 @@ async fn handle_connect(
     Some(ws)
 }
 
+pub async fn reconnect_relays(client: &reqwest::Client, config: &AppConfig) {
+    for relay in &config.firehose.relays {
+        if let Some(host) = relay.host_str() {
+            info!("requesting crawl from {host}");
+
+            let r = client
+                .post(format!("https://{host}/xrpc/com.atproto.sync.requestCrawl"))
+                .json(&serde_json::json!({"hostname": config.host_name}))
+                .send()
+                .await;
+
+            if let Err(e) = r {
+                error!("failed to hit upstream relay {host}: {e}");
+            }
+        }
+    }
+}
+
 /// The main entrypoint for the firehose.
 ///
 /// This will broadcast all updates in this PDS out to anyone who is listening.
 ///
 /// Reference: https://atproto.com/specs/sync
-pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
+pub async fn spawn(
+    client: reqwest::Client,
+    config: AppConfig,
+) -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1000);
     let handle = tokio::spawn(async move {
         let mut clients: Vec<WebSocket> = Vec::new();
@@ -288,6 +311,11 @@ pub async fn spawn() -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
                     None => break,
                 },
                 Err(_) => {
+                    if clients.is_empty() {
+                        warn!("no downstream relays connected to firehose; reconnecting");
+                        reconnect_relays(&client, &config).await;
+                    }
+
                     let _ = broadcast_ping(&mut clients).await;
                 }
             }

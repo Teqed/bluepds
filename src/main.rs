@@ -322,6 +322,12 @@ async fn run() -> anyhow::Result<()> {
         .extract()
         .context("failed to load configuration")?;
 
+    // Create a reqwest client that will be used for all outbound requests.
+    let client = reqwest::Client::builder()
+        .user_agent(APP_USER_AGENT)
+        .build()
+        .context("failed to build requester client")?;
+
     // Check if crypto keys exist. If not, create new ones.
     let (skey, rkey) = if let Ok(f) = std::fs::File::open(&config.key) {
         let keys: KeyData = serde_ipld_dagcbor::from_reader(std::io::BufReader::new(f))
@@ -363,17 +369,12 @@ async fn run() -> anyhow::Result<()> {
         .await
         .context("failed to apply migrations")?;
 
-    let (_fh, fhp) = firehose::spawn().await;
+    let (_fh, fhp) = firehose::spawn(client.clone(), config.clone()).await;
 
     let addr = config
         .listen_address
         .clone()
         .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8000));
-
-    let client = reqwest::Client::builder()
-        .user_agent(APP_USER_AGENT)
-        .build()
-        .context("failed to build requester client")?;
 
     let app = Router::new()
         .route("/", get(index))
@@ -388,9 +389,9 @@ async fn run() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(AppState {
             cred,
-            config,
+            config: config.clone(),
             db: db.clone(),
-            client,
+            client: client.clone(),
             firehose: fhp,
             signing_key: skey,
             rotation_key: rkey,
@@ -440,8 +441,20 @@ async fn run() -> anyhow::Result<()> {
         .await
         .context("failed to bind address")?;
 
-    axum::serve(listener, app.into_make_service())
+    // Serve the app, and request crawling from upstream relays.
+    let serve = tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .await
+            .context("failed to serve app")
+    });
+
+    // Now that the app is live, request a crawl from upstream relays.
+    let _ = firehose::reconnect_relays(&client, &config).await;
+
+    serve
         .await
+        .map_err(|e| e.into())
+        .and_then(|r| r)
         .context("failed to serve app")
 }
 

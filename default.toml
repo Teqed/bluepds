@@ -12,6 +12,9 @@ listen_address = "0.0.0.0:8000"
 # Care must be taken to ensure that the contents of this file aren't exposed!
 key = "data/default.key"
 
+[firehose]
+relays = ["https://bsky.network"]
+
 [repo]
 path = "data/repo"
 

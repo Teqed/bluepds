@@ -4,6 +4,12 @@ use serde::Deserialize;
 use url::Url;
 
 #[derive(Deserialize, Debug, Clone)]
+pub struct FirehoseConfig {
+    /// A list of upstream relays that this PDS will try to reach out to.
+    pub relays: Vec<Url>,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct RepoConfig {
     /// The path to the repository storage.
     pub path: PathBuf,
@@ -27,6 +33,8 @@ pub struct AppConfig {
     pub host_name: String,
     /// The listen address for the PDS.
     pub listen_address: Option<SocketAddr>,
+    /// The firehose configuration block.
+    pub firehose: FirehoseConfig,
     /// The PLC configuration block.
     pub plc: PlcConfig,
     /// The repo configuration block.
