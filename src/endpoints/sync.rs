@@ -7,9 +7,9 @@ use atrium_repo::{
     Cid,
 };
 use axum::{
-    body::Bytes,
+    body::{Body, Bytes},
     extract::{Query, State, WebSocketUpgrade},
-    http::StatusCode,
+    http::{Response, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -232,13 +232,31 @@ async fn list_repos(
     Ok(Json(sync::list_repos::OutputData { cursor, repos }.into()))
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscribeReposParametersData {
+    ///The last known event seq number to backfill from.
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub cursor: core::option::Option<String>,
+}
+
 async fn subscribe_repos(
     ws: WebSocketUpgrade,
     State(fh): State<FirehoseProducer>,
-    Query(input): Query<sync::subscribe_repos::Parameters>,
+    Query(input): Query<SubscribeReposParametersData>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|ws| async move {
-        fh.client_connection(ws, input.cursor).await;
+    let cursor = match input.cursor.map(|c| i64::from_str(&c)).transpose() {
+        Ok(c) => c,
+        Err(e) => {
+            return Response::builder()
+                .status(StatusCode::BAD_REQUEST)
+                .body(Body::empty())
+                .unwrap();
+        }
+    };
+
+    ws.on_upgrade(move |ws| async move {
+        fh.client_connection(ws, cursor).await;
     })
 }
 

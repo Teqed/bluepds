@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, time::Duration};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use atrium_api::{
     com::atproto::sync::{self},
     types::string::{Datetime, Did},
@@ -221,7 +221,7 @@ async fn handle_connect(
     seq: i64,
     history: &VecDeque<(i64, &str, sync::subscribe_repos::Message)>,
     cursor: Option<i64>,
-) -> Option<WebSocket> {
+) -> anyhow::Result<WebSocket> {
     if let Some(cursor) = cursor {
         let mut frame = Vec::new();
 
@@ -237,7 +237,7 @@ async fn handle_connect(
 
             // Drop the connection.
             let _ = ws.send(Message::binary(frame)).await;
-            return None;
+            bail!("connection dropped: cursor {cursor} is greater than the current sequence number {seq}");
         }
 
         let mut it = history.iter();
@@ -260,22 +260,36 @@ async fn handle_connect(
         }
     }
 
-    Some(ws)
+    Ok(ws)
 }
 
 pub async fn reconnect_relays(client: &reqwest::Client, config: &AppConfig) {
     for relay in &config.firehose.relays {
         if let Some(host) = relay.host_str() {
-            info!("requesting crawl from {host}");
-
             let r = client
                 .post(format!("https://{host}/xrpc/com.atproto.sync.requestCrawl"))
-                .json(&serde_json::json!({"hostname": config.host_name}))
+                .json(&serde_json::json!({
+                    "hostname": format!("https://{}", config.host_name)
+                }))
                 .send()
                 .await;
 
-            if let Err(e) = r {
+            let r = match r {
+                Ok(r) => r,
+                Err(e) => {
+                    error!("failed to hit upstream relay {host}: {e}");
+                    continue;
+                }
+            };
+
+            let s = r.status();
+            if let Err(e) = r.error_for_status_ref() {
                 error!("failed to hit upstream relay {host}: {e}");
+            }
+
+            let b = r.text().await;
+            if let Ok(b) = b {
+                info!("relay {host}: {} {}", s, b);
             }
         }
     }
@@ -303,8 +317,13 @@ pub async fn spawn(
                         let _ = broadcast_message(&mut clients, &mut history, &mut seq, msg).await;
                     }
                     Some(FirehoseMessage::Connect((ws, cursor))) => {
-                        if let Some(ws) = handle_connect(ws, seq, &mut history, cursor).await {
-                            clients.push(ws);
+                        match handle_connect(ws, seq, &mut history, cursor).await {
+                            Ok(r) => {
+                                clients.push(r);
+                            }
+                            Err(e) => {
+                                error!("failed to connect new client: {e}");
+                            }
                         }
                     }
                     // All producers have been destroyed.
