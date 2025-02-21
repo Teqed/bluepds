@@ -5,7 +5,7 @@ use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
     types::{
         string::{AtIdentifier, Nsid, Tid},
-        LimitedU32, TryIntoUnknown, Unknown,
+        LimitedU32, Object, TryIntoUnknown, Unknown,
     },
 };
 use atrium_repo::{blockstore::CarStore, Cid};
@@ -199,7 +199,7 @@ async fn apply_writes(
         };
 
         let sig = skey
-            .sign(&builder.hash())
+            .sign(&builder.bytes())
             .context("failed to sign commit")?;
 
         builder
@@ -307,7 +307,7 @@ async fn create_record(
         .context("failed to add record")?;
 
     let sig = skey
-        .sign(&builder.hash())
+        .sign(&builder.bytes())
         .context("failed to sign commit")?;
 
     let ccid = builder
@@ -417,7 +417,7 @@ async fn put_record(
     };
 
     let sig = skey
-        .sign(&builder.hash())
+        .sign(&builder.bytes())
         .context("failed to sign commit")?;
 
     let ccid = builder
@@ -520,7 +520,7 @@ async fn delete_record(
         .context("failed to delete record")?;
 
     let sig = skey
-        .sign(&builder.hash())
+        .sign(&builder.bytes())
         .context("failed to sign commit")?;
 
     let ccid = builder
@@ -649,13 +649,19 @@ async fn get_record(
     let key = format!("{}/{}", input.collection.as_str(), input.rkey);
     let uri = format!("at://{}/{}", did.as_str(), &key);
 
+    let cid = repo
+        .tree()
+        .get(&key)
+        .await
+        .context("failed to find record")?;
+
     let record: Option<serde_json::Value> =
         repo.get_raw(&key).await.context("failed to read record")?;
 
     if let Some(record) = record {
         Ok(Json(
             repo::get_record::OutputData {
-                cid: None, // TODO
+                cid: cid.map(atrium_api::types::string::Cid::new),
                 uri,
                 value: record.try_into_unknown().unwrap(),
             }
@@ -669,10 +675,33 @@ async fn get_record(
     }
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListRecordsParameters {
+    ///The NSID of the record type.
+    pub collection: atrium_api::types::string::Nsid,
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub cursor: core::option::Option<String>,
+    ///The number of records to return.
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub limit: core::option::Option<String>,
+    ///The handle or DID of the repo.
+    pub repo: atrium_api::types::string::AtIdentifier,
+    ///Flag to reverse the order of the returned records.
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub reverse: core::option::Option<bool>,
+    ///DEPRECATED: The highest sort-ordered rkey to stop at (exclusive)
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub rkey_end: core::option::Option<String>,
+    ///DEPRECATED: The lowest sort-ordered rkey to start from (exclusive)
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub rkey_start: core::option::Option<String>,
+}
+
 async fn list_records(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<repo::list_records::Parameters>,
+    Query(input): Query<Object<ListRecordsParameters>>,
 ) -> Result<Json<repo::list_records::Output>> {
     // TODO: `input.reverse`
 

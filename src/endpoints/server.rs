@@ -180,7 +180,7 @@ async fn create_account(
 
         // Sign the root commit.
         let sig = skey
-            .sign(&repo_builder.hash())
+            .sign(&repo_builder.bytes())
             .context("failed to sign root commit")?;
         let mut repo = repo_builder
             .finalize(sig)
