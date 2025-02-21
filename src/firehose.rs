@@ -287,9 +287,11 @@ pub async fn reconnect_relays(client: &reqwest::Client, config: &AppConfig) {
                 error!("failed to hit upstream relay {host}: {e}");
             }
 
-            let b = r.text().await;
+            let b = r.json::<serde_json::Value>().await;
             if let Ok(b) = b {
                 info!("relay {host}: {} {}", s, b);
+            } else {
+                info!("relay {host}: {}", s);
             }
         }
     }
