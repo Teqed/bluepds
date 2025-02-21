@@ -11,7 +11,7 @@ use auth::AuthenticatedUser;
 use axum::{
     body::Body,
     extract::{FromRef, Request, State},
-    http::{HeaderMap, Response, StatusCode, Uri},
+    http::{self, HeaderMap, Response, StatusCode, Uri},
     response::IntoResponse,
     routing::get,
     Router,
@@ -265,8 +265,17 @@ async fn service_proxy(
     )
     .context("failed to sign jwt")?;
 
+    let mut h = HeaderMap::new();
+    if let Some(hdr) = request.headers().get("atproto-accept-labelers") {
+        h.insert("atproto-accept-labelers", hdr.clone());
+    }
+    if let Some(hdr) = request.headers().get(http::header::CONTENT_TYPE) {
+        h.insert(http::header::CONTENT_TYPE, hdr.clone());
+    }
+
     let r = client
         .request(request.method().clone(), url)
+        .headers(h)
         .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
         .body(reqwest::Body::wrap_stream(
             request.into_body().into_data_stream(),
