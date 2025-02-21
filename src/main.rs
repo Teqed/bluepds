@@ -142,8 +142,8 @@ mod actor_endpoints {
         let prefs = sqlx::types::Json(input.preferences.clone());
         sqlx::query!(
             r#"UPDATE accounts SET private_prefs = ? WHERE did = ?"#,
-            did,
-            prefs
+            prefs,
+            did
         )
         .execute(&db)
         .await
