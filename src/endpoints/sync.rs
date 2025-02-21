@@ -9,7 +9,7 @@ use atrium_repo::{
 use axum::{
     body::{Body, Bytes},
     extract::{Query, State, WebSocketUpgrade},
-    http::{Response, StatusCode},
+    http::{self, Response, StatusCode},
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -34,7 +34,7 @@ async fn get_blob(
 async fn get_blocks(
     State(config): State<AppConfig>,
     Query(input): Query<sync::get_blocks::Parameters>,
-) -> Result<Bytes> {
+) -> Result<Response<Body>> {
     let mut repo = open_store(&config.repo, input.did.as_str())
         .await
         .context("failed to open repository")?;
@@ -60,7 +60,10 @@ async fn get_blocks(
             .context("failed to write block")?;
     }
 
-    Ok(Bytes::from_owner(mem))
+    Ok(Response::builder()
+        .header(http::header::CONTENT_TYPE, "application/vnd.ipld.car")
+        .body(Body::from(mem))
+        .context("failed to construct response")?)
 }
 
 async fn get_latest_commit(
@@ -88,7 +91,7 @@ async fn get_record(
     State(config): State<AppConfig>,
     State(db): State<Db>,
     Query(input): Query<sync::get_record::Parameters>,
-) -> Result<Bytes> {
+) -> Result<Response<Body>> {
     let mut repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
         .context("failed to open repo")?;
@@ -105,7 +108,10 @@ async fn get_record(
         .await
         .context("failed to extract records")?;
 
-    Ok(Bytes::from_owner(contents))
+    Ok(Response::builder()
+        .header(http::header::CONTENT_TYPE, "application/vnd.ipld.car")
+        .body(Body::from(contents))
+        .context("failed to construct response")?)
 }
 
 async fn get_repo_status(
@@ -145,7 +151,7 @@ async fn get_repo(
     State(config): State<AppConfig>,
     State(db): State<Db>,
     Query(input): Query<sync::get_repo::Parameters>,
-) -> Result<Bytes> {
+) -> Result<Response<Body>> {
     let mut repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
         .context("failed to open repo")?;
@@ -159,7 +165,10 @@ async fn get_repo(
         .await
         .context("failed to extract records")?;
 
-    Ok(Bytes::from_owner(contents))
+    Ok(Response::builder()
+        .header(http::header::CONTENT_TYPE, "application/vnd.ipld.car")
+        .body(Body::from(contents))
+        .context("failed to construct response")?)
 }
 
 // HACK: `limit` may be passed as a string, so we must treat it as one.
@@ -232,6 +241,7 @@ async fn list_repos(
     Ok(Json(sync::list_repos::OutputData { cursor, repos }.into()))
 }
 
+// HACK: `cursor` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SubscribeReposParametersData {
@@ -247,7 +257,7 @@ async fn subscribe_repos(
 ) -> impl IntoResponse {
     let cursor = match input.cursor.map(|c| i64::from_str(&c)).transpose() {
         Ok(c) => c,
-        Err(e) => {
+        Err(_e) => {
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::empty())
