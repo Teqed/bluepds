@@ -42,7 +42,7 @@ cargo run
 - [X] UG /xrpc/_health (undocumented, but impl by reference PDS)
 - com.atproto.identity
     - [X] UG /xrpc/com.atproto.identity.resolveHandle
-    - [ ] AP /xrpc/com.atproto.identity.updateHandle
+    - [X] AP /xrpc/com.atproto.identity.updateHandle
 - com.atproto.server
     - [X] UG /xrpc/com.atproto.server.describeServer
     - [X] UP /xrpc/com.atproto.server.createAccount
