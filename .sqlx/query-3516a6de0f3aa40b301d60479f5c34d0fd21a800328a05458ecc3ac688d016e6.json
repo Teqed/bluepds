@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT a.email, a.status, (\n            SELECT h.handle\n            FROM handles h\n            WHERE h.did = a.did\n            ORDER BY h.created_at ASC\n            LIMIT 1\n        ) AS handle\n        FROM accounts a\n        WHERE a.did = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "email",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "handle",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "3516a6de0f3aa40b301d60479f5c34d0fd21a800328a05458ecc3ac688d016e6"
+}

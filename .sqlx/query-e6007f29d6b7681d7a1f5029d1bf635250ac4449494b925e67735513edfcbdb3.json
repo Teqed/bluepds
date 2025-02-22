@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT root FROM accounts\n        WHERE did = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "root",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e6007f29d6b7681d7a1f5029d1bf635250ac4449494b925e67735513edfcbdb3"
+}

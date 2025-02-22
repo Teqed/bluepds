@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO invites (id, did, count, created_at)\n            VALUES (?, ?, ?, datetime('now'))\n            RETURNING id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "a1cac9d7e8c2b0326f59773025f8804fca984adf54d8d4c45537dd637d74c1ee"
+}

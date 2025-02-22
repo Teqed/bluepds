@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT plc_root FROM accounts WHERE did = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "plc_root",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4198b96804f3a0a805e441857b452e84a083d80dca12ce95c545dc9eadbac0c3"
+}

@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        WITH LatestHandles AS (\n            SELECT did, handle\n            FROM handles\n            WHERE (did, created_at) IN (\n                SELECT did, MAX(created_at) AS max_created_at\n                FROM handles\n                GROUP BY did\n            )\n        )\n        SELECT a.did, a.password, h.handle\n        FROM accounts a\n        LEFT JOIN LatestHandles h ON a.did = h.did\n        WHERE h.handle = ?\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "did",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "password",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "handle",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "14d61d3aea227b8881d7864952a75b571f0ea28c77ce4229f80ad9638c1a26d6"
+}

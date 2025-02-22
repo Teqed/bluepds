@@ -17,8 +17,6 @@ This PDS implementation uses a SQLite database to store private account informat
 
 ## Quick Start
 ```
-# Install sqlx CLI at https://github.com/launchbadge/sqlx/tree/main/sqlx-cli
-cargo sqlx database setup
 cargo run
 ```
 

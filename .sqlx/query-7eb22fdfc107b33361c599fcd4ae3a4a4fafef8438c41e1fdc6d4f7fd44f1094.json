@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT did, root, rev FROM accounts LIMIT ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "did",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "root",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "rev",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "7eb22fdfc107b33361c599fcd4ae3a4a4fafef8438c41e1fdc6d4f7fd44f1094"
+}

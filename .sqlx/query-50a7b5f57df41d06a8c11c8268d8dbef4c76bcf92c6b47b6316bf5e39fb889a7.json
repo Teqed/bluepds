@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        SELECT a.status, h.handle\n        FROM accounts a\n        JOIN handles h ON a.did = h.did\n        WHERE a.did = ?\n        ORDER BY h.created_at ASC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "name": "status",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "handle",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "50a7b5f57df41d06a8c11c8268d8dbef4c76bcf92c6b47b6316bf5e39fb889a7"
+}

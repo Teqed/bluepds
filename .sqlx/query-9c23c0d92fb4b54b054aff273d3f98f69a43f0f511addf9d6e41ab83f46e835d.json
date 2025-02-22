@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT OR ROLLBACK INTO sessions (id, did, created_at)\n            VALUES (?, ?, datetime('now'))\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "9c23c0d92fb4b54b054aff273d3f98f69a43f0f511addf9d6e41ab83f46e835d"
+}

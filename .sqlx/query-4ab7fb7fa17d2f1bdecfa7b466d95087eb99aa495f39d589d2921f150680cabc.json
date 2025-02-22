@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT handle FROM handles WHERE did = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "handle",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "4ab7fb7fa17d2f1bdecfa7b466d95087eb99aa495f39d589d2921f150680cabc"
+}

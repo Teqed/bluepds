@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT rev, status FROM accounts WHERE did = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "rev",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "status",
+        "ordinal": 1,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "5f17a390750b52886f8c3ba80cb16776f3430bc91c4158aafb3012a7812a97cc"
+}
