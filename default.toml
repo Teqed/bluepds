@@ -1,6 +1,3 @@
-# The superuser password. This only works with connections from localhost.
-# Comment this out to disable the superuser.
-admin_pw = "admin1"
 # The public hostname of the PDS.
 host_name = "pds.example.com"
 # The path to the primary sqlite database.
@@ -12,6 +9,9 @@ listen_address = "0.0.0.0:8000"
 # Care must be taken to ensure that the contents of this file aren't exposed!
 key = "data/default.key"
 
+# Test mode. This instructs BluePDS not to federate with the rest of the AT network.
+test = true
+
 [firehose]
 relays = ["https://bsky.network"]
 
@@ -20,4 +20,3 @@ path = "data/repo"
 
 [plc]
 path = "data/plc"
-update = true # Do not write updates to the global PLC directory.

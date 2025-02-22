@@ -110,7 +110,7 @@ async fn update_handle(
         .await
         .context("failed to sign plc op")?;
 
-    if config.plc.update {
+    if !config.test {
         plc::submit(&client, did.as_str(), &op)
             .await
             .context("failed to submit PLC operation")?;

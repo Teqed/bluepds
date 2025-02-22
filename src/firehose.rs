@@ -264,6 +264,11 @@ async fn handle_connect(
 }
 
 pub async fn reconnect_relays(client: &reqwest::Client, config: &AppConfig) {
+    // Avoid connecting to upstream relays in test mode.
+    if config.test {
+        return;
+    }
+
     for relay in &config.firehose.relays {
         let host = match relay.host_str() {
             Some(host) => host,

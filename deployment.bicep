@@ -100,6 +100,10 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
           value: empty(customDomain) ? '${webName}.azurewebsites.net' : customDomain
         }
         {
+          name: 'BLUEPDS_TEST'
+          value: 'false'
+        }
+        {
           name: 'WEBSITES_PORT'
           value: '8000'
         }

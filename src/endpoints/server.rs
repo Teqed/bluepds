@@ -149,7 +149,7 @@ async fn create_account(
         .await
         .context("failed to write genesis commit")?;
 
-    if config.plc.update {
+    if !config.test {
         // Send the new account's data to the PLC directory.
         plc::submit(&client, &did, &op)
             .await
