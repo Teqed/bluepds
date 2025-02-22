@@ -39,13 +39,16 @@ cargo run
 - [X] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)
 - [X] UG /xrpc/_health (undocumented, but impl by reference PDS)
 - com.atproto.identity
-    - [X] UG /xrpc/com.atproto.identity.resolveHandle
     - [X] AP /xrpc/com.atproto.identity.updateHandle
+    - [ ] AP /xrpc/com.atproto.identity.requestPlcOperationSignature
+    - [ ] AP /xrpc/com.atproto.identity.signPlcOperation
+    - [X] UG /xrpc/com.atproto.identity.resolveHandle
 - com.atproto.server
     - [X] UG /xrpc/com.atproto.server.describeServer
     - [X] UP /xrpc/com.atproto.server.createAccount
     - [X] AP /xrpc/com.atproto.server.createInviteCode
     - [X] UP /xrpc/com.atproto.server.createSession
+    - [X] AG /xrpc/com.atproto.server.getServiceAuth
     - [X] AG /xrpc/com.atproto.server.getSession
 - com.atproto.repo
     - [X] AP /xrpc/com.atproto.repo.applyWrites

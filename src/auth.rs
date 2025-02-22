@@ -73,7 +73,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         } else {
             Err(Error::with_status(
                 StatusCode::UNAUTHORIZED,
-                anyhow!("no authorization token provided"),
+                anyhow!("invalid authorization token"),
             ))
         }
     }

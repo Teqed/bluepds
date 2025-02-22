@@ -53,6 +53,20 @@ async fn resolve_handle(
     Ok(Json(r))
 }
 
+async fn request_plc_operation_signature(user: AuthenticatedUser) -> Result<()> {
+    todo!()
+}
+
+async fn sign_plc_operation(
+    user: AuthenticatedUser,
+    State(skey): State<SigningKey>,
+    State(rkey): State<RotationKey>,
+    State(config): State<AppConfig>,
+    Json(input): Json<identity::sign_plc_operation::Input>,
+) -> Result<Json<identity::sign_plc_operation::Output>> {
+    todo!()
+}
+
 async fn update_handle(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -162,9 +176,13 @@ async fn update_handle(
 
 #[rustfmt::skip]
 pub fn routes() -> Router<AppState> {
-    // UG /xrpc/com.atproto.identity.resolveHandle
     // AP /xrpc/com.atproto.identity.updateHandle
+    // AP /xrpc/com.atproto.identity.requestPlcOperationSignature
+    // AP /xrpc/com.atproto.identity.signPlcOperation
+    // UG /xrpc/com.atproto.identity.resolveHandle
     Router::new()
-        .route(concat!("/", identity::resolve_handle::NSID), get(resolve_handle))
-        .route(concat!("/", identity::update_handle::NSID),  post(update_handle))
+        .route(concat!("/", identity::update_handle::NSID),                   post(update_handle))
+        .route(concat!("/", identity::request_plc_operation_signature::NSID), post(request_plc_operation_signature))
+        .route(concat!("/", identity::sign_plc_operation::NSID),              post(sign_plc_operation))
+        .route(concat!("/", identity::resolve_handle::NSID),                   get(resolve_handle))
 }

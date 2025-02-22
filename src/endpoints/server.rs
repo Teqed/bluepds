@@ -12,12 +12,13 @@ use atrium_repo::{
     Cid, Repository,
 };
 use axum::{
-    extract::{Request, State},
+    extract::{Query, Request, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
 use constcat::concat;
+use rand::Rng;
 use sha2::Digest;
 use tracing::info;
 use uuid::Uuid;
@@ -489,6 +490,38 @@ async fn refresh_session(
     ))
 }
 
+async fn get_service_auth(
+    user: AuthenticatedUser,
+    State(skey): State<SigningKey>,
+    Query(input): Query<server::get_service_auth::Parameters>,
+) -> Result<Json<server::get_service_auth::Output>> {
+    let user_did = user.did();
+    let aud = input.aud.as_str();
+
+    let exp = (chrono::Utc::now() + std::time::Duration::from_secs(60)).timestamp();
+    let jti = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(10)
+        .map(char::from)
+        .collect::<String>();
+
+    let mut claims = serde_json::json!({
+        "iss": user_did.as_str(),
+        "aud": aud,
+        "exp": exp,
+        "jti": jti,
+    });
+
+    if let Some(lxm) = &input.lxm {
+        claims["lxm"] = serde_json::Value::String(lxm.to_string());
+    }
+
+    // Mint a bearer token by signing a JSON web token.
+    let token = auth::sign(&skey, "JWT", claims).context("failed to sign jwt")?;
+
+    Ok(Json(server::get_service_auth::OutputData { token }.into()))
+}
+
 async fn get_session(
     user: AuthenticatedUser,
     State(db): State<Db>,
@@ -560,13 +593,15 @@ pub fn routes() -> Router<AppState> {
     // UP /xrpc/com.atproto.server.createAccount
     // UP /xrpc/com.atproto.server.createSession
     // AP /xrpc/com.atproto.server.refreshSession
+    // AG /xrpc/com.atproto.server.getServiceAuth
     // AG /xrpc/com.atproto.server.getSession
     // AP /xrpc/com.atproto.server.createInviteCode
     Router::new()
-        .route(concat!("/", server::describe_server::NSID),    get(describe_server))
+        .route(concat!("/", server::describe_server::NSID),     get(describe_server))
         .route(concat!("/", server::create_account::NSID),     post(create_account))
         .route(concat!("/", server::create_session::NSID),     post(create_session))
-        .route(concat!("/", server::refresh_session::NSID),     post(refresh_session))
-        .route(concat!("/", server::get_session::NSID),        get(get_session))
+        .route(concat!("/", server::refresh_session::NSID),    post(refresh_session))
+        .route(concat!("/", server::get_service_auth::NSID),    get(get_service_auth))
+        .route(concat!("/", server::get_session::NSID),         get(get_session))
         .route(concat!("/", server::create_invite_code::NSID), post(create_invite_code))
 }

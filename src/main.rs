@@ -22,6 +22,7 @@ use clap_verbosity_flag::{log::LevelFilter, InfoLevel, Verbosity};
 use config::AppConfig;
 use figment::{providers::Format, Figment};
 use firehose::FirehoseProducer;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
 use tokio::net::TcpListener;
@@ -249,6 +250,11 @@ async fn service_proxy(
         .context("failed to construct target url")?;
 
     let exp = (chrono::Utc::now() + std::time::Duration::from_secs(60)).timestamp();
+    let jti = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(10)
+        .map(char::from)
+        .collect::<String>();
 
     // Mint a bearer token by signing a JSON web token.
     // https://github.com/DavidBuchanan314/millipds/blob/5c7529a739d394e223c0347764f1cf4e8fd69f94/src/millipds/appview_proxy.py#L47-L59
@@ -260,7 +266,7 @@ async fn service_proxy(
             "aud": did.as_str(),
             "lxm": lxm,
             "exp": exp,
-            "jti": exp, // FIXME: This should be random.
+            "jti": jti,
         }),
     )
     .context("failed to sign jwt")?;
