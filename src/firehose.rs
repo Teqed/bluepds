@@ -265,34 +265,40 @@ async fn handle_connect(
 
 pub async fn reconnect_relays(client: &reqwest::Client, config: &AppConfig) {
     for relay in &config.firehose.relays {
-        if let Some(host) = relay.host_str() {
-            let r = client
-                .post(format!("https://{host}/xrpc/com.atproto.sync.requestCrawl"))
-                .json(&serde_json::json!({
-                    "hostname": format!("https://{}", config.host_name)
-                }))
-                .send()
-                .await;
+        let host = match relay.host_str() {
+            Some(host) => host,
+            None => {
+                warn!("relay {} has no host specified", relay);
+                continue;
+            }
+        };
 
-            let r = match r {
-                Ok(r) => r,
-                Err(e) => {
-                    error!("failed to hit upstream relay {host}: {e}");
-                    continue;
-                }
-            };
+        let r = client
+            .post(format!("https://{host}/xrpc/com.atproto.sync.requestCrawl"))
+            .json(&serde_json::json!({
+                "hostname": format!("https://{}", config.host_name)
+            }))
+            .send()
+            .await;
 
-            let s = r.status();
-            if let Err(e) = r.error_for_status_ref() {
+        let r = match r {
+            Ok(r) => r,
+            Err(e) => {
                 error!("failed to hit upstream relay {host}: {e}");
+                continue;
             }
+        };
 
-            let b = r.json::<serde_json::Value>().await;
-            if let Ok(b) = b {
-                info!("relay {host}: {} {}", s, b);
-            } else {
-                info!("relay {host}: {}", s);
-            }
+        let s = r.status();
+        if let Err(e) = r.error_for_status_ref() {
+            error!("failed to hit upstream relay {host}: {e}");
+        }
+
+        let b = r.json::<serde_json::Value>().await;
+        if let Ok(b) = b {
+            info!("relay {host}: {} {}", s, b);
+        } else {
+            info!("relay {host}: {}", s);
         }
     }
 }
@@ -311,6 +317,9 @@ pub async fn spawn(
         let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
         let mut seq = 1i64;
+
+        // TODO: We should use `com.atproto.sync.notifyOfUpdate` to reach out to relays
+        // that may have disconnected from us due to timeout.
 
         loop {
             match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
