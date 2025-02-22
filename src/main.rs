@@ -337,6 +337,10 @@ async fn run() -> anyhow::Result<()> {
         .build()
         .context("failed to build requester client")?;
 
+    tokio::fs::create_dir_all(&config.key.parent().unwrap())
+        .await
+        .context("failed to create key directory")?;
+
     // Check if crypto keys exist. If not, create new ones.
     let (skey, rkey) = if let Ok(f) = std::fs::File::open(&config.key) {
         let keys: KeyData = serde_ipld_dagcbor::from_reader(std::io::BufReader::new(f))
