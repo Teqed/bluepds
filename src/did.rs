@@ -3,6 +3,8 @@ use atrium_api::types::string::Did;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::Client;
+
 /// URL whitelist for DID document resolution.
 const ALLOWED_URLS: &[&str] = &["bsky.app", "bsky.chat"];
 
@@ -36,7 +38,7 @@ pub struct DidDocument {
     pub service: Vec<DidService>,
 }
 
-pub async fn resolve(client: &reqwest::Client, did: Did) -> Result<DidDocument> {
+pub async fn resolve(client: &Client, did: Did) -> Result<DidDocument> {
     let url = match did.method() {
         "did:web" => {
             // N.B: This is a potentially hostile operation, so we are only going to allow

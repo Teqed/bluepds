@@ -22,6 +22,7 @@ use clap_verbosity_flag::{log::LevelFilter, InfoLevel, Verbosity};
 use config::AppConfig;
 use figment::{providers::Format, Figment};
 use firehose::FirehoseProducer;
+use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
@@ -44,6 +45,7 @@ pub type Result<T> = std::result::Result<T, error::Error>;
 pub use error::Error;
 use uuid::Uuid;
 
+pub type Client = reqwest_middleware::ClientWithMiddleware;
 pub type Db = sqlx::SqlitePool;
 pub type Cred = Arc<dyn TokenCredential>;
 
@@ -94,7 +96,7 @@ struct AppState {
     cred: Cred,
     db: Db,
 
-    client: reqwest::Client,
+    client: Client,
     firehose: FirehoseProducer,
 
     signing_key: SigningKey,
@@ -199,7 +201,7 @@ async fn service_proxy(
     url: Uri,
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
-    State(client): State<reqwest::Client>,
+    State(client): State<Client>,
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response<Body>> {
@@ -229,7 +231,6 @@ async fn service_proxy(
         ),
     };
 
-    // TODO: Use some form of caching just so we don't repeatedly try to resolve a DID.
     let did_doc = did::resolve(&client, did.clone())
         .await
         .with_context(|| format!("failed to resolve did document {}", did.as_str()))?;
@@ -342,6 +343,13 @@ async fn run() -> anyhow::Result<()> {
         .user_agent(APP_USER_AGENT)
         .build()
         .context("failed to build requester client")?;
+    let client = reqwest_middleware::ClientBuilder::new(client)
+        .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
+            mode: CacheMode::Default,
+            manager: MokaManager::default(),
+            options: HttpCacheOptions::default(),
+        }))
+        .build();
 
     tokio::fs::create_dir_all(&config.key.parent().unwrap())
         .await

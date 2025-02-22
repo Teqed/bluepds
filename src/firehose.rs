@@ -10,7 +10,7 @@ use axum::extract::ws::{Message, WebSocket};
 use serde::{ser::SerializeMap, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::config::AppConfig;
+use crate::{config::AppConfig, Client};
 
 enum FirehoseMessage {
     Broadcast(sync::subscribe_repos::Message),
@@ -263,7 +263,7 @@ async fn handle_connect(
     Ok(ws)
 }
 
-pub async fn reconnect_relays(client: &reqwest::Client, config: &AppConfig) {
+pub async fn reconnect_relays(client: &Client, config: &AppConfig) {
     // Avoid connecting to upstream relays in test mode.
     if config.test {
         return;
@@ -314,7 +314,7 @@ pub async fn reconnect_relays(client: &reqwest::Client, config: &AppConfig) {
 ///
 /// Reference: https://atproto.com/specs/sync
 pub async fn spawn(
-    client: reqwest::Client,
+    client: Client,
     config: AppConfig,
 ) -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1000);

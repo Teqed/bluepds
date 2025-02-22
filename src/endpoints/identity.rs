@@ -21,12 +21,12 @@ use crate::{
     did,
     firehose::FirehoseProducer,
     plc::{self, PlcOperation, PlcService},
-    AppState, Db, Error, Result, RotationKey, SigningKey,
+    AppState, Client, Db, Error, Result, RotationKey, SigningKey,
 };
 
 async fn resolve_handle(
     State(db): State<Db>,
-    State(client): State<reqwest::Client>,
+    State(client): State<Client>,
     Query(input): Query<identity::resolve_handle::Parameters>,
 ) -> Result<Json<identity::resolve_handle::Output>> {
     let handle = input.handle.as_str();
@@ -71,7 +71,7 @@ async fn update_handle(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
     State(rkey): State<RotationKey>,
-    State(client): State<reqwest::Client>,
+    State(client): State<Client>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
     State(fhp): State<FirehoseProducer>,

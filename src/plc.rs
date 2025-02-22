@@ -5,7 +5,7 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::RotationKey;
+use crate::{Client, RotationKey};
 
 /// The URL of the public PLC directory.
 const PLC_DIRECTORY: &str = "https://plc.directory/";
@@ -64,11 +64,7 @@ pub async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Result<Sig
 }
 
 /// Submit a PLC operation to the public directory.
-pub async fn submit(
-    client: &reqwest::Client,
-    did: &str,
-    op: &SignedPlcOperation,
-) -> anyhow::Result<()> {
+pub async fn submit(client: &Client, did: &str, op: &SignedPlcOperation) -> anyhow::Result<()> {
     debug!("submitting {} {}", did, serde_json::to_string(&op).unwrap());
 
     let res = client

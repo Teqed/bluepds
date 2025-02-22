@@ -28,7 +28,7 @@ use crate::{
     config::AppConfig,
     firehose::{Commit, FirehoseProducer},
     plc::{self, PlcOperation, PlcService},
-    AppState, Db, Error, Result, RotationKey, SigningKey,
+    AppState, Client, Db, Error, Result, RotationKey, SigningKey,
 };
 
 async fn create_invite_code(
@@ -67,7 +67,7 @@ async fn create_account(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
     State(rkey): State<RotationKey>,
-    State(client): State<reqwest::Client>,
+    State(client): State<Client>,
     State(config): State<AppConfig>,
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<server::create_account::Input>,
