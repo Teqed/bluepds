@@ -11,32 +11,32 @@ atrium-repo = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
 atrium-xrpc = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
 atrium-xrpc-client = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
 
-anyhow = "1.0.94"
+anyhow = "1.0.96"
 argon2 = { version = "0.5.3", features = ["std"] }
 axum = { version = "0.8.1", features = ["tower-log", "form", "macros", "ws"] }
-azure_core = "0.21.0"
-azure_identity = "0.21.0"
+azure_core = "0.22.0"
+azure_identity = "0.22.0"
 base32 = "0.5.1"
 base64 = "0.22.1"
 chrono = "0.4.39"
-clap = { version = "4.5.23", features = ["derive"] }
-clap-verbosity-flag = "3.0.1"
-constcat = "0.5.1"
+clap = { version = "4.5.30", features = ["derive"] }
+clap-verbosity-flag = "3.0.2"
+constcat = "0.6.0"
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
 http-cache-reqwest = { version = "0.15.1", default-features = false, features = ["manager-moka"] }
 rand = "0.8.5"
 reqwest = { version = "0.12.12", features = ["json"] }
 reqwest-middleware = { version = "0.4.0", features = ["json"] }
-serde = { version = "1.0.216", features = ["derive"] }
-serde_ipld_dagcbor = { version = "0.6.0", default-features = false, features = ["std"] }
-serde_json = "1.0.133"
+serde = { version = "1.0.218", features = ["derive"] }
+serde_ipld_dagcbor = { version = "0.6.2", default-features = false, features = ["std"] }
+serde_json = "1.0.139"
 sha2 = "0.10.8"
-sqlx = { version = "0.8.2", features = ["json", "runtime-tokio", "sqlite"] }
-thiserror = "2.0.7"
-tokio = { version = "1.42.0", features = ["macros", "rt-multi-thread"] }
+sqlx = { version = "0.8.3", features = ["json", "runtime-tokio", "sqlite"] }
+thiserror = "2.0.11"
+tokio = { version = "1.43.0", features = ["macros", "rt-multi-thread"] }
 tower-http = { version = "0.6.2", features = ["cors", "fs", "trace"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 url = "2.5.4"
-uuid = { version = "1.11.0", features = ["v4"] }
+uuid = { version = "1.14.0", features = ["v4"] }

@@ -16,7 +16,7 @@ use axum::{
     routing::get,
     Router,
 };
-use azure_core::auth::TokenCredential;
+use azure_core::credentials::TokenCredential;
 use clap::Parser;
 use clap_verbosity_flag::{log::LevelFilter, InfoLevel, Verbosity};
 use config::AppConfig;
@@ -384,8 +384,8 @@ async fn run() -> anyhow::Result<()> {
     tokio::fs::create_dir_all(&config.repo.path).await?;
     tokio::fs::create_dir_all(&config.plc.path).await?;
 
-    let cred =
-        azure_identity::create_default_credential().context("failed to create Azure credential")?;
+    let cred = azure_identity::DefaultAzureCredential::new()
+        .context("failed to create Azure credential")?;
     let opts = SqliteConnectOptions::from_str(&config.db)
         .context("failed to parse database options")?
         .create_if_missing(true);
