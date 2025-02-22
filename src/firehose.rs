@@ -7,6 +7,7 @@ use atrium_api::{
 };
 use atrium_repo::Cid;
 use axum::extract::ws::{Message, WebSocket};
+use rand::Rng;
 use serde::{ser::SerializeMap, Serialize};
 use tracing::{debug, error, info, warn};
 
@@ -162,7 +163,13 @@ async fn broadcast_message(
         sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
     };
 
-    info!("Broadcasting message {} {} ({} bytes)", *seq, ty, enc.len());
+    info!(
+        "Broadcasting message {} {} ({} bytes) to {} clients",
+        *seq,
+        ty,
+        enc.len(),
+        clients.len()
+    );
 
     // Increment the sequence number.
     *nseq = *seq;
@@ -188,26 +195,19 @@ async fn broadcast_message(
 }
 
 async fn broadcast_ping(clients: &mut Vec<WebSocket>) -> Result<()> {
-    let mut frame = Vec::new();
+    let contents = rand::thread_rng()
+        .sample_iter(rand::distributions::Alphanumeric)
+        .take(15)
+        .map(char::from)
+        .collect::<String>();
 
-    // FIXME: I'm not actually sure if and how pings are implemented in AT protocol.
-    // However, these are necessary to keep websocket connections alive, so we'll send
-    // `#info` frames for now.
-    let hdr = FrameHeader::Message("#info".to_string());
-    let msg = sync::subscribe_repos::Message::Info(Box::new(
-        sync::subscribe_repos::InfoData {
-            message: None,
-            name: "ping".to_string(),
-        }
-        .into(),
-    ));
-
-    serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
-    serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
+    // Send a websocket ping message.
+    // Reference: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#pings_and_pongs_the_heartbeat_of_websockets
+    let message = Message::Ping(axum::body::Bytes::from_owner(contents));
 
     for i in (0..clients.len()).rev() {
         let client = &mut clients[i];
-        if let Err(e) = client.send(Message::binary(frame.clone())).await {
+        if let Err(e) = client.send(message.clone()).await {
             debug!("Firehose client disconnected: {e}");
             clients.remove(i);
         }
