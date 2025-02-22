@@ -11,5 +11,6 @@
 !/Cargo.toml
 !/default.toml
 !/deployment.bicep
+!/deploymentBindingHack.bicep
 !/Dockerfile
 !/README.md
