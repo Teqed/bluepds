@@ -5,11 +5,11 @@ edition = "2021"
 publish = false
 
 [dependencies]
-atrium-api = { path = "../atrium/atrium-api" }
-atrium-crypto = { path = "../atrium/atrium-crypto" }
-atrium-repo = { path = "../atrium/atrium-repo" }
-atrium-xrpc = { path = "../atrium/atrium-xrpc" }
-atrium-xrpc-client = { path = "../atrium/atrium-xrpc-client" }
+atrium-api = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
+atrium-crypto = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
+atrium-repo = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
+atrium-xrpc = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
+atrium-xrpc-client = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
 
 anyhow = "1.0.94"
 axum = { version = "0.8.1", features = ["tower-log", "form", "macros", "ws"] }
@@ -25,7 +25,7 @@ rand = "0.8.5"
 serde = { version = "1.0.216", features = ["derive"] }
 serde_ipld_dagcbor = { version = "0.6.0", default-features = false, features = ["std"] }
 serde_json = "1.0.133"
-sqlx = { version = "0.8.2", features = ["runtime-tokio", "sqlite"] }
+sqlx = { version = "0.8.2", features = ["json", "runtime-tokio", "sqlite"] }
 thiserror = "2.0.7"
 tokio = { version = "1.42.0", features = ["macros", "rt-multi-thread"] }
 tower-http = { version = "0.6.2", features = ["cors", "fs", "trace"] }
