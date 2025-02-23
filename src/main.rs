@@ -97,6 +97,7 @@ struct AppState {
     db: Db,
 
     client: Client,
+    simple_client: reqwest::Client,
     firehose: FirehoseProducer,
 
     signing_key: SigningKey,
@@ -201,7 +202,7 @@ async fn service_proxy(
     url: Uri,
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
-    State(client): State<Client>,
+    State(client): State<reqwest::Client>,
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response<Body>> {
@@ -231,7 +232,7 @@ async fn service_proxy(
         ),
     };
 
-    let did_doc = did::resolve(&client, did.clone())
+    let did_doc = did::resolve(&Client::new(client.clone(), []), did.clone())
         .await
         .with_context(|| format!("failed to resolve did document {}", did.as_str()))?;
 
@@ -339,11 +340,11 @@ async fn run() -> anyhow::Result<()> {
         .context("failed to load configuration")?;
 
     // Create a reqwest client that will be used for all outbound requests.
-    let client = reqwest::Client::builder()
+    let simple_client = reqwest::Client::builder()
         .user_agent(APP_USER_AGENT)
         .build()
         .context("failed to build requester client")?;
-    let client = reqwest_middleware::ClientBuilder::new(client)
+    let client = reqwest_middleware::ClientBuilder::new(simple_client.clone())
         .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
             mode: CacheMode::Default,
             manager: MokaManager::default(),
@@ -420,6 +421,7 @@ async fn run() -> anyhow::Result<()> {
             config: config.clone(),
             db: db.clone(),
             client: client.clone(),
+            simple_client,
             firehose: fhp,
             signing_key: skey,
             rotation_key: rkey,
