@@ -335,6 +335,7 @@ async fn apply_writes(
     for op in &ops {
         match op {
             RepoOp::Update { path, .. } | RepoOp::Delete { path } => {
+                // FIXME: This may cause issues if a user deletes more than one record referencing the same blob.
                 sqlx::query!(
                     r#"UPDATE blob_ref SET record = NULL WHERE did = ? AND record = ?"#,
                     did_str,
@@ -411,9 +412,6 @@ async fn create_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::create_record::Input>,
 ) -> Result<Json<repo::create_record::Output>> {
-    // TODO: `input.repo`
-    // TODO: `input.validate`
-
     let input = (*input).clone();
     let input = repo::apply_writes::InputData {
         repo: input.repo,
@@ -472,9 +470,7 @@ async fn put_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::put_record::Input>,
 ) -> Result<Json<repo::put_record::Output>> {
-    // TODO: `input.repo`
     // TODO: `input.swap_record`
-    // TODO: `input.validate`
 
     let input = (*input).clone();
     let input = repo::apply_writes::InputData {
@@ -534,9 +530,7 @@ async fn delete_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::delete_record::Input>,
 ) -> Result<Json<repo::delete_record::Output>> {
-    // TODO: `input.repo`
     // TODO: `input.swap_record`
-    // TODO: `input.validate`
 
     let input = (*input).clone();
     let input = repo::apply_writes::InputData {
