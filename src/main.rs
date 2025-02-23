@@ -339,6 +339,12 @@ async fn run() -> anyhow::Result<()> {
         .extract()
         .context("failed to load configuration")?;
 
+    if config.test {
+        warn!("BluePDS starting up in TEST mode.");
+        warn!("This means the application will not federate with the rest of the network.");
+        warn!("If you want to turn this off, either set `test` to false in the config or define `BLUEPDS_TEST = false`");
+    }
+
     // Create a reqwest client that will be used for all outbound requests.
     let simple_client = reqwest::Client::builder()
         .user_agent(APP_USER_AGENT)
