@@ -41,7 +41,7 @@ struct BlobRef {
 }
 
 async fn swap_commit(
-    db: &Db,
+    db: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
     cid: Cid,
     rev: Tid,
     old_cid: Option<Cid>,
@@ -301,8 +301,10 @@ async fn apply_writes(
             .context("failed to extract key")?;
     }
 
+    let mut tx = db.begin().await.context("failed to begin transaction")?;
+
     if !swap_commit(
-        &db,
+        &mut *tx,
         repo.root(),
         repo.commit().rev(),
         input.swap_commit.as_ref().map(|c| c.as_ref().clone()),
@@ -334,11 +336,11 @@ async fn apply_writes(
         match op {
             RepoOp::Update { path, .. } | RepoOp::Delete { path } => {
                 sqlx::query!(
-                    r#"DELETE FROM blob_ref WHERE did = ? AND record = ?"#,
+                    r#"UPDATE blob_ref SET record = NULL WHERE did = ? AND record = ?"#,
                     did_str,
                     path
                 )
-                .execute(&db)
+                .execute(&mut *tx)
                 .await
                 .context("failed to remove blob_ref")?;
             }
@@ -354,7 +356,7 @@ async fn apply_writes(
             cid_str,
             did_str,
         )
-        .execute(&db)
+        .execute(&mut *tx)
         .await
         .context("failed to update blob_ref")?;
 
@@ -366,11 +368,15 @@ async fn apply_writes(
                 cid_str,
                 did_str,
             )
-            .execute(&db)
+            .execute(&mut *tx)
             .await
             .context("failed to update blob_ref")?;
         }
     }
+
+    tx.commit()
+        .await
+        .context("failed to commit blob ref to database")?;
 
     fhp.commit(firehose::Commit {
         car: mem,
