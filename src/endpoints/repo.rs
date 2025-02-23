@@ -773,6 +773,20 @@ async fn upload_blob(
     let mut stream = request.into_body().into_data_stream();
     while let Some(bytes) = stream.try_next().await.context("failed to receive file")? {
         len += bytes.len();
+
+        // Deal with any sneaky end-users trying to bypass size limitations.
+        if len as u64 > config.blob.limit {
+            drop(file);
+            tokio::fs::remove_file(&filename)
+                .await
+                .context("failed to remove temp file")?;
+
+            return Err(Error::with_status(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                anyhow!("size above limit and content-length header was wrong"),
+            ));
+        }
+
         sha.update(&bytes);
 
         file.write_all(&bytes)
