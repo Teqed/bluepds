@@ -76,10 +76,24 @@ async fn create_account(
     let pass = input.password.as_deref().context("no password provided")?;
 
     // TODO: `input.plc_op`
-    // TODO: `input.recovery_key`
-    if input.plc_op.is_some() || input.recovery_key.is_some() {
+    if input.plc_op.is_some() {
         return Err(Error::unimplemented(anyhow!("plc_op / recovery_key")));
     }
+
+    let recovery_keys = if let Some(key) = &input.recovery_key {
+        // Ensure the provided recovery key is valid.
+        if let Err(e) = atrium_crypto::did::parse_did_key(&key) {
+            return Err(Error::with_status(
+                StatusCode::BAD_REQUEST,
+                anyhow::Error::new(e).context("provided recovery key is in invalid format"),
+            ));
+        }
+
+        // Enroll the user-provided recovery key at a higher priority than our own.
+        vec![key.clone(), rkey.did().to_string()]
+    } else {
+        vec![rkey.did().to_string()]
+    };
 
     // Begin a new transaction to actually create the user's profile.
     // Unless committed, the transaction will be automatically rolled back.
@@ -112,7 +126,7 @@ async fn create_account(
     // https://github.com/did-method-plc/did-method-plc?tab=readme-ov-file#did-creation
     let op = PlcOperation {
         typ: "plc_operation".to_string(),
-        rotation_keys: vec![rkey.did().to_string()],
+        rotation_keys: recovery_keys,
         verification_methods: HashMap::from([("atproto".to_string(), skey.did().to_string())]),
         also_known_as: vec![format!("at://{}", input.handle.as_str())],
         services: HashMap::from([(
@@ -280,7 +294,6 @@ async fn create_account(
     )
     .await;
 
-    info!("new account: {did} {email} {pass}");
     let did = Did::from_str(&did).unwrap();
 
     fhp.commit(Commit {
@@ -296,7 +309,7 @@ async fn create_account(
     Ok(Json(
         server::create_account::OutputData {
             access_jwt: session_id.clone(),
-            did: Did::from_str(&did).unwrap(),
+            did,
             did_doc: None,
             handle: input.handle.clone(),
             refresh_jwt: session_id.clone(),
