@@ -32,7 +32,7 @@ async fn get_blob(
     let blob = config
         .blob
         .path
-        .join(format!("{}", input.cid.as_ref().to_string()));
+        .join(format!("{}.blob", input.cid.as_ref().to_string()));
 
     let f = tokio::fs::File::open(blob)
         .await
