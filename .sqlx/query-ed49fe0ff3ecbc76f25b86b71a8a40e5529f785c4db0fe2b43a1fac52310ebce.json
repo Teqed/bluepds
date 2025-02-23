@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO blob_ref (cid, did, record) VALUES (?, ?, NULL)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "ed49fe0ff3ecbc76f25b86b71a8a40e5529f785c4db0fe2b43a1fac52310ebce"
+}

@@ -7,7 +7,7 @@ use atrium_repo::{
     Cid,
 };
 use axum::{
-    body::{Body, Bytes},
+    body::Body,
     extract::{Query, State, WebSocketUpgrade},
     http::{self, Response, StatusCode},
     response::IntoResponse,
@@ -16,6 +16,7 @@ use axum::{
 };
 use constcat::concat;
 use futures::stream::TryStreamExt;
+use tokio_util::io::ReaderStream;
 
 use crate::{
     config::AppConfig,
@@ -27,8 +28,27 @@ use crate::{
 async fn get_blob(
     State(config): State<AppConfig>,
     Query(input): Query<sync::get_blob::Parameters>,
-) -> Result<Bytes> {
-    todo!()
+) -> Result<Response<Body>> {
+    let blob = config
+        .blob
+        .path
+        .join(format!("{}", input.cid.as_ref().to_string()));
+
+    let f = tokio::fs::File::open(blob)
+        .await
+        .context("blob not found")?;
+    let len = f
+        .metadata()
+        .await
+        .context("failed to query file metadata")?
+        .len();
+
+    let s = ReaderStream::new(f);
+
+    Ok(Response::builder()
+        .header(http::header::CONTENT_LENGTH, format!("{}", len))
+        .body(Body::from_stream(s))
+        .context("failed to construct response")?)
 }
 
 async fn get_blocks(
@@ -174,6 +194,51 @@ async fn get_repo(
 // HACK: `limit` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ListBlobsParameters {
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub cursor: core::option::Option<String>,
+    ///The DID of the repo.
+    pub did: atrium_api::types::string::Did,
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub limit: core::option::Option<String>,
+    ///Optional revision of the repo to list blobs since.
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub since: core::option::Option<String>,
+}
+
+async fn list_blobs(
+    State(db): State<Db>,
+    Query(input): Query<ListBlobsParameters>,
+) -> Result<Json<sync::list_blobs::Output>> {
+    let did_str = input.did.as_str();
+
+    // TODO: `input.since`
+    // TODO: `input.limit`
+    // TODO: `input.cursor`
+
+    let cids = sqlx::query_scalar!(r#"SELECT cid FROM blob_ref WHERE did = ?"#, did_str)
+        .fetch_all(&db)
+        .await
+        .context("failed to query blobs")?;
+
+    let cids = cids
+        .into_iter()
+        .map(|c| {
+            atrium_repo::Cid::from_str(&c)
+                .map(|s| atrium_api::types::string::Cid::new(s))
+                .map_err(anyhow::Error::new)
+        })
+        .collect::<anyhow::Result<Vec<_>>>()
+        .context("failed to convert cids")?;
+
+    Ok(Json(
+        sync::list_blobs::OutputData { cursor: None, cids }.into(),
+    ))
+}
+
+// HACK: `limit` may be passed as a string, so we must treat it as one.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ListReposParameters {
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
     pub cursor: core::option::Option<String>,
@@ -288,6 +353,7 @@ pub fn routes() -> axum::Router<AppState> {
         .route(concat!("/", sync::get_record::NSID),        get(get_record))
         .route(concat!("/", sync::get_repo_status::NSID),   get(get_repo_status))
         .route(concat!("/", sync::get_repo::NSID),          get(get_repo))
+        .route(concat!("/", sync::list_blobs::NSID),        get(list_blobs))
         .route(concat!("/", sync::list_repos::NSID),        get(list_repos))
         .route(concat!("/", sync::subscribe_repos::NSID),   get(subscribe_repos))
 }

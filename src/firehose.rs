@@ -81,12 +81,18 @@ pub struct Commit {
     pub rev: String,
     /// The DID of the repository changed.
     pub did: Did,
+    /// Blobs that were created in this commit.
+    pub blobs: Vec<Cid>,
 }
 
 impl Into<sync::subscribe_repos::Commit> for Commit {
     fn into(self) -> sync::subscribe_repos::Commit {
         sync::subscribe_repos::CommitData {
-            blobs: Vec::new(),
+            blobs: self
+                .blobs
+                .into_iter()
+                .map(|b| atrium_api::types::CidLink(b))
+                .collect::<Vec<_>>(),
             blocks: self.car,
             commit: atrium_api::types::CidLink(self.cid),
             ops: self.ops.into_iter().map(Into::into).collect::<Vec<_>>(),

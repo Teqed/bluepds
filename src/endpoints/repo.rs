@@ -1,22 +1,26 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, str::FromStr};
 
 use anyhow::{anyhow, Context};
 use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
     types::{
         string::{AtIdentifier, Nsid, Tid},
-        LimitedU32, Object, TryIntoUnknown, Unknown,
+        LimitedU32, Object, TryFromUnknown, TryIntoUnknown, Unknown,
     },
 };
 use atrium_repo::{blockstore::CarStore, Cid};
 use axum::{
-    extract::{Query, State},
-    http::StatusCode,
+    body::Body,
+    extract::{Query, Request, State},
+    http::{self, StatusCode},
     routing::{get, post},
     Json, Router,
 };
 use constcat::concat;
 use futures::TryStreamExt;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
 
 use crate::{
     auth::AuthenticatedUser,
@@ -24,6 +28,17 @@ use crate::{
     firehose::{self, FirehoseProducer, RepoOp},
     storage, AppState, Db, Error, Result, SigningKey,
 };
+
+/// IPLD CID raw binary
+const IPLD_RAW: u64 = 0x55;
+/// SHA2-256 mulithash
+const IPLD_MH_SHA2_256: u64 = 0x12;
+
+#[derive(Deserialize, Debug, Clone)]
+struct BlobRef {
+    #[serde(rename = "$link")]
+    link: String,
+}
 
 async fn swap_commit(
     db: &Db,
@@ -100,6 +115,60 @@ async fn resolve_did(
     ))
 }
 
+fn scan_blobs(o: &Unknown) -> anyhow::Result<Vec<Cid>> {
+    // { "$type": "blob", "ref": { "$link": "bafyrei..." } }
+    let v = serde_json::Value::try_from_unknown(o.clone())
+        .context("failed to convert unknown into json")?;
+
+    let mut cids = Vec::new();
+    let mut stack = vec![v];
+    while let Some(v) = stack.pop() {
+        match v {
+            serde_json::Value::Null => (),
+            serde_json::Value::Bool(_) => (),
+            serde_json::Value::Number(_) => (),
+            serde_json::Value::String(_) => (),
+            serde_json::Value::Array(values) => stack.extend(values.into_iter()),
+            serde_json::Value::Object(map) => {
+                let (ty, rf) = (map.get("$type"), map.get("ref"));
+
+                if let (Some(ty), Some(rf)) = (ty, rf) {
+                    if ty == &serde_json::Value::String("blob".to_string()) {
+                        if let Ok(rf) = serde_json::from_value::<BlobRef>(rf.clone()) {
+                            cids.push(Cid::from_str(&rf.link).context("failed to convert cid")?);
+                        }
+                    }
+                }
+
+                stack.extend(map.values().cloned());
+            }
+        }
+    }
+
+    Ok(cids)
+}
+
+#[test]
+fn test_scan_blobs() {
+    use std::str::FromStr;
+
+    let json = serde_json::json!({
+        "test": "a",
+        "blob": {
+            "$type": "blob",
+            "ref": {
+                "$link": "bafkreifzxf2wa6dyakzbdaxkz2wkvfrv3hiuafhxewbn5wahcw6eh3hzji"
+            }
+        }
+    });
+
+    let b = scan_blobs(&json.try_into_unknown().unwrap()).unwrap();
+    assert_eq!(
+        b,
+        vec![Cid::from_str("bafkreifzxf2wa6dyakzbdaxkz2wkvfrv3hiuafhxewbn5wahcw6eh3hzji").unwrap()]
+    );
+}
+
 async fn apply_writes(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -118,6 +187,7 @@ async fn apply_writes(
         .context("failed to open user repo")?;
     let orig_rev = repo.commit().rev();
 
+    let mut blobs = vec![];
     let mut res = vec![];
     let mut ops = vec![];
     let mut keys = vec![];
@@ -138,6 +208,10 @@ async fn apply_writes(
                     .add_raw(&key, &object.value)
                     .await
                     .context("failed to add record")?;
+
+                if let Ok(new_blobs) = scan_blobs(&object.value) {
+                    blobs.extend(new_blobs.into_iter().map(|b| (key.to_string(), b)));
+                }
 
                 ops.push(RepoOp::Create {
                     cid: c,
@@ -163,6 +237,10 @@ async fn apply_writes(
                     .update_raw(&key, &object.value)
                     .await
                     .context("failed to add record")?;
+
+                if let Ok(new_blobs) = scan_blobs(&object.value) {
+                    blobs.extend(new_blobs.into_iter().map(|b| (key.to_string(), b)));
+                }
 
                 ops.push(RepoOp::Update {
                     cid: c,
@@ -223,15 +301,6 @@ async fn apply_writes(
             .context("failed to extract key")?;
     }
 
-    fhp.commit(firehose::Commit {
-        car: mem,
-        ops: ops,
-        cid: repo.root(),
-        rev: repo.commit().rev().to_string(),
-        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
-    })
-    .await;
-
     if !swap_commit(
         &db,
         repo.root(),
@@ -260,6 +329,59 @@ async fn apply_writes(
         ));
     }
 
+    let did_str = user.did();
+    for op in &ops {
+        match op {
+            RepoOp::Update { path, .. } | RepoOp::Delete { path } => {
+                sqlx::query!(
+                    r#"DELETE FROM blob_ref WHERE did = ? AND record = ?"#,
+                    did_str,
+                    path
+                )
+                .execute(&db)
+                .await
+                .context("failed to remove blob_ref")?;
+            }
+            _ => {}
+        }
+    }
+
+    for (key, cid) in &blobs {
+        let cid_str = cid.to_string();
+        let r = sqlx::query!(
+            r#"UPDATE blob_ref SET record = ? WHERE cid = ? AND did = ? AND record IS NULL"#,
+            key,
+            cid_str,
+            did_str,
+        )
+        .execute(&db)
+        .await
+        .context("failed to update blob_ref")?;
+
+        // Handle the case where a new record references an existing blob.
+        if r.rows_affected() == 0 {
+            sqlx::query!(
+                r#"INSERT INTO blob_ref (record, cid, did) VALUES (?, ?, ?)"#,
+                key,
+                cid_str,
+                did_str,
+            )
+            .execute(&db)
+            .await
+            .context("failed to update blob_ref")?;
+        }
+    }
+
+    fhp.commit(firehose::Commit {
+        car: mem,
+        ops: ops,
+        cid: repo.root(),
+        rev: repo.commit().rev().to_string(),
+        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
+        blobs: blobs.into_iter().map(|(_, c)| c).collect::<Vec<_>>(),
+    })
+    .await;
+
     Ok(Json(
         repo::apply_writes::OutputData {
             results: Some(res),
@@ -286,98 +408,50 @@ async fn create_record(
     // TODO: `input.repo`
     // TODO: `input.validate`
 
-    let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
-        .await
-        .context("failed to open user repo")?;
-    let orig_rev = repo.commit().rev();
-
-    let key = format!(
-        "{}/{}",
-        input.collection.as_str(),
-        input
-            .rkey
-            .as_deref()
-            .unwrap_or(Tid::now(LimitedU32::MIN).as_str())
-    );
-    let uri = format!("at://{}/{}", user.did(), &key);
-
-    let (builder, rcid) = repo
-        .add_raw(&key, &input.record)
-        .await
-        .context("failed to add record")?;
-
-    let sig = skey
-        .sign(&builder.bytes())
-        .context("failed to sign commit")?;
-
-    let ccid = builder
-        .finalize(sig)
-        .await
-        .context("failed to write signed commit")?;
-
-    let mut contents = Vec::new();
-    let mut ret_store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [ccid])
-        .await
-        .context("failed to create car store")?;
-
-    repo.extract_raw_into(&key, &mut ret_store)
-        .await
-        .context("failed to extract commits")?;
-
-    fhp.commit(firehose::Commit {
-        car: contents,
-        ops: vec![firehose::RepoOp::Create {
-            cid: rcid,
-            path: key,
-        }],
-        cid: ccid,
-        rev: repo.commit().rev().to_string(),
-        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
-    })
-    .await;
-
-    if !swap_commit(
-        &db,
-        repo.root(),
-        repo.commit().rev(),
-        input.swap_commit.as_ref().map(|c| c.as_ref().clone()),
-        &user.did(),
-    )
-    .await
-    .context("failed to swap commit")?
-    {
-        // This should always succeed.
-        let old = input.swap_commit.clone().unwrap();
-
-        return Ok(Json(
-            repo::create_record::OutputData {
-                // FIXME: Not really sure what this should be.
-                cid: atrium_api::types::string::Cid::new(ccid),
-                commit: Some(
-                    CommitMetaData {
-                        cid: old.clone(),
-                        rev: orig_rev.to_string(),
-                    }
-                    .into(),
-                ),
-                uri,
-                validation_status: None,
+    let input = (*input).clone();
+    let input = repo::apply_writes::InputData {
+        repo: input.repo,
+        validate: input.validate,
+        swap_commit: input.swap_commit,
+        writes: vec![repo::apply_writes::InputWritesItem::Create(Box::new(
+            repo::apply_writes::CreateData {
+                collection: input.collection,
+                rkey: input.rkey,
+                value: input.record,
             }
             .into(),
-        ));
+        ))],
     }
+    .into();
+
+    let r = apply_writes(
+        user,
+        State(skey),
+        State(config),
+        State(db),
+        State(fhp),
+        Json(input),
+    )
+    .await
+    .context("failed to apply writes")?;
+    let r = (**r).clone();
+
+    let res = r
+        .results
+        .and_then(|r| r.get(0).cloned())
+        .context("unexpected output from apply_writes")?;
+    let res = if let repo::apply_writes::OutputResultsItem::CreateResult(c) = res {
+        Some(c)
+    } else {
+        None
+    };
+    let res = res.context("unexpected result from apply_writes")?;
 
     Ok(Json(
         repo::create_record::OutputData {
-            cid: atrium_api::types::string::Cid::new(rcid),
-            commit: Some(
-                CommitMetaData {
-                    cid: atrium_api::types::string::Cid::new(ccid),
-                    rev: repo.commit().rev().to_string(),
-                }
-                .into(),
-            ),
-            uri,
+            cid: res.cid.clone(),
+            commit: r.commit.clone(),
+            uri: res.uri.clone(),
             validation_status: Some("unknown".to_string()),
         }
         .into(),
@@ -396,99 +470,50 @@ async fn put_record(
     // TODO: `input.swap_record`
     // TODO: `input.validate`
 
-    let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
-        .await
-        .context("failed to open user repo")?;
-    let orig_rev = repo.commit().rev();
-
-    let key = format!("{}/{}", input.collection.as_str(), input.rkey);
-    let uri = format!("at://{}/{}", user.did(), &key);
-
-    let (builder, rcid) = if let Ok((builder, rcid)) = repo
-        .update_raw(&key, &input.record)
-        .await
-        .context("failed to add record")
-    {
-        (builder, rcid)
-    } else {
-        repo.add_raw(&key, &input.record)
-            .await
-            .context("failed to add record")?
-    };
-
-    let sig = skey
-        .sign(&builder.bytes())
-        .context("failed to sign commit")?;
-
-    let ccid = builder
-        .finalize(sig)
-        .await
-        .context("failed to write signed commit")?;
-
-    let mut contents = Vec::new();
-    let mut ret_store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [ccid])
-        .await
-        .context("failed to create car store")?;
-
-    repo.extract_raw_into(&key, &mut ret_store)
-        .await
-        .context("failed to extract commits")?;
-
-    // FIXME: Probably need to broadcast a `Create` op if the record was created.
-    fhp.commit(firehose::Commit {
-        car: contents,
-        ops: vec![firehose::RepoOp::Update {
-            cid: rcid,
-            path: key,
-        }],
-        cid: ccid,
-        rev: repo.commit().rev().to_string(),
-        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
-    })
-    .await;
-
-    if !swap_commit(
-        &db,
-        repo.root(),
-        repo.commit().rev(),
-        input.swap_commit.as_ref().map(|c| c.as_ref().clone()),
-        &user.did(),
-    )
-    .await
-    .context("failed to swap commit")?
-    {
-        // This should always succeed.
-        let old = input.swap_commit.clone().unwrap();
-
-        return Ok(Json(
-            repo::put_record::OutputData {
-                // FIXME: Not really sure what this should be.
-                cid: atrium_api::types::string::Cid::new(ccid),
-                commit: Some(
-                    CommitMetaData {
-                        cid: old.clone(),
-                        rev: orig_rev.to_string(),
-                    }
-                    .into(),
-                ),
-                uri,
-                validation_status: None,
+    let input = (*input).clone();
+    let input = repo::apply_writes::InputData {
+        repo: input.repo,
+        validate: input.validate,
+        swap_commit: input.swap_commit,
+        writes: vec![repo::apply_writes::InputWritesItem::Update(Box::new(
+            repo::apply_writes::UpdateData {
+                collection: input.collection,
+                rkey: input.rkey,
+                value: input.record,
             }
             .into(),
-        ));
+        ))],
     }
+    .into();
+
+    let r = apply_writes(
+        user,
+        State(skey),
+        State(config),
+        State(db),
+        State(fhp),
+        Json(input),
+    )
+    .await
+    .context("failed to apply writes")?;
+    let r = (**r).clone();
+
+    let res = r
+        .results
+        .and_then(|r| r.get(0).cloned())
+        .context("unexpected output from apply_writes")?;
+    let res = if let repo::apply_writes::OutputResultsItem::UpdateResult(c) = res {
+        Some(c)
+    } else {
+        None
+    };
+    let res = res.context("unexpected result from apply_writes")?;
 
     Ok(Json(
         repo::put_record::OutputData {
-            cid: atrium_api::types::string::Cid::new(rcid),
-            commit: Some(
-                CommitMetaData {
-                    cid: atrium_api::types::string::Cid::new(ccid),
-                    rev: repo.commit().rev().to_string(),
-                }
-                .into(),
-            ),
-            uri,
+            cid: res.cid.clone(),
+            commit: r.commit,
+            uri: res.uri.clone(),
             validation_status: Some("unknown".to_string()),
         }
         .into(),
@@ -507,83 +532,35 @@ async fn delete_record(
     // TODO: `input.swap_record`
     // TODO: `input.validate`
 
-    let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
-        .await
-        .context("failed to open user repo")?;
-    let orig_rev = repo.commit().rev();
-
-    let key = format!("{}/{}", input.collection.as_str(), input.rkey);
-
-    let builder = repo
-        .delete_raw(&key)
-        .await
-        .context("failed to delete record")?;
-
-    let sig = skey
-        .sign(&builder.bytes())
-        .context("failed to sign commit")?;
-
-    let ccid = builder
-        .finalize(sig)
-        .await
-        .context("failed to write signed commit")?;
-
-    let mut contents = Vec::new();
-    let mut ret_store = CarStore::create_with_roots(std::io::Cursor::new(&mut contents), [ccid])
-        .await
-        .context("failed to create car store")?;
-
-    repo.extract_raw_into(&key, &mut ret_store)
-        .await
-        .context("failed to extract commits")?;
-
-    fhp.commit(firehose::Commit {
-        car: contents,
-        ops: vec![firehose::RepoOp::Delete { path: key }],
-        cid: ccid,
-        rev: repo.commit().rev().to_string(),
-        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
-    })
-    .await;
-
-    if !swap_commit(
-        &db,
-        repo.root(),
-        repo.commit().rev(),
-        input.swap_commit.as_ref().map(|c| c.as_ref().clone()),
-        &user.did(),
-    )
-    .await
-    .context("failed to swap commit")?
-    {
-        // This should always succeed.
-        let old = input.swap_commit.clone().unwrap();
-
-        return Ok(Json(
-            repo::delete_record::OutputData {
-                commit: Some(
-                    CommitMetaData {
-                        cid: old.clone(),
-                        rev: orig_rev.to_string(),
-                    }
-                    .into(),
-                ),
+    let input = (*input).clone();
+    let input = repo::apply_writes::InputData {
+        repo: input.repo,
+        swap_commit: input.swap_commit,
+        validate: None,
+        writes: vec![repo::apply_writes::InputWritesItem::Delete(Box::new(
+            repo::apply_writes::DeleteData {
+                collection: input.collection,
+                rkey: input.rkey,
             }
             .into(),
-        ));
+        ))],
     }
+    .into();
+
+    let r = apply_writes(
+        user,
+        State(skey),
+        State(config),
+        State(db),
+        State(fhp),
+        Json(input),
+    )
+    .await
+    .context("failed to apply writes")?;
+    let r = (**r).clone();
 
     Ok(Json(
-        repo::delete_record::OutputData {
-            commit: Some(
-                CommitMetaData {
-                    cid: atrium_api::types::string::Cid::new(ccid),
-                    rev: repo.commit().rev().to_string(),
-                }
-                .into(),
-            ),
-        }
-        .into(),
+        repo::delete_record::OutputData { commit: r.commit }.into(),
     ))
 }
 
@@ -753,21 +730,114 @@ async fn list_records(
     ))
 }
 
+async fn upload_blob(
+    user: AuthenticatedUser,
+    State(config): State<AppConfig>,
+    State(db): State<Db>,
+    request: Request<Body>,
+) -> Result<Json<repo::upload_blob::Output>> {
+    let length = request
+        .headers()
+        .get(http::header::CONTENT_LENGTH)
+        .context("no content length provided")?
+        .to_str()
+        .map_err(anyhow::Error::from)
+        .and_then(|s| u64::from_str_radix(s, 10).map_err(anyhow::Error::from))
+        .context("invalid content-length header")?;
+    let mime = request
+        .headers()
+        .get(http::header::CONTENT_TYPE)
+        .context("no content-type provided")?
+        .to_str()
+        .context("invalid content-type provided")?
+        .to_string();
+
+    if length > config.blob.limit {
+        return Err(Error::with_status(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            anyhow!("size {} above limit {}", length, config.blob.limit),
+        ));
+    }
+
+    // FIXME: Need to make this more robust. This will fail under load.
+    let filename = config
+        .blob
+        .path
+        .join(format!("temp-{}.blob", chrono::Utc::now().timestamp()));
+    let mut file = tokio::fs::File::create(&filename)
+        .await
+        .context("failed to create temporary file")?;
+
+    let mut len = 0usize;
+    let mut sha = Sha256::new();
+    let mut stream = request.into_body().into_data_stream();
+    while let Some(bytes) = stream.try_next().await.context("failed to receive file")? {
+        len += bytes.len();
+        sha.update(&bytes);
+
+        file.write_all(&bytes)
+            .await
+            .context("failed to write blob")?;
+    }
+
+    drop(file);
+    let hash = sha.finalize();
+
+    let cid = atrium_repo::Cid::new_v1(
+        IPLD_RAW,
+        atrium_repo::Multihash::wrap(IPLD_MH_SHA2_256, hash.as_slice()).unwrap(),
+    );
+
+    let cid_str = cid.to_string();
+
+    tokio::fs::rename(
+        &filename,
+        config.blob.path.join(format!("{}.blob", cid_str)),
+    )
+    .await
+    .context("failed to finalize blob")?;
+
+    let did_str = user.did();
+
+    sqlx::query!(
+        r#"INSERT INTO blob_ref (cid, did, record) VALUES (?, ?, NULL)"#,
+        cid_str,
+        did_str
+    )
+    .execute(&db)
+    .await
+    .context("failed to insert blob into database")?;
+
+    Ok(Json(
+        repo::upload_blob::OutputData {
+            blob: atrium_api::types::BlobRef::Typed(atrium_api::types::TypedBlobRef::Blob(
+                atrium_api::types::Blob {
+                    r#ref: atrium_api::types::CidLink(cid),
+                    mime_type: mime,
+                    size: len,
+                },
+            )),
+        }
+        .into(),
+    ))
+}
+
 #[rustfmt::skip]
 pub fn routes() -> Router<AppState> {
     // AP /xrpc/com.atproto.repo.applyWrites
     // AP /xrpc/com.atproto.repo.createRecord
     // AP /xrpc/com.atproto.repo.putRecord
     // AP /xrpc/com.atproto.repo.deleteRecord
+    // AP /xrpc/com.atproto.repo.uploadBlob
     // UG /xrpc/com.atproto.repo.describeRepo
     // UG /xrpc/com.atproto.repo.getRecord
     // UG /xrpc/com.atproto.repo.listRecords
-    // AP /xrpc/com.atproto.repo.uploadBlob
     Router::new()
         .route(concat!("/", repo::apply_writes::NSID),  post(apply_writes))
         .route(concat!("/", repo::create_record::NSID), post(create_record))
         .route(concat!("/", repo::put_record::NSID),    post(put_record))
         .route(concat!("/", repo::delete_record::NSID), post(delete_record))
+        .route(concat!("/", repo::upload_blob::NSID),   post(upload_blob))
         .route(concat!("/", repo::describe_repo::NSID), get(describe_repo))
         .route(concat!("/", repo::get_record::NSID),    get(get_record))
         .route(concat!("/", repo::list_records::NSID),  get(list_records))

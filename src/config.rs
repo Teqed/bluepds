@@ -22,6 +22,14 @@ pub struct PlcConfig {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+pub struct BlobConfig {
+    /// The path to store blobs into.
+    pub path: PathBuf,
+    /// The maximum size limit of blobs.
+    pub limit: u64,
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct AppConfig {
     /// The primary signing keys for all PLC/DID operations.
     pub key: PathBuf,
@@ -35,6 +43,8 @@ pub struct AppConfig {
     pub plc: PlcConfig,
     /// The repo configuration block.
     pub repo: RepoConfig,
+    /// The blob configuration block.
+    pub blob: BlobConfig,
     /// The sqlite database connection options.
     pub db: String,
     /// Test mode.

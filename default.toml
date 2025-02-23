@@ -20,3 +20,7 @@ path = "data/repo"
 
 [plc]
 path = "data/plc"
+
+[blob]
+path = "data/blob"
+limit = 10485760 # 10 MB

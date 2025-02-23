@@ -383,6 +383,7 @@ async fn run() -> anyhow::Result<()> {
 
     tokio::fs::create_dir_all(&config.repo.path).await?;
     tokio::fs::create_dir_all(&config.plc.path).await?;
+    tokio::fs::create_dir_all(&config.blob.path).await?;
 
     let cred = azure_identity::DefaultAzureCredential::new()
         .context("failed to create Azure credential")?;

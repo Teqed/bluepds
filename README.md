@@ -15,6 +15,8 @@ This is an implementation of an ATProto PDS using [Axum](https://github.com/toki
 
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
+⚠ Warning: This PDS is undergoing heavy development. Do _NOT_ use this to host your primary account or any important data!
+
 ## Quick Start
 ```
 cargo run
@@ -58,15 +60,15 @@ cargo run
     - [X] UG /xrpc/com.atproto.repo.describeRepo
     - [X] UG /xrpc/com.atproto.repo.getRecord
     - [X] UG /xrpc/com.atproto.repo.listRecords
-    - [ ] AP /xrpc/com.atproto.repo.uploadBlob
+    - [X] AP /xrpc/com.atproto.repo.uploadBlob
 - com.atproto.sync
-    - [ ] UG /xrpc/com.atproto.sync.getBlob
+    - [X] UG /xrpc/com.atproto.sync.getBlob
     - [X] UG /xrpc/com.atproto.sync.getBlocks
     - [X] UG /xrpc/com.atproto.sync.getLatestCommit
     - [X] UG /xrpc/com.atproto.sync.getRecord
     - [X] UG /xrpc/com.atproto.sync.getRepoStatus
     - [X] UG /xrpc/com.atproto.sync.getRepo
-    - [ ] UG /xrpc/com.atproto.sync.listBlobs
+    - [X] UG /xrpc/com.atproto.sync.listBlobs
     - [X] UG /xrpc/com.atproto.sync.listRepos
     - [X] UG /xrpc/com.atproto.sync.subscribeRepos
 

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blob_ref SET record = ? WHERE cid = ? AND did = ? AND record IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "e9409b35d29a3962cc01167cfeb4affe7f40dcc41d93c60b8ca0f3c8c9c57414"
+}
