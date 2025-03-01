@@ -46,6 +46,8 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             }
         };
 
+        // N.B: We ignore all fields inside of the token up until this point because they can be
+        // attacker-controlled.
         let (typ, claims) = auth::verify(&state.signing_key.did(), token).map_err(|e| {
             Error::with_status(
                 StatusCode::UNAUTHORIZED,
@@ -53,6 +55,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             )
         })?;
 
+        // Ensure this is an authentication token.
         if typ != "at+jwt" {
             return Err(Error::with_status(
                 StatusCode::UNAUTHORIZED,
@@ -60,7 +63,17 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             ));
         }
 
-        // TODO: Check `exp` claim.
+        if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
+            let now = chrono::Utc::now().timestamp();
+            if now >= exp {
+                // FIXME: This should return BAD_REQUEST with a simple JSON body: {"error": "InvalidToken", "message": "..."}
+                return Err(Error::with_status(
+                    StatusCode::BAD_REQUEST,
+                    anyhow!("token has expired"),
+                ));
+            }
+        }
+
         if let Some(did) = claims.get("iss").and_then(serde_json::Value::as_str) {
             let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
                 .fetch_one(&state.db)

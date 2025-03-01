@@ -20,7 +20,6 @@ use axum::{
 use constcat::concat;
 use rand::Rng;
 use sha2::Digest;
-use tracing::info;
 use uuid::Uuid;
 
 use crate::{
