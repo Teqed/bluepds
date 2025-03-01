@@ -179,8 +179,19 @@ async fn apply_writes(
 ) -> Result<Json<repo::apply_writes::Output>> {
     use atrium_api::com::atproto::repo::apply_writes::{self, InputWritesItem, OutputResultsItem};
 
-    // TODO: `input.repo`
     // TODO: `input.validate`
+
+    let (target_did, _) = resolve_did(&db, &input.repo)
+        .await
+        .context("failed to resolve did")?;
+
+    // Ensure that we are updating the correct repository.
+    if target_did.as_str() != user.did() {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("repo did not match the authenticated user"),
+        ));
+    }
 
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
         .await
