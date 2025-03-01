@@ -74,9 +74,14 @@ async fn create_account(
     let email = input.email.as_deref().context("no email provided")?;
     let pass = input.password.as_deref().context("no password provided")?;
 
+    // TODO: Handle the account migration flow.
+    // Users will hit this endpoint with a service-level authentication token.
+    //
+    // https://github.com/bluesky-social/pds/blob/main/ACCOUNT_MIGRATION.md
+
     // TODO: `input.plc_op`
     if input.plc_op.is_some() {
-        return Err(Error::unimplemented(anyhow!("plc_op / recovery_key")));
+        return Err(Error::unimplemented(anyhow!("plc_op")));
     }
 
     let recovery_keys = if let Some(key) = &input.recovery_key {
