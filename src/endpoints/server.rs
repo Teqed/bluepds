@@ -248,25 +248,6 @@ async fn create_account(
     .await
     .context("failed to create new account")?;
 
-    let session_id = Uuid::new_v4().to_string();
-
-    // N.B: Because there are a number of shortcomings with JSON web tokens, I've opted to
-    // use classic session identifiers instead. Bluesky's frontend will need to be updated
-    // to use a more secure authentication token.
-    //
-    // Reference: https://datatracker.ietf.org/doc/html/rfc8725
-    sqlx::query!(
-        r#"
-        INSERT OR ROLLBACK INTO sessions (id, did, created_at)
-            VALUES (?, ?, datetime('now'))
-        "#,
-        session_id,
-        did
-    )
-    .execute(&mut *tx)
-    .await
-    .context("failed to create new session")?;
-
     // The account is fully created. Commit the SQL transaction to the database.
     tx.commit().await.context("failed to commit transaction")?;
 
@@ -305,13 +286,36 @@ async fn create_account(
     })
     .await;
 
+    // Finally, sign some authentication tokens for the new user.
+    let token = auth::sign(
+        &skey,
+        "at+jwt",
+        serde_json::json!({
+            "iss": did.clone(),
+            "aud": format!("did:web:{}", config.host_name),
+            "exp": (chrono::Utc::now() + std::time::Duration::from_secs(2 * 60 * 60)).timestamp()
+        }),
+    )
+    .context("failed to sign jwt")?;
+
+    let refresh_token = auth::sign(
+        &skey,
+        "refresh+jwt",
+        serde_json::json!({
+            "iss": did.clone(),
+            "aud": format!("did:web:{}", config.host_name),
+            "exp": (chrono::Utc::now() + std::time::Duration::from_secs(2 * 60 * 60)).timestamp()
+        }),
+    )
+    .context("failed to sign refresh jwt")?;
+
     Ok(Json(
         server::create_account::OutputData {
-            access_jwt: session_id.clone(),
+            access_jwt: token,
             did,
             did_doc: None,
             handle: input.handle.clone(),
-            refresh_jwt: session_id.clone(),
+            refresh_jwt: refresh_token,
         }
         .into(),
     ))

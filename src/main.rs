@@ -59,6 +59,10 @@ struct KeyData {
     rkey: Vec<u8>,
 }
 
+// FIXME: We should use P256Keypair instead. SecP256K1 is primarily used for cryptocurrencies,
+// and the implementations of this algorithm are much more limited as compared to P256.
+//
+// Reference: https://soatok.blog/2022/05/19/guidance-for-choosing-an-elliptic-curve-signature-algorithm-in-2022/
 #[derive(Clone)]
 pub struct SigningKey(Arc<Secp256k1Keypair>);
 #[derive(Clone)]
