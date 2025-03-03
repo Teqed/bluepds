@@ -15,7 +15,8 @@ This is an implementation of an ATProto PDS using [Axum](https://github.com/toki
 
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
-⚠ Warning: This PDS is undergoing heavy development. Do _NOT_ use this to host your primary account or any important data!
+> [!WARNING]
+> This PDS is undergoing heavy development. Do _NOT_ use this to host your primary account or any important data!
 
 ## Quick Start
 ```
