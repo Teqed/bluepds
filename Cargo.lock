@@ -284,7 +284,8 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "atrium-api"
 version = "0.25.0"
-source = "git+https://github.com/DrChat/atrium.git?branch=repo#e1da40dfe35987f0c451d58157699b93bd8e5399"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea3ea578c768ec91082e424a8d139517b2cb5c75149bf3cec04371a1e74f00f2"
 dependencies = [
  "atrium-common",
  "atrium-xrpc",
@@ -304,7 +305,8 @@ dependencies = [
 [[package]]
 name = "atrium-common"
 version = "0.1.0"
-source = "git+https://github.com/DrChat/atrium.git?branch=repo#e1da40dfe35987f0c451d58157699b93bd8e5399"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "168e558408847bfed69df1033a32fd051f7a037ebc90ea46e588ccb2bfbd7233"
 dependencies = [
  "dashmap",
  "lru",
@@ -318,7 +320,8 @@ dependencies = [
 [[package]]
 name = "atrium-crypto"
 version = "0.1.2"
-source = "git+https://github.com/DrChat/atrium.git?branch=repo#e1da40dfe35987f0c451d58157699b93bd8e5399"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73a3da430c71dd9006d61072c20771f264e5c498420a49c32305ceab8bd71955"
 dependencies = [
  "ecdsa",
  "k256",
@@ -329,8 +332,9 @@ dependencies = [
 
 [[package]]
 name = "atrium-repo"
-version = "0.0.0"
-source = "git+https://github.com/DrChat/atrium.git?branch=repo#e1da40dfe35987f0c451d58157699b93bd8e5399"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc06b40fe3e04f34c99b073f7578f5a9c3eaaf07773c7e236e69c44100604649"
 dependencies = [
  "async-stream",
  "atrium-api",
@@ -349,7 +353,8 @@ dependencies = [
 [[package]]
 name = "atrium-xrpc"
 version = "0.12.1"
-source = "git+https://github.com/DrChat/atrium.git?branch=repo#e1da40dfe35987f0c451d58157699b93bd8e5399"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6b4956d94147cfbb669c68f654eb4fd6a1d00648c810cec79d04ec5425b8f378"
 dependencies = [
  "http",
  "serde",
@@ -362,7 +367,8 @@ dependencies = [
 [[package]]
 name = "atrium-xrpc-client"
 version = "0.5.11"
-source = "git+https://github.com/DrChat/atrium.git?branch=repo#e1da40dfe35987f0c451d58157699b93bd8e5399"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9bab4287ccef501b3892e1325280e61ae79a96eb9ee63dceabc0ed3bea35f2eb"
 dependencies = [
  "atrium-xrpc",
  "reqwest",

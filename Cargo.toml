@@ -5,11 +5,11 @@ edition = "2021"
 publish = false
 
 [dependencies]
-atrium-api = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
-atrium-crypto = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
-atrium-repo = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
-atrium-xrpc = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
-atrium-xrpc-client = { git = "https://github.com/DrChat/atrium.git", branch = "repo" }
+atrium-api = "0.25"
+atrium-crypto = "0.1"
+atrium-repo = "0.1"
+atrium-xrpc = "0.12"
+atrium-xrpc-client = "0.5"
 
 anyhow = "1.0.96"
 argon2 = { version = "0.5.3", features = ["std"] }
