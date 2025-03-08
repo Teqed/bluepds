@@ -39,6 +39,12 @@ cargo run
 ```
 
 ## To-do
+### High-level features
+- [ ] Storage backend abstractions
+  - [ ] Azure blob storage backend
+  - [ ] Backblaze b2(?)
+
+### APIs
 - [X] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)
 - [X] UG /xrpc/_health (undocumented, but impl by reference PDS)
 - com.atproto.identity
