@@ -43,6 +43,9 @@ cargo run
 - [ ] Storage backend abstractions
   - [ ] Azure blob storage backend
   - [ ] Backblaze b2(?)
+- [ ] Telemetry
+  - [ ] [Metrics](https://github.com/metrics-rs/metrics) (counters/gauges/etc)
+  - [ ] Exporters for common backends (Prometheus/etc)
 
 ### APIs
 - [X] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)
