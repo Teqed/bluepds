@@ -155,15 +155,11 @@ impl FirehoseProducer {
     }
 }
 
-/// Broadcast a message out to all clients.
-async fn broadcast_message(
-    clients: &mut Vec<WebSocket>,
-    history: &mut VecDeque<(i64, &str, sync::subscribe_repos::Message)>,
-    seq: &mut i64,
+/// Serialize a message.
+async fn serialize_message(
+    seq: i64,
     mut msg: sync::subscribe_repos::Message,
-) -> Result<()> {
-    let enc = serde_ipld_dagcbor::to_vec(&msg).unwrap().into_boxed_slice();
-
+) -> (&'static str, Vec<u8>) {
     let mut dummy_seq = 0i64;
     let (ty, nseq) = match &mut msg {
         sync::subscribe_repos::Message::Account(m) => ("#account", &mut m.seq),
@@ -175,19 +171,8 @@ async fn broadcast_message(
         sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
     };
 
-    info!(
-        "Broadcasting message {} {} ({} bytes) to {} clients",
-        *seq,
-        ty,
-        enc.len(),
-        clients.len()
-    );
-
-    // Increment the sequence number.
-    *nseq = *seq;
-
-    history.push_back((*seq, ty, msg.clone()));
-    *seq = seq.wrapping_add(1);
+    // Set the sequence number.
+    *nseq = seq;
 
     let hdr = FrameHeader::Message(ty.to_string());
 
@@ -195,32 +180,16 @@ async fn broadcast_message(
     serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
     serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
 
-    for i in (0..clients.len()).rev() {
-        let client = &mut clients[i];
-        if let Err(e) = client.send(Message::binary(frame.clone())).await {
-            debug!("Firehose client disconnected: {e}");
-            clients.remove(i);
-        }
-    }
-
-    Ok(())
+    (ty, frame)
 }
 
-/// Broadcast a websocket ping out to all clients.
-async fn broadcast_ping(clients: &mut Vec<WebSocket>) -> Result<()> {
-    let contents = rand::thread_rng()
-        .sample_iter(rand::distributions::Alphanumeric)
-        .take(15)
-        .map(char::from)
-        .collect::<String>();
-
-    // Send a websocket ping message.
-    // Reference: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#pings_and_pongs_the_heartbeat_of_websockets
-    let message = Message::Ping(axum::body::Bytes::from_owner(contents));
+/// Broadcast a message out to all clients.
+async fn broadcast_message(clients: &mut Vec<WebSocket>, msg: Message) -> Result<()> {
+    info!("Broadcasting message {} clients", clients.len());
 
     for i in (0..clients.len()).rev() {
         let client = &mut clients[i];
-        if let Err(e) = client.send(message.clone()).await {
+        if let Err(e) = client.send(msg.clone()).await {
             debug!("Firehose client disconnected: {e}");
             clients.remove(i);
         }
@@ -344,7 +313,19 @@ pub async fn spawn(
             match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
                 Ok(msg) => match msg {
                     Some(FirehoseMessage::Broadcast(msg)) => {
-                        let _ = broadcast_message(&mut clients, &mut history, &mut seq, msg).await;
+                        let (ty, by) = serialize_message(seq, msg.clone()).await;
+
+                        history.push_back((seq, ty, msg));
+
+                        info!(
+                            "Broadcasting message {} {} to {} clients",
+                            seq,
+                            ty,
+                            clients.len()
+                        );
+
+                        seq = seq.wrapping_add(1);
+                        let _ = broadcast_message(&mut clients, Message::binary(by)).await;
                     }
                     Some(FirehoseMessage::Connect((ws, cursor))) => {
                         match handle_connect(ws, seq, &mut history, cursor).await {
@@ -365,7 +346,16 @@ pub async fn spawn(
                         reconnect_relays(&client, &config).await;
                     }
 
-                    let _ = broadcast_ping(&mut clients).await;
+                    let contents = rand::thread_rng()
+                        .sample_iter(rand::distributions::Alphanumeric)
+                        .take(15)
+                        .map(char::from)
+                        .collect::<String>();
+
+                    // Send a websocket ping message.
+                    // Reference: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#pings_and_pongs_the_heartbeat_of_websockets
+                    let message = Message::Ping(axum::body::Bytes::from_owner(contents));
+                    let _ = broadcast_message(&mut clients, message).await;
                 }
             }
         }
