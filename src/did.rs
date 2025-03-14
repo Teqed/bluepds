@@ -38,6 +38,7 @@ pub struct DidDocument {
     pub service: Vec<DidService>,
 }
 
+/// Resolve a DID document using the specified reqwest client.
 pub async fn resolve(client: &Client, did: Did) -> Result<DidDocument> {
     let url = match did.method() {
         "did:web" => {

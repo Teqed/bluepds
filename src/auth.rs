@@ -1,4 +1,4 @@
-//! Authentication layers
+//! Authentication primitives.
 
 use anyhow::{anyhow, Context};
 use atrium_crypto::{
@@ -10,6 +10,10 @@ use base64::Engine;
 
 use crate::{auth, AppState, Error};
 
+/// This is an axum request extractor that represents an authenticated user.
+///
+/// If specified in an API endpoint, this will guarantee that the API can only be called
+/// by an authenticated user.
 pub struct AuthenticatedUser {
     did: String,
 }
@@ -92,6 +96,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
     }
 }
 
+/// Cryptographically sign a JSON web token with the specified key.
 pub fn sign(
     key: &Secp256k1Keypair,
     typ: &str,
@@ -114,6 +119,7 @@ pub fn sign(
     Ok(format!("{hdr}.{claims}.{sig}"))
 }
 
+/// Cryptographically verify a JSON web token's validity using the specified public key.
 pub fn verify(key: &str, token: &str) -> anyhow::Result<(String, serde_json::Value)> {
     let mut parts = token.splitn(3, '.');
     let hdr = parts.next().context("no header")?;

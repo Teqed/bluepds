@@ -113,6 +113,7 @@ impl Into<sync::subscribe_repos::Commit> for Commit {
     }
 }
 
+/// A firehose producer. This is used to transmit messages to the firehose for broadcast.
 #[derive(Clone, Debug)]
 pub struct FirehoseProducer {
     tx: tokio::sync::mpsc::Sender<FirehoseMessage>,
@@ -154,6 +155,7 @@ impl FirehoseProducer {
     }
 }
 
+/// Broadcast a message out to all clients.
 async fn broadcast_message(
     clients: &mut Vec<WebSocket>,
     history: &mut VecDeque<(i64, &str, sync::subscribe_repos::Message)>,
@@ -204,6 +206,7 @@ async fn broadcast_message(
     Ok(())
 }
 
+/// Broadcast a websocket ping out to all clients.
 async fn broadcast_ping(clients: &mut Vec<WebSocket>) -> Result<()> {
     let contents = rand::thread_rng()
         .sample_iter(rand::distributions::Alphanumeric)
@@ -226,6 +229,7 @@ async fn broadcast_ping(clients: &mut Vec<WebSocket>) -> Result<()> {
     Ok(())
 }
 
+/// Handle a new connection from a websocket client created by subscribeRepos.
 async fn handle_connect(
     mut ws: WebSocket,
     seq: i64,
