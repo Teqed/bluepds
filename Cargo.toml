@@ -25,6 +25,7 @@ constcat = "0.6.0"
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
 http-cache-reqwest = { version = "0.15.1", default-features = false, features = ["manager-moka"] }
+metrics = "0.24.1"
 rand = "0.8.5"
 reqwest = { version = "0.12.12", features = ["json"] }
 reqwest-middleware = { version = "0.4.0", features = ["json"] }

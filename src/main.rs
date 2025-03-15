@@ -38,6 +38,7 @@ mod did;
 mod endpoints;
 mod error;
 mod firehose;
+mod metrics;
 mod plc;
 mod storage;
 
@@ -348,6 +349,9 @@ async fn run() -> anyhow::Result<()> {
         warn!("This means the application will not federate with the rest of the network.");
         warn!("If you want to turn this off, either set `test` to false in the config or define `BLUEPDS_TEST = false`");
     }
+
+    // Initialize all metrics instruments.
+    metrics::describe();
 
     // Create a reqwest client that will be used for all outbound requests.
     let simple_client = reqwest::Client::builder()

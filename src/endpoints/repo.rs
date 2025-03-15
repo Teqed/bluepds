@@ -18,6 +18,7 @@ use axum::{
 };
 use constcat::concat;
 use futures::TryStreamExt;
+use metrics::counter;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
@@ -26,6 +27,7 @@ use crate::{
     auth::AuthenticatedUser,
     config::AppConfig,
     firehose::{self, FirehoseProducer, RepoOp},
+    metrics::{REPO_COMMITS, REPO_OP_CREATE, REPO_OP_DELETE, REPO_OP_UPDATE},
     storage, AppState, Db, Error, Result, SigningKey,
 };
 
@@ -345,6 +347,7 @@ async fn apply_writes(
         // This should always succeed.
         let old = input.swap_commit.clone().unwrap();
 
+        // The swap failed. Return the old commit and do not update the repository.
         return Ok(Json(
             repo::apply_writes::OutputData {
                 results: None,
@@ -361,6 +364,8 @@ async fn apply_writes(
     }
 
     let did_str = user.did();
+
+    // For updates and removals, unlink the old/deleted record from the blob_ref table.
     for op in &ops {
         match op {
             RepoOp::Update { path, .. } | RepoOp::Delete { path, .. } => {
@@ -408,6 +413,19 @@ async fn apply_writes(
         .await
         .context("failed to commit blob ref to database")?;
 
+    // Update counters.
+    counter!(REPO_COMMITS).increment(1);
+    for op in &ops {
+        match op {
+            RepoOp::Create { .. } => counter!(REPO_OP_CREATE).increment(1),
+            RepoOp::Update { .. } => counter!(REPO_OP_UPDATE).increment(1),
+            RepoOp::Delete { .. } => counter!(REPO_OP_DELETE).increment(1),
+        }
+    }
+
+    // We've committed the transaction to the database, and the commit is now stored in the user's
+    // canonical repository.
+    // We can now broadcast this on the firehose.
     fhp.commit(firehose::Commit {
         car: mem,
         ops: ops,

@@ -44,7 +44,7 @@ cargo run
   - [ ] Azure blob storage backend
   - [ ] Backblaze b2(?)
 - [ ] Telemetry
-  - [ ] [Metrics](https://github.com/metrics-rs/metrics) (counters/gauges/etc)
+  - [X] [Metrics](https://github.com/metrics-rs/metrics) (counters/gauges/etc)
   - [ ] Exporters for common backends (Prometheus/etc)
 
 ### APIs

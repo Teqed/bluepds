@@ -7,11 +7,16 @@ use atrium_api::{
 };
 use atrium_repo::Cid;
 use axum::extract::ws::{Message, WebSocket};
+use metrics::{counter, gauge};
 use rand::Rng;
 use serde::{ser::SerializeMap, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::{config::AppConfig, Client};
+use crate::{
+    config::AppConfig,
+    metrics::{FIREHOSE_HISTORY, FIREHOSE_LISTENERS, FIREHOSE_MESSAGES, FIREHOSE_SEQUENCE},
+    Client,
+};
 
 enum FirehoseMessage {
     Broadcast(sync::subscribe_repos::Message),
@@ -157,7 +162,7 @@ impl FirehoseProducer {
 
 /// Serialize a message.
 async fn serialize_message(
-    seq: i64,
+    seq: u64,
     mut msg: sync::subscribe_repos::Message,
 ) -> (&'static str, Vec<u8>) {
     let mut dummy_seq = 0i64;
@@ -172,7 +177,7 @@ async fn serialize_message(
     };
 
     // Set the sequence number.
-    *nseq = seq;
+    *nseq = seq as i64;
 
     let hdr = FrameHeader::Message(ty.to_string());
 
@@ -186,6 +191,7 @@ async fn serialize_message(
 /// Broadcast a message out to all clients.
 async fn broadcast_message(clients: &mut Vec<WebSocket>, msg: Message) -> Result<()> {
     info!("Broadcasting message {} clients", clients.len());
+    counter!(FIREHOSE_MESSAGES).increment(1);
 
     for i in (0..clients.len()).rev() {
         let client = &mut clients[i];
@@ -195,18 +201,20 @@ async fn broadcast_message(clients: &mut Vec<WebSocket>, msg: Message) -> Result
         }
     }
 
+    gauge!(FIREHOSE_LISTENERS).set(clients.len() as f64);
     Ok(())
 }
 
 /// Handle a new connection from a websocket client created by subscribeRepos.
 async fn handle_connect(
     mut ws: WebSocket,
-    seq: i64,
-    history: &VecDeque<(i64, &str, sync::subscribe_repos::Message)>,
+    seq: u64,
+    history: &VecDeque<(u64, &str, sync::subscribe_repos::Message)>,
     cursor: Option<i64>,
 ) -> anyhow::Result<WebSocket> {
     if let Some(cursor) = cursor {
         let mut frame = Vec::new();
+        let cursor = cursor as u64;
 
         // Cursor specified; attempt to backfill the consumer.
         if cursor > seq {
@@ -304,7 +312,7 @@ pub async fn spawn(
     let handle = tokio::spawn(async move {
         let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
-        let mut seq = 1i64;
+        let mut seq = 1u64;
 
         // TODO: We should use `com.atproto.sync.notifyOfUpdate` to reach out to relays
         // that may have disconnected from us due to timeout.
@@ -316,6 +324,7 @@ pub async fn spawn(
                         let (ty, by) = serialize_message(seq, msg.clone()).await;
 
                         history.push_back((seq, ty, msg));
+                        gauge!(FIREHOSE_HISTORY).set(history.len() as f64);
 
                         info!(
                             "Broadcasting message {} {} to {} clients",
@@ -324,12 +333,15 @@ pub async fn spawn(
                             clients.len()
                         );
 
+                        counter!(FIREHOSE_SEQUENCE).absolute(seq);
                         seq = seq.wrapping_add(1);
+
                         let _ = broadcast_message(&mut clients, Message::binary(by)).await;
                     }
                     Some(FirehoseMessage::Connect((ws, cursor))) => {
                         match handle_connect(ws, seq, &mut history, cursor).await {
                             Ok(r) => {
+                                gauge!(FIREHOSE_LISTENERS).increment(1);
                                 clients.push(r);
                             }
                             Err(e) => {

@@ -18,6 +18,7 @@ use axum::{
     Json, Router,
 };
 use constcat::concat;
+use metrics::counter;
 use rand::Rng;
 use sha2::Digest;
 use uuid::Uuid;
@@ -26,6 +27,7 @@ use crate::{
     auth::{self, AuthenticatedUser},
     config::AppConfig,
     firehose::{Commit, FirehoseProducer},
+    metrics::AUTH_FAILED,
     plc::{self, PlcOperation, PlcService},
     AppState, Client, Db, Error, Result, RotationKey, SigningKey,
 };
@@ -363,6 +365,8 @@ async fn create_session(
     let account = if let Some(account) = account {
         account
     } else {
+        counter!(AUTH_FAILED).increment(1);
+
         // SEC: We need to call the below `verify_password` function even if the account is not valid.
         // This is vulnerable to a timing attack where an attacker can determine if an account exists
         // by timing how long it takes for us to generate a response.
@@ -378,6 +382,8 @@ async fn create_session(
     ) {
         Ok(_) => {}
         Err(_e) => {
+            counter!(AUTH_FAILED).increment(1);
+
             return Err(Error::with_status(
                 StatusCode::UNAUTHORIZED,
                 anyhow!("failed to validate credentials"),
