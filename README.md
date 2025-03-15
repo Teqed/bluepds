@@ -11,7 +11,7 @@
                     \/_/
 ```
 
-This is an implementation of an ATProto PDS using [Axum](https://github.com/tokio-rs/axum) and [Azure app services](https://learn.microsoft.com/en-us/azure/app-service/overview).
+This is an implementation of an ATProto PDS, built with [Axum](https://github.com/tokio-rs/axum) and [Atrium](https://github.com/sugyan/atrium).
 
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
