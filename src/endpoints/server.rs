@@ -32,6 +32,9 @@ use crate::{
     AppState, Client, Db, Error, Result, RotationKey, SigningKey,
 };
 
+/// This is a dummy password that can be used in absence of a real password.
+const DUMMY_PASSWORD: &str = "$argon2id$v=19$m=19456,t=2,p=1$En2LAfHjeO0SZD5IUU1Abg$RpS8nHhhqY4qco2uyd41p9Y/1C+Lvi214MAWukzKQMI";
+
 async fn create_invite_code(
     _user: AuthenticatedUser,
     State(db): State<Db>,
@@ -367,9 +370,14 @@ async fn create_session(
     } else {
         counter!(AUTH_FAILED).increment(1);
 
-        // SEC: We need to call the below `verify_password` function even if the account is not valid.
-        // This is vulnerable to a timing attack where an attacker can determine if an account exists
-        // by timing how long it takes for us to generate a response.
+        // SEC: Call argon2's `verify_password` to simulate password verification and discard the result.
+        // We do this to avoid exposing a timing attack where attackers can measure the response time to
+        // determine whether or not an account exists.
+        let _ = argon2::Argon2::default().verify_password(
+            password.as_bytes(),
+            &PasswordHash::new(DUMMY_PASSWORD).unwrap(),
+        );
+
         return Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
             anyhow!("failed to validate credentials"),
