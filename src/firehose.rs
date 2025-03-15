@@ -190,7 +190,6 @@ async fn serialize_message(
 
 /// Broadcast a message out to all clients.
 async fn broadcast_message(clients: &mut Vec<WebSocket>, msg: Message) -> Result<()> {
-    info!("Broadcasting message {} clients", clients.len());
     counter!(FIREHOSE_MESSAGES).increment(1);
 
     for i in (0..clients.len()).rev() {
@@ -260,6 +259,7 @@ pub async fn reconnect_relays(client: &Client, config: &AppConfig) {
         return;
     }
 
+    info!("attempting to reconnect to upstream relays");
     for relay in &config.firehose.relays {
         let host = match relay.host_str() {
             Some(host) => host,
@@ -354,7 +354,6 @@ pub async fn spawn(
                 },
                 Err(_) => {
                     if clients.is_empty() {
-                        warn!("no downstream relays connected to firehose; reconnecting");
                         reconnect_relays(&client, &config).await;
                     }
 
