@@ -12,7 +12,13 @@ key = "data/default.key"
 # Test mode. This instructs BluePDS not to federate with the rest of the AT network.
 test = true
 
+# Optional. Configuration for exporting metrics to a cloud monitoring dashboard.
+# [metrics]
+# type = "prometheus_push"
+# url = "http://127.0.0.1:9090/metrics/bluepds"
+
 [firehose]
+# Upstream relays to reach out to upon startup.
 relays = ["https://bsky.network"]
 
 [repo]
@@ -23,4 +29,4 @@ path = "data/plc"
 
 [blob]
 path = "data/blob"
-limit = 10485760 # 10 MB
+limit = 10485760   # 10 MB

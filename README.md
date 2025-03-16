@@ -45,7 +45,7 @@ cargo run
   - [ ] Backblaze b2(?)
 - [ ] Telemetry
   - [X] [Metrics](https://github.com/metrics-rs/metrics) (counters/gauges/etc)
-  - [ ] Exporters for common backends (Prometheus/etc)
+  - [X] Exporters for common backends (Prometheus/etc)
 
 ### APIs
 - [X] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)

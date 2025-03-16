@@ -350,8 +350,8 @@ async fn run() -> anyhow::Result<()> {
         warn!("If you want to turn this off, either set `test` to false in the config or define `BLUEPDS_TEST = false`");
     }
 
-    // Initialize all metrics instruments.
-    metrics::describe();
+    // Initialize metrics reporting.
+    metrics::setup(&config.metrics).context("failed to set up metrics exporter")?;
 
     // Create a reqwest client that will be used for all outbound requests.
     let simple_client = reqwest::Client::builder()

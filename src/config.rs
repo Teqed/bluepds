@@ -3,6 +3,22 @@ use std::{net::SocketAddr, path::PathBuf};
 use serde::Deserialize;
 use url::Url;
 
+pub mod metrics {
+    use super::*;
+
+    #[derive(Deserialize, Debug, Clone)]
+    pub struct PrometheusConfig {
+        /// The URL of the Prometheus server's exporter endpoint.
+        pub url: Url,
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub enum MetricConfig {
+    PrometheusPush(metrics::PrometheusConfig),
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct FirehoseConfig {
     /// A list of upstream relays that this PDS will try to reach out to.
@@ -37,6 +53,8 @@ pub struct AppConfig {
     pub host_name: String,
     /// The listen address for the PDS.
     pub listen_address: Option<SocketAddr>,
+    /// The metrics configuration block.
+    pub metrics: Option<MetricConfig>,
     /// The firehose configuration block.
     pub firehose: FirehoseConfig,
     /// The PLC configuration block.
