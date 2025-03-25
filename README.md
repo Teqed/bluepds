@@ -56,34 +56,85 @@ cargo run
 ### APIs
 - [X] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)
 - [X] UG /xrpc/_health (undocumented, but impl by reference PDS)
+- [ ] xx /xrpc/app.bsky.notification.registerPush
+<!-- - app.bsky.actor
+    - [X] AG /xrpc/app.bsky.actor.getPreferences
+    - [ ] xx /xrpc/app.bsky.actor.getProfile
+    - [ ] xx /xrpc/app.bsky.actor.getProfiles
+    - [X] AP /xrpc/app.bsky.actor.putPreferences
+- app.bsky.feed
+    - [ ] xx /xrpc/app.bsky.feed.getActorLikes
+    - [ ] xx /xrpc/app.bsky.feed.getAuthorFeed
+    - [ ] xx /xrpc/app.bsky.feed.getFeed
+    - [ ] xx /xrpc/app.bsky.feed.getPostThread
+    - [ ] xx /xrpc/app.bsky.feed.getTimeline -->
+- com.atproto.admin
+    - [ ] xx /xrpc/com.atproto.admin.deleteAccount
+    - [ ] xx /xrpc/com.atproto.admin.disableAccountInvites
+    - [ ] xx /xrpc/com.atproto.admin.disableInviteCodes
+    - [ ] xx /xrpc/com.atproto.admin.enableAccountInvites
+    - [ ] xx /xrpc/com.atproto.admin.getAccountInfo
+    - [ ] xx /xrpc/com.atproto.admin.getAccountInfos
+    - [ ] xx /xrpc/com.atproto.admin.getInviteCodes
+    - [ ] xx /xrpc/com.atproto.admin.getSubjectStatus
+    - [ ] xx /xrpc/com.atproto.admin.sendEmail
+    - [ ] xx /xrpc/com.atproto.admin.updateAccountEmail
+    - [ ] xx /xrpc/com.atproto.admin.updateAccountHandle
+    - [ ] xx /xrpc/com.atproto.admin.updateAccountPassword
+    - [ ] xx /xrpc/com.atproto.admin.updateSubjectStatus
 - com.atproto.identity
-    - [X] AP /xrpc/com.atproto.identity.updateHandle
+    - [ ] xx /xrpc/com.atproto.identity.getRecommendedDidCredentials
     - [ ] AP /xrpc/com.atproto.identity.requestPlcOperationSignature
-    - [ ] AP /xrpc/com.atproto.identity.signPlcOperation
     - [X] UG /xrpc/com.atproto.identity.resolveHandle
-- com.atproto.server
-    - [X] UG /xrpc/com.atproto.server.describeServer
-    - [X] UP /xrpc/com.atproto.server.createAccount
-    - [X] AP /xrpc/com.atproto.server.createInviteCode
-    - [X] UP /xrpc/com.atproto.server.createSession
-    - [X] AG /xrpc/com.atproto.server.getServiceAuth
-    - [X] AG /xrpc/com.atproto.server.getSession
+    - [ ] AP /xrpc/com.atproto.identity.signPlcOperation
+    - [ ] xx /xrpc/com.atproto.identity.submitPlcOperation
+    - [X] AP /xrpc/com.atproto.identity.updateHandle
+<!-- - com.atproto.moderation
+    - [ ] xx /xrpc/com.atproto.moderation.createReport -->
 - com.atproto.repo
     - [X] AP /xrpc/com.atproto.repo.applyWrites
     - [X] AP /xrpc/com.atproto.repo.createRecord
-    - [X] AP /xrpc/com.atproto.repo.putRecord
     - [X] AP /xrpc/com.atproto.repo.deleteRecord
     - [X] UG /xrpc/com.atproto.repo.describeRepo
     - [X] UG /xrpc/com.atproto.repo.getRecord
+    - [ ] xx /xrpc/com.atproto.repo.importRepo
+    - [ ] xx /xrpc/com.atproto.repo.listMissingBlobs
     - [X] UG /xrpc/com.atproto.repo.listRecords
+    - [X] AP /xrpc/com.atproto.repo.putRecord
     - [X] AP /xrpc/com.atproto.repo.uploadBlob
+- com.atproto.server
+    - [ ] xx /xrpc/com.atproto.server.activateAccount
+    - [ ] xx /xrpc/com.atproto.server.checkAccountStatus
+    - [ ] xx /xrpc/com.atproto.server.confirmEmail
+    - [X] UP /xrpc/com.atproto.server.createAccount
+    - [ ] xx /xrpc/com.atproto.server.createAppPassword
+    - [X] AP /xrpc/com.atproto.server.createInviteCode
+    - [ ] xx /xrpc/com.atproto.server.createInviteCodes
+    - [X] UP /xrpc/com.atproto.server.createSession
+    - [ ] xx /xrpc/com.atproto.server.deactivateAccount
+    - [ ] xx /xrpc/com.atproto.server.deleteAccount
+    - [ ] xx /xrpc/com.atproto.server.deleteSession
+    - [X] UG /xrpc/com.atproto.server.describeServer
+    - [ ] xx /xrpc/com.atproto.server.getAccountInviteCodes
+    - [X] AG /xrpc/com.atproto.server.getServiceAuth
+    - [X] AG /xrpc/com.atproto.server.getSession
+    - [ ] xx /xrpc/com.atproto.server.listAppPasswords
+    - [ ] xx /xrpc/com.atproto.server.refreshSession
+    - [ ] xx /xrpc/com.atproto.server.requestAccountDelete
+    - [ ] xx /xrpc/com.atproto.server.requestEmailConfirmation
+    - [ ] xx /xrpc/com.atproto.server.requestEmailUpdate
+    - [ ] xx /xrpc/com.atproto.server.requestPasswordReset
+    - [ ] xx /xrpc/com.atproto.server.reserveSigningKey
+    - [ ] xx /xrpc/com.atproto.server.resetPassword
+    - [ ] xx /xrpc/com.atproto.server.revokeAppPassword
+    - [ ] xx /xrpc/com.atproto.server.updateEmail
 - com.atproto.sync
     - [X] UG /xrpc/com.atproto.sync.getBlob
     - [X] UG /xrpc/com.atproto.sync.getBlocks
     - [X] UG /xrpc/com.atproto.sync.getLatestCommit
     - [X] UG /xrpc/com.atproto.sync.getRecord
-    - [X] UG /xrpc/com.atproto.sync.getRepoStatus
     - [X] UG /xrpc/com.atproto.sync.getRepo
+    - [X] UG /xrpc/com.atproto.sync.getRepoStatus
     - [X] UG /xrpc/com.atproto.sync.listBlobs
     - [X] UG /xrpc/com.atproto.sync.listRepos
     - [X] UG /xrpc/com.atproto.sync.subscribeRepos
