@@ -7,7 +7,7 @@ pkgs.rustPlatform.buildRustPackage rec {
   nativeBuildInputs = with pkgs; [ pkg-config ];
   buildInputs = with pkgs; [ openssl ];
   postInstall = ''
-    mkdir -p /var/lib/bluepds
-    cp ./default.toml /var/lib/bluepds/
+    mkdir -p $out/var/lib/bluepds
+    cp ./default.toml $out/var/lib/bluepds/
   '';
 }
