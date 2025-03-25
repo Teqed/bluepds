@@ -8,5 +8,8 @@ pkgs.mkShell {
     rust-analyzer
     rustfmt
     clippy
+    git
+    nixd
+    direnv
   ];
 }
