@@ -70,10 +70,9 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
             let now = chrono::Utc::now().timestamp();
             if now >= exp {
-                // FIXME: This should return BAD_REQUEST with a simple JSON body: {"error": "InvalidToken", "message": "..."}
                 return Err(Error::with_status(
                     StatusCode::BAD_REQUEST,
-                    anyhow!("token has expired"),
+                    anyhow!(serde_json::json!({"error": "ExpiredToken", "message": "token has expired"})),
                 ));
             }
         }
