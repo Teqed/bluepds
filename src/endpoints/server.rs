@@ -314,7 +314,7 @@ async fn create_account(
         serde_json::json!({
             "iss": did.clone(),
             "aud": format!("did:web:{}", config.host_name),
-            "exp": (chrono::Utc::now() + std::time::Duration::from_secs(2 * 60 * 60)).timestamp()
+            "exp": (chrono::Utc::now() + std::time::Duration::from_secs(48 * 60 * 60)).timestamp()
         }),
     )
     .context("failed to sign refresh jwt")?;
