@@ -2,58 +2,16 @@
   description = "Alternative Bluesky PDS implementation";
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs = {
-        nixpkgs.follows = "nixpkgs";
-        flake-utils.follows = "flake-utils";
-      };
-    };
   };
-  outputs = { self, nixpkgs, flake-utils, rust-overlay }:
-    flake-utils.lib.eachDefaultSystem
-      (system:
+  outputs = { self, nixpkgs }:
     let
-      pkgsForSystem = nixpkgs.legacyPackages.${system};
-      buildInputs = with pkgs; [
-          openssl
-          gcc
-          bacon
-          sqlite
-          rust-analyzer
-          rustfmt
-          clippy
-          git
-          nixd
-          direnv
-        ];
-      overlays = [ (import rust-overlay) ];
-      pkgs = import nixpkgs {
-        inherit system overlays;
-      };
-      rust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
-        extensions = [
-          "rust-src" # for rust-analyzer
-          "rust-analyzer"
-        ];
-        targets = [ "wasm32-unknown-unknown" ];
+      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      pkgsFor = nixpkgs.legacyPackages;
+    in {
+      packages = forAllSystems (system: {
+        default = pkgsFor.${system}.callPackage ./. { };
       });
-      nativeBuildInputs = with pkgs; [ rust pkg-config ];
-    in
-    with pkgs;
-    {
-      packages = {
-        default = pkgsForSystem.callPackage ./. { };
-      };
-
-      
-      devShells.default = mkShell {
-        inherit buildInputs nativeBuildInputs;
-        LD_LIBRARY_PATH = nixpkgs.legacyPackages.x86_64-linux.lib.makeLibraryPath buildInputs;
-        RUST_BACKTRACE = 1;
-        DATABASE_URL = "sqlite://data/sqlite.db";
-      };
 
       nixosModules = {
         default = { pkgs, lib, config, ... }: with lib; let
@@ -105,5 +63,5 @@
             };
           };
       };
-    });
+    };
 }
