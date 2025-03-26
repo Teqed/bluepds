@@ -24,6 +24,13 @@ impl Error {
             err: err.into(),
         }
     }
+
+    pub fn with_message(status: StatusCode, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            err: anyhow::anyhow!(message.into()),
+        }
+    }
 }
 
 impl From<anyhow::Error> for Error {
