@@ -15,9 +15,7 @@
     flake-utils.lib.eachDefaultSystem
       (system:
     let
-      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
-      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      pkgsFor = nixpkgs.legacyPackages;
+      pkgsForSystem = nixpkgs.legacyPackages.${system};
       buildInputs = with pkgs; [
           openssl
           gcc
@@ -45,9 +43,9 @@
     in
     with pkgs;
     {
-      packages = forAllSystems (system: {
-        default = pkgsFor.${system}.callPackage ./. { };
-      });
+      packages = {
+        default = pkgsForSystem.callPackage ./. { };
+      };
 
       
       devShells.default = mkShell {
