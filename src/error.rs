@@ -11,6 +11,7 @@ use tracing::error;
 pub struct Error {
     status: StatusCode,
     err: anyhow::Error,
+    message: Option<String>,
 }
 
 impl Error {
@@ -22,13 +23,15 @@ impl Error {
         Self {
             status,
             err: err.into(),
+            message: None,
         }
     }
 
-    pub fn with_message(status: StatusCode, message: impl Into<String>) -> Self {
+    pub fn with_message(status: StatusCode, err: impl Into<anyhow::Error>, message: impl Into<String>) -> Self {
         Self {
             status,
-            err: anyhow::anyhow!(message.into()),
+            err: err.into(),
+            message: Some(message.into()),            
         }
     }
 }
@@ -38,6 +41,7 @@ impl From<anyhow::Error> for Error {
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
             err,
+            message: None,
         }
     }
 }
@@ -60,7 +64,7 @@ impl IntoResponse for Error {
 
         // N.B: Forward out the error message to the requester if this is a debug build.
         // This is insecure for production builds, so we'll return an empty body if this
-        // is a release build.
+        // is a release build, unless a message was explicitly set.
         if cfg!(debug_assertions) {
             Response::builder()
                 .status(self.status)
@@ -69,7 +73,7 @@ impl IntoResponse for Error {
         } else {
             Response::builder()
                 .status(self.status)
-                .body(Body::empty())
+                .body(Body::new(self.message.unwrap_or_default()))
                 .unwrap()
         }
     }

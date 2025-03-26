@@ -72,6 +72,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             if now >= exp {
                 return Err(Error::with_message(
                     StatusCode::BAD_REQUEST,
+                    anyhow!("token has expired"),
                     serde_json::json!({"error": "ExpiredToken", "message": "Token has expired"}).to_string(),
                 ));
             }
