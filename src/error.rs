@@ -21,7 +21,7 @@ pub struct ErrorMessage {
 }
 impl std::fmt::Display for ErrorMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.error, self.message)
+        write!(f, r#"{{"error":"{}","message":"{}"}}"#, self.error, self.message)
     }
 }
 impl ErrorMessage {
