@@ -13,7 +13,7 @@ atrium-xrpc-client = "0.5"
 
 anyhow = "1.0.96"
 argon2 = { version = "0.5.3", features = ["std"] }
-axum = { version = "0.8.1", features = ["tower-log", "form", "macros", "ws"] }
+axum = { version = "0.8.1", features = ["tower-log", "form", "macros", "ws", "json"] }
 azure_core = "0.22.0"
 azure_identity = "0.22.0"
 base32 = "0.5.1"

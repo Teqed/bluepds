@@ -8,7 +8,7 @@ use atrium_crypto::{
 use axum::{extract::FromRequestParts, http::StatusCode};
 use base64::Engine;
 
-use crate::{auth, AppState, Error};
+use crate::{auth, error::ErrorMessage, AppState, Error};
 
 /// This is an axum request extractor that represents an authenticated user.
 ///
@@ -73,7 +73,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                 return Err(Error::with_message(
                     StatusCode::BAD_REQUEST,
                     anyhow!("token has expired"),
-                    serde_json::json!({"error": "ExpiredToken", "message": "Token has expired"}).to_string(),
+                    ErrorMessage::new("ExpiredToken", "Token has expired"),
                 ));
             }
         }

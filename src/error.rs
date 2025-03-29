@@ -11,7 +11,26 @@ use tracing::error;
 pub struct Error {
     status: StatusCode,
     err: anyhow::Error,
-    message: Option<String>,
+    message: Option<ErrorMessage>,
+}
+
+#[derive(Default, serde::Serialize)]
+pub struct ErrorMessage {
+    error: String,
+    message: String,
+}
+impl std::fmt::Display for ErrorMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.error, self.message)
+    }
+}
+impl ErrorMessage {
+    pub fn new(error: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            error: error.into(),
+            message: message.into(),
+        }
+    }
 }
 
 impl Error {
@@ -27,11 +46,11 @@ impl Error {
         }
     }
 
-    pub fn with_message(status: StatusCode, err: impl Into<anyhow::Error>, message: impl Into<String>) -> Self {
+    pub fn with_message(status: StatusCode, err: impl Into<anyhow::Error>, message: impl Into<ErrorMessage>) -> Self {
         Self {
             status,
             err: err.into(),
-            message: Some(message.into()),            
+            message: Some(message.into()),
         }
     }
 }
@@ -73,7 +92,8 @@ impl IntoResponse for Error {
         } else {
             Response::builder()
                 .status(self.status)
-                .body(Body::new(self.message.unwrap_or_default()))
+                .header("Content-Type", "application/json")
+                .body(Body::new(self.message.unwrap_or_default().to_string()))
                 .unwrap()
         }
     }
