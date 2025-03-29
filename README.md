@@ -15,6 +15,8 @@ This is an implementation of an ATProto PDS, built with [Axum](https://github.co
 
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
+If you want to see this PDS in action, there is a live account hosted by this PDS at [@test.justinm.one](https://bsky.app/profile/test.justinm.one)!
+
 > [!WARNING]
 > This PDS is undergoing heavy development. Do _NOT_ use this to host your primary account or any important data!
 
