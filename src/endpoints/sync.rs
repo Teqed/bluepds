@@ -1,7 +1,10 @@
 use std::str::FromStr;
 
 use anyhow::{anyhow, Context};
-use atrium_api::{com::atproto::sync, types::string::Did};
+use atrium_api::{
+    com::atproto::sync,
+    types::{string::Did, LimitedNonZeroU16},
+};
 use atrium_repo::{
     blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
     Cid,
@@ -27,7 +30,7 @@ use crate::{
 
 async fn get_blob(
     State(config): State<AppConfig>,
-    Query(input): Query<sync::get_blob::Parameters>,
+    Query(input): Query<sync::get_blob::ParametersData>,
 ) -> Result<Response<Body>> {
     let blob = config
         .blob
@@ -53,7 +56,7 @@ async fn get_blob(
 
 async fn get_blocks(
     State(config): State<AppConfig>,
-    Query(input): Query<sync::get_blocks::Parameters>,
+    Query(input): Query<sync::get_blocks::ParametersData>,
 ) -> Result<Response<Body>> {
     let mut repo = open_store(&config.repo, input.did.as_str())
         .await
@@ -89,7 +92,7 @@ async fn get_blocks(
 async fn get_latest_commit(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<sync::get_latest_commit::Parameters>,
+    Query(input): Query<sync::get_latest_commit::ParametersData>,
 ) -> Result<Json<sync::get_latest_commit::Output>> {
     let repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
@@ -110,7 +113,7 @@ async fn get_latest_commit(
 async fn get_record(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<sync::get_record::Parameters>,
+    Query(input): Query<sync::get_record::ParametersData>,
 ) -> Result<Response<Body>> {
     let mut repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
@@ -136,7 +139,7 @@ async fn get_record(
 
 async fn get_repo_status(
     State(db): State<Db>,
-    Query(input): Query<sync::get_repo::Parameters>,
+    Query(input): Query<sync::get_repo::ParametersData>,
 ) -> Result<Json<sync::get_repo_status::Output>> {
     let did = input.did.as_str();
     let r = sqlx::query!(r#"SELECT rev, status FROM accounts WHERE did = ?"#, did)
@@ -170,7 +173,7 @@ async fn get_repo_status(
 async fn get_repo(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<sync::get_repo::Parameters>,
+    Query(input): Query<sync::get_repo::ParametersData>,
 ) -> Result<Response<Body>> {
     let mut repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
@@ -191,24 +194,9 @@ async fn get_repo(
         .context("failed to construct response")?)
 }
 
-// HACK: `limit` may be passed as a string, so we must treat it as one.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ListBlobsParameters {
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: core::option::Option<String>,
-    ///The DID of the repo.
-    pub did: atrium_api::types::string::Did,
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: core::option::Option<String>,
-    ///Optional revision of the repo to list blobs since.
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub since: core::option::Option<String>,
-}
-
 async fn list_blobs(
     State(db): State<Db>,
-    Query(input): Query<ListBlobsParameters>,
+    Query(input): Query<sync::list_blobs::ParametersData>,
 ) -> Result<Json<sync::list_blobs::Output>> {
     let did_str = input.did.as_str();
 
@@ -236,19 +224,9 @@ async fn list_blobs(
     ))
 }
 
-// HACK: `limit` may be passed as a string, so we must treat it as one.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ListReposParameters {
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: core::option::Option<String>,
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: core::option::Option<String>,
-}
-
 async fn list_repos(
     State(db): State<Db>,
-    Query(input): Query<ListReposParameters>,
+    Query(input): Query<sync::list_repos::ParametersData>,
 ) -> Result<Json<sync::list_repos::Output>> {
     struct Record {
         did: String,
@@ -256,12 +234,7 @@ async fn list_repos(
         rev: String,
     }
 
-    let limit = input
-        .limit
-        .as_deref()
-        .unwrap_or("1000")
-        .parse::<u32>()
-        .context("invalid limit parameter")?;
+    let limit: u16 = input.limit.unwrap_or(LimitedNonZeroU16::MAX).into();
 
     let r = if let Some(cursor) = &input.cursor {
         let r = sqlx::query_as!(
@@ -306,32 +279,13 @@ async fn list_repos(
     Ok(Json(sync::list_repos::OutputData { cursor, repos }.into()))
 }
 
-// HACK: `cursor` may be passed as a string, so we must treat it as one.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SubscribeReposParametersData {
-    ///The last known event seq number to backfill from.
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: core::option::Option<String>,
-}
-
 async fn subscribe_repos(
     ws: WebSocketUpgrade,
     State(fh): State<FirehoseProducer>,
-    Query(input): Query<SubscribeReposParametersData>,
+    Query(input): Query<sync::subscribe_repos::ParametersData>,
 ) -> impl IntoResponse {
-    let cursor = match input.cursor.map(|c| i64::from_str(&c)).transpose() {
-        Ok(c) => c,
-        Err(_e) => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::empty())
-                .unwrap();
-        }
-    };
-
     ws.on_upgrade(move |ws| async move {
-        fh.client_connection(ws, cursor).await;
+        fh.client_connection(ws, input.cursor).await;
     })
 }
 

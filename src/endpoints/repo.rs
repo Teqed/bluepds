@@ -614,7 +614,7 @@ async fn delete_record(
 async fn describe_repo(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<repo::describe_repo::Parameters>,
+    Query(input): Query<repo::describe_repo::ParametersData>,
 ) -> Result<Json<repo::describe_repo::Output>> {
     // Lookup the DID by the provided handle.
     let (did, handle) = resolve_did(&db, &input.repo)
@@ -653,7 +653,7 @@ async fn describe_repo(
 async fn get_record(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<repo::get_record::Parameters>,
+    Query(input): Query<repo::get_record::ParametersData>,
 ) -> Result<Json<repo::get_record::Output>> {
     if input.cid.is_some() {
         return Err(Error::unimplemented(anyhow!(
@@ -699,33 +699,10 @@ async fn get_record(
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ListRecordsParameters {
-    ///The NSID of the record type.
-    pub collection: atrium_api::types::string::Nsid,
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: core::option::Option<String>,
-    ///The number of records to return.
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: core::option::Option<String>,
-    ///The handle or DID of the repo.
-    pub repo: atrium_api::types::string::AtIdentifier,
-    ///Flag to reverse the order of the returned records.
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub reverse: core::option::Option<bool>,
-    ///DEPRECATED: The highest sort-ordered rkey to stop at (exclusive)
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub rkey_end: core::option::Option<String>,
-    ///DEPRECATED: The lowest sort-ordered rkey to start from (exclusive)
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub rkey_start: core::option::Option<String>,
-}
-
 async fn list_records(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<Object<ListRecordsParameters>>,
+    Query(input): Query<Object<repo::list_records::ParametersData>>,
 ) -> Result<Json<repo::list_records::Output>> {
     // TODO: `input.reverse`
 
