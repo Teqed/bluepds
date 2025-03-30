@@ -27,7 +27,7 @@ use crate::{
 async fn resolve_handle(
     State(db): State<Db>,
     State(client): State<Client>,
-    Query(input): Query<identity::resolve_handle::Parameters>,
+    Query(input): Query<identity::resolve_handle::ParametersData>,
 ) -> Result<Json<identity::resolve_handle::Output>> {
     let handle = input.handle.as_str();
     if let Ok(did) = sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)

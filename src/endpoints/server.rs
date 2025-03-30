@@ -632,7 +632,7 @@ async fn refresh_session(
 async fn get_service_auth(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
-    Query(input): Query<server::get_service_auth::Parameters>,
+    Query(input): Query<server::get_service_auth::ParametersData>,
 ) -> Result<Json<server::get_service_auth::Output>> {
     let user_did = user.did();
     let aud = input.aud.as_str();
