@@ -32,7 +32,7 @@ async fn get_blob(
     let blob = config
         .blob
         .path
-        .join(format!("{}.blob", input.cid.as_ref().to_string()));
+        .join(format!("{}.blob", input.cid.as_ref()));
 
     let f = tokio::fs::File::open(blob)
         .await
@@ -225,7 +225,7 @@ async fn list_blobs(
         .into_iter()
         .map(|c| {
             atrium_repo::Cid::from_str(&c)
-                .map(|s| atrium_api::types::string::Cid::new(s))
+                .map(atrium_api::types::string::Cid::new)
                 .map_err(anyhow::Error::new)
         })
         .collect::<anyhow::Result<Vec<_>>>()

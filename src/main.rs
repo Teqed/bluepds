@@ -416,7 +416,6 @@ async fn run() -> anyhow::Result<()> {
 
     let addr = config
         .listen_address
-        .clone()
         .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8000));
 
     let app = Router::new()

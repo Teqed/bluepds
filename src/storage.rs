@@ -28,9 +28,9 @@ pub async fn open_store(
         .await
         .context("failed to open repository file")?;
 
-    Ok(CarStore::open(f)
+    CarStore::open(f)
         .await
-        .context("failed to open car store")?)
+        .context("failed to open car store")
 }
 
 pub async fn open_repo_db(
@@ -63,7 +63,7 @@ pub async fn open_repo(
         .await
         .context("failed to open storage")?;
 
-    Ok(Repository::open(store, cid)
+    Repository::open(store, cid)
         .await
-        .context("failed to open repo")?)
+        .context("failed to open repo")
 }

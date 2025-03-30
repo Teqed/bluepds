@@ -20,7 +20,7 @@ use crate::{
 
 enum FirehoseMessage {
     Broadcast(sync::subscribe_repos::Message),
-    Connect((axum::extract::ws::WebSocket, Option<i64>)),
+    Connect(Box<(axum::extract::ws::WebSocket, Option<i64>)>),
 }
 
 enum FrameHeader {
@@ -58,9 +58,9 @@ pub enum RepoOp {
     Delete { path: String, prev: Cid },
 }
 
-impl Into<sync::subscribe_repos::RepoOp> for RepoOp {
-    fn into(self) -> sync::subscribe_repos::RepoOp {
-        let (action, cid, path) = match self {
+impl From<RepoOp> for sync::subscribe_repos::RepoOp {
+    fn from(val: RepoOp) -> Self {
+        let (action, cid, path) = match val {
             RepoOp::Create { cid, path } => ("create", Some(cid), path),
             RepoOp::Update {
                 cid,
@@ -94,21 +94,21 @@ pub struct Commit {
     pub blobs: Vec<Cid>,
 }
 
-impl Into<sync::subscribe_repos::Commit> for Commit {
-    fn into(self) -> sync::subscribe_repos::Commit {
+impl From<Commit> for sync::subscribe_repos::Commit {
+    fn from(val: Commit) -> Self {
         sync::subscribe_repos::CommitData {
-            blobs: self
+            blobs: val
                 .blobs
                 .into_iter()
-                .map(|b| atrium_api::types::CidLink(b))
+                .map(atrium_api::types::CidLink)
                 .collect::<Vec<_>>(),
-            blocks: self.car,
-            commit: atrium_api::types::CidLink(self.cid),
-            ops: self.ops.into_iter().map(Into::into).collect::<Vec<_>>(),
+            blocks: val.car,
+            commit: atrium_api::types::CidLink(val.cid),
+            ops: val.ops.into_iter().map(Into::into).collect::<Vec<_>>(),
             prev: None,
             rebase: false,
-            repo: self.did,
-            rev: self.rev,
+            repo: val.did,
+            rev: val.rev,
             seq: 0,
             since: None,
             time: Datetime::now(),
@@ -156,7 +156,7 @@ impl FirehoseProducer {
     }
 
     pub async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
-        let _ = self.tx.send(FirehoseMessage::Connect((ws, cursor))).await;
+        let _ = self.tx.send(FirehoseMessage::Connect(Box::new((ws, cursor)))).await;
     }
 }
 
@@ -230,8 +230,7 @@ async fn handle_connect(
             bail!("connection dropped: cursor {cursor} is greater than the current sequence number {seq}");
         }
 
-        let mut it = history.iter();
-        while let Some((seq, ty, msg)) = it.next() {
+        for (seq, ty, msg) in history.iter() {
             if *seq > cursor {
                 break;
             }
@@ -338,8 +337,9 @@ pub async fn spawn(
 
                         let _ = broadcast_message(&mut clients, Message::binary(by)).await;
                     }
-                    Some(FirehoseMessage::Connect((ws, cursor))) => {
-                        match handle_connect(ws, seq, &mut history, cursor).await {
+                    Some(FirehoseMessage::Connect(ws_cursor)) => {
+                        let (ws, cursor) = *ws_cursor;
+                        match handle_connect(ws, seq, &history, cursor).await {
                             Ok(r) => {
                                 gauge!(FIREHOSE_LISTENERS).increment(1);
                                 clients.push(r);

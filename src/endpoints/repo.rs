@@ -338,7 +338,7 @@ async fn apply_writes(
         &mut *tx,
         repo.root(),
         repo.commit().rev(),
-        input.swap_commit.as_ref().map(|c| c.as_ref().clone()),
+        input.swap_commit.as_ref().map(|c| *c.as_ref()),
         &user.did(),
     )
     .await
@@ -428,7 +428,7 @@ async fn apply_writes(
     // We can now broadcast this on the firehose.
     fhp.commit(firehose::Commit {
         car: mem,
-        ops: ops,
+        ops,
         cid: repo.root(),
         rev: repo.commit().rev().to_string(),
         did: atrium_api::types::string::Did::new(user.did()).unwrap(),
@@ -489,7 +489,7 @@ async fn create_record(
 
     let res = r
         .results
-        .and_then(|r| r.get(0).cloned())
+        .and_then(|r| r.first().cloned())
         .context("unexpected output from apply_writes")?;
     let res = if let repo::apply_writes::OutputResultsItem::CreateResult(c) = res {
         Some(c)
@@ -549,7 +549,7 @@ async fn put_record(
 
     let res = r
         .results
-        .and_then(|r| r.get(0).cloned())
+        .and_then(|r| r.first().cloned())
         .context("unexpected output from apply_writes")?;
     let res = if let repo::apply_writes::OutputResultsItem::UpdateResult(c) = res {
         Some(c)
@@ -692,10 +692,10 @@ async fn get_record(
             .into(),
         ))
     } else {
-        return Err(Error::with_status(
+        Err(Error::with_status(
             StatusCode::NOT_FOUND,
             anyhow!("could not find the requested record"),
-        ));
+        ))
     }
 }
 
@@ -789,7 +789,7 @@ async fn upload_blob(
         .context("no content length provided")?
         .to_str()
         .map_err(anyhow::Error::from)
-        .and_then(|s| u64::from_str_radix(s, 10).map_err(anyhow::Error::from))
+        .and_then(|s| s.parse::<u64>().map_err(anyhow::Error::from))
         .context("invalid content-length header")?;
     let mime = request
         .headers()

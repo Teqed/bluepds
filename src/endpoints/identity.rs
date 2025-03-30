@@ -53,10 +53,12 @@ async fn resolve_handle(
     Ok(Json(r))
 }
 
+#[expect(unused_variables, reason = "Not yet implemented")]
 async fn request_plc_operation_signature(user: AuthenticatedUser) -> Result<()> {
     todo!()
 }
 
+#[expect(unused_variables, reason = "Not yet implemented")]
 async fn sign_plc_operation(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -67,6 +69,7 @@ async fn sign_plc_operation(
     todo!()
 }
 
+#[expect(clippy::too_many_arguments, reason = "Many parameters are required for this endpoint")]
 async fn update_handle(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,

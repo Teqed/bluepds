@@ -91,7 +91,7 @@ async fn create_account(
 
     let recovery_keys = if let Some(key) = &input.recovery_key {
         // Ensure the provided recovery key is valid.
-        if let Err(e) = atrium_crypto::did::parse_did_key(&key) {
+        if let Err(e) = atrium_crypto::did::parse_did_key(key) {
             return Err(Error::with_status(
                 StatusCode::BAD_REQUEST,
                 anyhow::Error::new(e).context("provided recovery key is in invalid format"),
@@ -289,7 +289,7 @@ async fn create_account(
     fhp.commit(Commit {
         car: store,
         ops: Vec::new(),
-        cid: cid,
+        cid,
         rev: rev.to_string(),
         did: did.clone(),
         blobs: Vec::new(),
@@ -520,7 +520,7 @@ async fn refresh_session(
             did: atrium_api::types::string::Did::new(did.to_string()).unwrap(),
             did_doc: None,
             handle: atrium_api::types::string::Handle::new(user.handle).unwrap(),
-            status: status,
+            status,
         }
         .into(),
     ))
