@@ -12,6 +12,7 @@
 ```
 
 This is an implementation of an ATProto PDS, built with [Axum](https://github.com/tokio-rs/axum) and [Atrium](https://github.com/sugyan/atrium).
+Heavily inspired by David Buchanan's [millipds](https://github.com/DavidBuchanan314/millipds).
 
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
@@ -43,6 +44,8 @@ cargo run
 
 ## To-do
 ### High-level features
+- [ ] Authentication
+  - [ ] OAuth support
 - [ ] Storage backend abstractions
   - [ ] Azure blob storage backend
   - [ ] Backblaze b2(?)
