@@ -301,10 +301,10 @@ async fn service_proxy(
 
     let mut h = HeaderMap::new();
     if let Some(hdr) = request.headers().get("atproto-accept-labelers") {
-        _ = h.insert("atproto-accept-labelers", hdr.clone());
+        drop(h.insert("atproto-accept-labelers", hdr.clone()));
     }
     if let Some(hdr) = request.headers().get(http::header::CONTENT_TYPE) {
-        _ = h.insert(http::header::CONTENT_TYPE, hdr.clone());
+        drop(h.insert(http::header::CONTENT_TYPE, hdr.clone()));
     }
 
     let r = client
@@ -331,6 +331,7 @@ async fn service_proxy(
 }
 
 /// The main application entry point.
+#[expect(clippy::cognitive_complexity, reason = "main function has high complexity")]
 async fn run() -> anyhow::Result<()> {
     let args = Args::parse();
 

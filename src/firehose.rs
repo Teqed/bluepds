@@ -150,40 +150,40 @@ pub(crate) struct FirehoseProducer {
 impl FirehoseProducer {
     /// Broadcast an `#account` event.
     pub(crate) async fn account(&self, account: impl Into<sync::subscribe_repos::Account>) {
-        let _ = self
+        drop(self
             .tx
             .send(FirehoseMessage::Broadcast(
                 sync::subscribe_repos::Message::Account(Box::new(account.into())),
             ))
-            .await;
+            .await);
     }
 
     /// Broadcast an `#identity` event.
     pub(crate) async fn identity(&self, identity: impl Into<sync::subscribe_repos::Identity>) {
-        let _ = self
+        drop(self
             .tx
             .send(FirehoseMessage::Broadcast(
                 sync::subscribe_repos::Message::Identity(Box::new(identity.into())),
             ))
-            .await;
+            .await);
     }
 
     /// Broadcast a `#commit` event.
     pub(crate) async fn commit(&self, commit: impl Into<sync::subscribe_repos::Commit>) {
-        let _ = self
+        drop(self
             .tx
             .send(FirehoseMessage::Broadcast(
                 sync::subscribe_repos::Message::Commit(Box::new(commit.into())),
             ))
-            .await;
+            .await);
     }
 
     /// Handle client connection.
     pub(crate) async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
-        let _ = self
+        drop(self
             .tx
             .send(FirehoseMessage::Connect(Box::new((ws, cursor))))
-            .await;
+            .await);
     }
 }
 
@@ -223,7 +223,7 @@ async fn broadcast_message(clients: &mut Vec<WebSocket>, msg: Message) -> Result
         let client = &mut clients[i];
         if let Err(e) = client.send(msg.clone()).await {
             debug!("Firehose client disconnected: {e}");
-            _ = clients.remove(i);
+            drop(clients.remove(i));
         }
     }
 
@@ -253,7 +253,7 @@ async fn handle_connect(
             serde_ipld_dagcbor::to_writer(&mut frame, &msg).expect("should serialize message");
 
             // Drop the connection.
-            let _ = ws.send(Message::binary(frame)).await;
+            drop(ws.send(Message::binary(frame)).await);
             bail!(
                 "connection dropped: cursor {cursor} is greater than the current sequence number {seq}"
             );
@@ -365,7 +365,7 @@ pub(crate) async fn spawn(
                         counter!(FIREHOSE_SEQUENCE).absolute(seq);
                         seq = seq.wrapping_add(1);
 
-                        let _ = broadcast_message(&mut clients, Message::binary(by)).await;
+                        drop(broadcast_message(&mut clients, Message::binary(by)).await);
                     }
                     Some(FirehoseMessage::Connect(ws_cursor)) => {
                         let (ws, cursor) = *ws_cursor;
@@ -396,7 +396,7 @@ pub(crate) async fn spawn(
                     // Send a websocket ping message.
                     // Reference: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#pings_and_pongs_the_heartbeat_of_websockets
                     let message = Message::Ping(axum::body::Bytes::from_owner(contents));
-                    let _ = broadcast_message(&mut clients, message).await;
+                    drop(broadcast_message(&mut clients, message).await);
                 }
             }
         }

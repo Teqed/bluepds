@@ -25,18 +25,18 @@ strip = "debuginfo" # Strip all debugging information from the binary to slightl
 
 [lints.rust]
 ## Groups
-# warnings = { level = "warn", priority = -1 } # All lints that are set to issue warnings
-# deprecated-safe = { level = "warn", priority = -1 } # Lints for functions which were erroneously marked as safe in the past
-# future-incompatible = { level = "warn", priority = -1 } # Lints that detect code that has future-compatibility problems
-# keyword-idents = { level = "warn", priority = -1 } # Lints that detect identifiers which will be come keywords in later editions
-# let-underscore = { level = "warn", priority = -1 } # Lints that detect wildcard let bindings that are likely to be invalid
-# nonstandard-style = { level = "warn", priority = -1 } # Violation of standard naming conventions
-# refining-impl-trait = { level = "warn", priority = -1 } # Detects refinement of impl Trait return types by trait implementations
-# rust-2018-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2015 edition to 2018
-# rust-2021-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2018 edition to 2021
-# rust-2018-idioms = { level = "warn", priority = -1 } # Lints to nudge you toward idiomatic features of Rust 2018
-# rust-2024-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2021 edition to 2024
-# unused = { level = "warn", priority = -1 } # Lints that detect things being declared but not used, or excess syntax
+warnings = { level = "warn", priority = -1 } # All lints that are set to issue warnings
+deprecated-safe = { level = "warn", priority = -1 } # Lints for functions which were erroneously marked as safe in the past
+future-incompatible = { level = "warn", priority = -1 } # Lints that detect code that has future-compatibility problems
+keyword-idents = { level = "warn", priority = -1 } # Lints that detect identifiers which will be come keywords in later editions
+let-underscore = { level = "warn", priority = -1 } # Lints that detect wildcard let bindings that are likely to be invalid
+nonstandard-style = { level = "warn", priority = -1 } # Violation of standard naming conventions
+refining-impl-trait = { level = "warn", priority = -1 } # Detects refinement of impl Trait return types by trait implementations
+rust-2018-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2015 edition to 2018
+rust-2021-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2018 edition to 2021
+rust-2018-idioms = { level = "warn", priority = -1 } # Lints to nudge you toward idiomatic features of Rust 2018
+rust-2024-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2021 edition to 2024
+unused = { level = "warn", priority = -1 } # Lints that detect things being declared but not used, or excess syntax
 ## Individual
 ambiguous_negative_literals = "warn" # checks for cases that are confusing between a negative literal and a negation that's not part of the literal.
 closure_returning_async_block = "warn" # detects cases where users write a closure that returns an async block. # nightly
@@ -76,13 +76,12 @@ elided_lifetimes_in_paths = "allow"
 
 [lints.clippy]
 # Groups
-# nursery = { level = "warn", priority = -1 }
-# correctness = { level = "warn", priority = -1 }
-# suspicious = { level = "warn", priority = -1 }
-# complexity = { level = "warn", priority = -1 }
-# perf = { level = "warn", priority = -1 }
-# style = { level = "warn", priority = -1 }
-
+nursery = { level = "warn", priority = -1 }
+correctness = { level = "warn", priority = -1 }
+suspicious = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
 # pedantic = { level = "warn", priority = -1 }
 # restriction = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }

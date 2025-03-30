@@ -114,8 +114,8 @@ async fn update_handle(
 
     let op = PlcOperation {
         typ: "plc_operation".to_owned(),
-        rotation_keys: vec![rkey.did().to_string()],
-        verification_methods: HashMap::from([("atproto".to_owned(), skey.did().to_string())]),
+        rotation_keys: vec![rkey.did()],
+        verification_methods: HashMap::from([("atproto".to_owned(), skey.did())]),
         also_known_as: vec![input.handle.as_str().to_owned()],
         services: HashMap::from([(
             "atproto_pds".to_owned(),

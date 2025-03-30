@@ -99,9 +99,9 @@ async fn create_account(
         }
 
         // Enroll the user-provided recovery key at a higher priority than our own.
-        vec![key.clone(), rkey.did().to_string()]
+        vec![key.clone(), rkey.did()]
     } else {
-        vec![rkey.did().to_string()]
+        vec![rkey.did()]
     };
 
     // Begin a new transaction to actually create the user's profile.
@@ -136,7 +136,7 @@ async fn create_account(
     let op = PlcOperation {
         typ: "plc_operation".to_owned(),
         rotation_keys: recovery_keys,
-        verification_methods: HashMap::from([("atproto".to_owned(), skey.did().to_string())]),
+        verification_methods: HashMap::from([("atproto".to_owned(), skey.did())]),
         also_known_as: vec![format!("at://{}", input.handle.as_str())],
         services: HashMap::from([(
             "atproto_pds".to_owned(),
@@ -405,7 +405,7 @@ async fn create_session(
         &skey,
         "at+jwt",
         serde_json::json!({
-            "iss": did.clone(),
+            "iss": did,
             "aud": format!("did:web:{}", config.host_name),
             "exp": (chrono::Utc::now() + std::time::Duration::from_secs(2 * 60 * 60)).timestamp()
         }),
@@ -416,7 +416,7 @@ async fn create_session(
         &skey,
         "refresh+jwt",
         serde_json::json!({
-            "iss": did.clone(),
+            "iss": did,
             "aud": format!("did:web:{}", config.host_name),
             "exp": (chrono::Utc::now() + std::time::Duration::from_secs(2 * 60 * 60)).timestamp()
         }),

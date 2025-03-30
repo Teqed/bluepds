@@ -92,6 +92,7 @@ impl std::fmt::Debug for Error {
 }
 
 impl IntoResponse for Error {
+    #[expect(clippy::cognitive_complexity)]
     fn into_response(self) -> Response {
         error!("{:?}", self.err);
 

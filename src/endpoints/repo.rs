@@ -172,6 +172,7 @@ fn test_scan_blobs() {
     );
 }
 
+#[expect(clippy::large_stack_frames)]
 async fn apply_writes(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -208,13 +209,14 @@ async fn apply_writes(
     for write in &input.writes {
         let (builder, key) = match write {
             InputWritesItem::Create(object) => {
+                let now = Tid::now(LimitedU32::MIN);
                 let key = format!(
                     "{}/{}",
                     object.collection.as_str(),
                     object
                         .rkey
                         .as_deref()
-                        .unwrap_or(Tid::now(LimitedU32::MIN).as_str())
+                        .unwrap_or_else(|| now.as_str())
                 );
                 let uri = format!("at://{}/{}", user.did(), key);
 
@@ -354,7 +356,7 @@ async fn apply_writes(
                 results: None,
                 commit: Some(
                     CommitMetaData {
-                        cid: old.clone(),
+                        cid: old,
                         rev: orig_rev.to_string(),
                     }
                     .into(),
@@ -502,7 +504,7 @@ async fn create_record(
     Ok(Json(
         repo::create_record::OutputData {
             cid: res.cid.clone(),
-            commit: r.commit.clone(),
+            commit: r.commit,
             uri: res.uri.clone(),
             validation_status: Some("unknown".to_owned()),
         }
@@ -683,21 +685,17 @@ async fn get_record(
     let record: Option<serde_json::Value> =
         repo.get_raw(&key).await.context("failed to read record")?;
 
-    if let Some(record) = record {
-        Ok(Json(
+    record.map_or_else(|| Err(Error::with_status(
+            StatusCode::NOT_FOUND,
+            anyhow!("could not find the requested record"),
+        )), |record| Ok(Json(
             repo::get_record::OutputData {
                 cid: cid.map(atrium_api::types::string::Cid::new),
                 uri,
                 value: record.try_into_unknown().expect("should be valid JSON"),
             }
             .into(),
-        ))
-    } else {
-        Err(Error::with_status(
-            StatusCode::NOT_FOUND,
-            anyhow!("could not find the requested record"),
-        ))
-    }
+        )))
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
