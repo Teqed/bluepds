@@ -1,3 +1,4 @@
+//! Error handling for the application.
 use axum::{
     body::Body,
     http::StatusCode,
@@ -15,7 +16,8 @@ pub struct Error {
 }
 
 #[derive(Default, serde::Serialize)]
-pub struct ErrorMessage {
+/// A JSON error message.
+pub(crate) struct ErrorMessage {
     error: String,
     message: String,
 }
@@ -29,7 +31,8 @@ impl std::fmt::Display for ErrorMessage {
     }
 }
 impl ErrorMessage {
-    pub fn new(error: impl Into<String>, message: impl Into<String>) -> Self {
+    /// Create a new error message to be returned as JSON body.
+    pub(crate) fn new(error: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             error: error.into(),
             message: message.into(),
@@ -38,10 +41,12 @@ impl ErrorMessage {
 }
 
 impl Error {
+    /// Returned when a route is not yet implemented.
     pub fn unimplemented(err: impl Into<anyhow::Error>) -> Self {
         Self::with_status(StatusCode::NOT_IMPLEMENTED, err)
     }
 
+    /// Returned when just providing a status code.
     pub fn with_status(status: StatusCode, err: impl Into<anyhow::Error>) -> Self {
         Self {
             status,
@@ -50,7 +55,8 @@ impl Error {
         }
     }
 
-    pub fn with_message(
+    /// Returned when providing a status code and a JSON message body.
+    pub(crate) fn with_message(
         status: StatusCode,
         err: impl Into<anyhow::Error>,
         message: impl Into<ErrorMessage>,
@@ -96,13 +102,13 @@ impl IntoResponse for Error {
             Response::builder()
                 .status(self.status)
                 .body(Body::new(format!("{:?}", self.err)))
-                .unwrap()
+                .expect("should be a valid response")
         } else {
             Response::builder()
                 .status(self.status)
                 .header("Content-Type", "application/json")
                 .body(Body::new(self.message.unwrap_or_default().to_string()))
-                .unwrap()
+                .expect("should be a valid response")
         }
     }
 }

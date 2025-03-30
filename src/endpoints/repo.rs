@@ -70,7 +70,7 @@ async fn swap_commit(
         // If the swap failed, indicate as such.
         Ok(r.rows_affected() != 0)
     } else {
-        sqlx::query!(
+        _ = sqlx::query!(
             r#"UPDATE accounts SET root = ?, rev = ? WHERE did = ?"#,
             cid_str,
             rev_str,
@@ -99,7 +99,7 @@ async fn resolve_did(
                 .await
                 .context("failed to query did")?;
 
-            (handle.to_string(), did)
+            (handle.to_owned(), did)
         }
         AtIdentifier::Did(did) => {
             let did = did.as_str();
@@ -108,13 +108,13 @@ async fn resolve_did(
                 .await
                 .context("failed to query did")?;
 
-            (handle, did.to_string())
+            (handle, did.to_owned())
         }
     };
 
     Ok((
-        atrium_api::types::string::Did::new(did).unwrap(),
-        atrium_api::types::string::Handle::new(handle).unwrap(),
+        atrium_api::types::string::Did::new(did).expect("should be valid DID"),
+        atrium_api::types::string::Handle::new(handle).expect("should be valid handle"),
     ))
 }
 
@@ -136,7 +136,7 @@ fn scan_blobs(o: &Unknown) -> anyhow::Result<Vec<Cid>> {
                 let (ty, rf) = (map.get("$type"), map.get("ref"));
 
                 if let (Some(ty), Some(rf)) = (ty, rf) {
-                    if ty == &serde_json::Value::String("blob".to_string()) {
+                    if ty == &serde_json::Value::String("blob".to_owned()) {
                         if let Ok(rf) = serde_json::from_value::<BlobRef>(rf.clone()) {
                             cids.push(Cid::from_str(&rf.link).context("failed to convert cid")?);
                         }
@@ -312,7 +312,7 @@ async fn apply_writes(
             .sign(&builder.bytes())
             .context("failed to sign commit")?;
 
-        builder
+        _ = builder
             .finalize(sig)
             .await
             .context("failed to write signed commit")?;
@@ -346,7 +346,7 @@ async fn apply_writes(
     .context("failed to swap commit")?
     {
         // This should always succeed.
-        let old = input.swap_commit.clone().unwrap();
+        let old = input.swap_commit.clone().expect("swap_commit should always be Some");
 
         // The swap failed. Return the old commit and do not update the repository.
         return Ok(Json(
@@ -371,7 +371,7 @@ async fn apply_writes(
         match op {
             RepoOp::Update { path, .. } | RepoOp::Delete { path, .. } => {
                 // FIXME: This may cause issues if a user deletes more than one record referencing the same blob.
-                sqlx::query!(
+                _ = sqlx::query!(
                     r#"UPDATE blob_ref SET record = NULL WHERE did = ? AND record = ?"#,
                     did_str,
                     path
@@ -398,7 +398,7 @@ async fn apply_writes(
 
         // Handle the case where a new record references an existing blob.
         if r.rows_affected() == 0 {
-            sqlx::query!(
+            _ = sqlx::query!(
                 r#"INSERT INTO blob_ref (record, cid, did) VALUES (?, ?, ?)"#,
                 key,
                 cid_str,
@@ -432,7 +432,7 @@ async fn apply_writes(
         ops,
         cid: repo.root(),
         rev: repo.commit().rev().to_string(),
-        did: atrium_api::types::string::Did::new(user.did()).unwrap(),
+        did: atrium_api::types::string::Did::new(user.did()).expect("should be valid DID"),
         blobs: blobs.into_iter().map(|(_, c)| c).collect::<Vec<_>>(),
     })
     .await;
@@ -504,7 +504,7 @@ async fn create_record(
             cid: res.cid.clone(),
             commit: r.commit.clone(),
             uri: res.uri.clone(),
-            validation_status: Some("unknown".to_string()),
+            validation_status: Some("unknown".to_owned()),
         }
         .into(),
     ))
@@ -564,7 +564,7 @@ async fn put_record(
             cid: res.cid.clone(),
             commit: r.commit,
             uri: res.uri.clone(),
-            validation_status: Some("unknown".to_string()),
+            validation_status: Some("unknown".to_owned()),
         }
         .into(),
     ))
@@ -632,7 +632,7 @@ async fn describe_repo(
     let mut it = Box::pin(tree.keys());
     while let Some(key) = it.try_next().await.context("failed to iterate repo keys")? {
         if let Some((collection, _rkey)) = key.split_once('/') {
-            collections.insert(collection.to_string());
+            _ = collections.insert(collection.to_owned());
         }
     }
 
@@ -640,7 +640,7 @@ async fn describe_repo(
         repo::describe_repo::OutputData {
             collections: collections
                 .into_iter()
-                .map(|s| Nsid::new(s).unwrap())
+                .map(|s| Nsid::new(s).expect("should be valid NSID"))
                 .collect::<Vec<_>>(),
             did: did.clone(),
             did_doc: Unknown::Null, // TODO: Fetch the DID document from the PLC directory
@@ -688,7 +688,7 @@ async fn get_record(
             repo::get_record::OutputData {
                 cid: cid.map(atrium_api::types::string::Cid::new),
                 uri,
-                value: record.try_into_unknown().unwrap(),
+                value: record.try_into_unknown().expect("should be valid JSON"),
             }
             .into(),
         ))
@@ -763,7 +763,7 @@ async fn list_records(
             repo::list_records::RecordData {
                 cid: atrium_api::types::string::Cid::new(*cid),
                 uri: format!("at://{}/{}", did.as_str(), key),
-                value: value.try_into_unknown().unwrap(),
+                value: value.try_into_unknown().expect("should be valid JSON"),
             }
             .into(),
         )
@@ -798,7 +798,7 @@ async fn upload_blob(
         .context("no content-type provided")?
         .to_str()
         .context("invalid content-type provided")?
-        .to_string();
+        .to_owned();
 
     if length > config.blob.limit {
         return Err(Error::with_status(
@@ -816,7 +816,7 @@ async fn upload_blob(
         .await
         .context("failed to create temporary file")?;
 
-    let mut len = 0usize;
+    let mut len = 0_usize;
     let mut sha = Sha256::new();
     let mut stream = request.into_body().into_data_stream();
     while let Some(bytes) = stream.try_next().await.context("failed to receive file")? {
@@ -847,7 +847,7 @@ async fn upload_blob(
 
     let cid = Cid::new_v1(
         IPLD_RAW,
-        atrium_repo::Multihash::wrap(IPLD_MH_SHA2_256, hash.as_slice()).unwrap(),
+        atrium_repo::Multihash::wrap(IPLD_MH_SHA2_256, hash.as_slice()).expect("should be valid hash"),
     );
 
     let cid_str = cid.to_string();
@@ -861,7 +861,7 @@ async fn upload_blob(
 
     let did_str = user.did();
 
-    sqlx::query!(
+    _ = sqlx::query!(
         r#"INSERT INTO blob_ref (cid, did, record) VALUES (?, ?, NULL)"#,
         cid_str,
         did_str

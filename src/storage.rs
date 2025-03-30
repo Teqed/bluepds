@@ -10,6 +10,7 @@ use atrium_repo::{
 
 use crate::{Db, config::RepoConfig};
 
+/// Open a block store for a given DID.
 pub(crate) async fn open_store(
     config: &RepoConfig,
     did: impl Into<String>,
@@ -31,6 +32,7 @@ pub(crate) async fn open_store(
     CarStore::open(f).await.context("failed to open car store")
 }
 
+/// Open a repository for a given DID.
 pub(crate) async fn open_repo_db(
     config: &RepoConfig,
     db: &Db,
@@ -48,9 +50,10 @@ pub(crate) async fn open_repo_db(
     .await
     .context("failed to query database")?;
 
-    open_repo(config, did, Cid::from_str(&cid).unwrap()).await
+    open_repo(config, did, Cid::from_str(&cid).expect("should be valid CID")).await
 }
 
+/// Open a repository for a given DID and CID.
 pub(crate) async fn open_repo(
     config: &RepoConfig,
     did: impl Into<String>,

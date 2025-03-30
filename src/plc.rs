@@ -1,3 +1,4 @@
+//! PLC operations.
 use std::collections::HashMap;
 
 use anyhow::{Context, bail};
@@ -12,9 +13,14 @@ const PLC_DIRECTORY: &str = "https://plc.directory/";
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase", tag = "type")]
+/// A PLC service.
 pub(crate) enum PlcService {
     #[serde(rename = "AtprotoPersonalDataServer")]
-    Pds { endpoint: String },
+    /// A personal data server.
+    Pds {
+        /// The URL of the PDS.
+        endpoint: String
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -30,6 +36,7 @@ pub(crate) struct PlcOperation {
 }
 
 impl PlcOperation {
+    /// Sign an operation with the provided signature.
     pub(crate) fn sign(self, sig: Vec<u8>) -> SignedPlcOperation {
         SignedPlcOperation {
             typ: self.typ,
@@ -45,6 +52,7 @@ impl PlcOperation {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+/// A signed PLC operation.
 pub(crate) struct SignedPlcOperation {
     #[serde(rename = "type")]
     pub typ: String,
@@ -65,7 +73,7 @@ pub(crate) async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Res
 
 /// Submit a PLC operation to the public directory.
 pub(crate) async fn submit(client: &Client, did: &str, op: &SignedPlcOperation) -> anyhow::Result<()> {
-    debug!("submitting {} {}", did, serde_json::to_string(&op).unwrap());
+    debug!("submitting {} {}", did, serde_json::to_string(&op).expect("should serialize"));
 
     let res = client
         .post(format!("{PLC_DIRECTORY}{did}"))
@@ -84,7 +92,7 @@ pub(crate) async fn submit(client: &Client, did: &str, op: &SignedPlcOperation) 
 
         bail!(
             "error from PLC directory: {}",
-            serde_json::to_string(&e).unwrap()
+            serde_json::to_string(&e).expect("should serialize")
         );
     }
 }

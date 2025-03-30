@@ -19,6 +19,7 @@ pub(crate) struct AuthenticatedUser {
 }
 
 impl AuthenticatedUser {
+    /// Get the DID of the authenticated user.
     pub(crate) fn did(&self) -> String {
         self.did.clone()
     }
@@ -84,8 +85,8 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                 .await
                 .with_context(|| format!("failed to query account {did}"))?;
 
-            Ok(AuthenticatedUser {
-                did: did.to_string(),
+            Ok(Self {
+                did: did.to_owned(),
             })
         } else {
             Err(Error::with_status(
@@ -148,5 +149,5 @@ pub(crate) fn verify(key: &str, token: &str) -> anyhow::Result<(String, serde_js
         .context("failed to decode claims")?;
     let claims = serde_json::from_slice(&claims).context("failed to parse claims as json")?;
 
-    Ok((typ.to_string(), claims))
+    Ok((typ.to_owned(), claims))
 }

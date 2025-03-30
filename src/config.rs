@@ -1,12 +1,15 @@
+//! Configuration structures for the PDS.
 use std::{net::SocketAddr, path::PathBuf};
 
 use serde::Deserialize;
 use url::Url;
 
+/// The metrics configuration.
 pub(crate) mod metrics {
     use super::*;
 
     #[derive(Deserialize, Debug, Clone)]
+    /// The Prometheus configuration.
     pub(crate) struct PrometheusConfig {
         /// The URL of the Prometheus server's exporter endpoint.
         pub url: Url,
@@ -16,6 +19,7 @@ pub(crate) mod metrics {
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub(crate) enum MetricConfig {
+    /// The Prometheus push gateway.
     PrometheusPush(metrics::PrometheusConfig),
 }
 

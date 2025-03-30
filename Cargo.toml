@@ -1,8 +1,122 @@
 [package]
 name = "bluepds"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 publish = false
+authors = ["Justin Moore", "Timothy Quilling <teqed@shatteredsky.net>"]
+description = "Alternative ATProto PDS implementation"
+license = ""
+readme = "README.md"
+repository = "https://github.com/DrChat/bluepds"
+keywords = ["atproto", "pds"]
+categories = []
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = "s" # Slightly slows compile times, great improvements to file size and runtime performance.
+lto = "thin" # Do a second optimization pass over the entire program, including dependencies.
+codegen-units = 1 # Compile the entire crate as one unit.
+strip = "debuginfo" # Strip all debugging information from the binary to slightly reduce file size.
+
+[lints.rust]
+## Groups
+# warnings = { level = "warn", priority = -1 } # All lints that are set to issue warnings
+# deprecated-safe = { level = "warn", priority = -1 } # Lints for functions which were erroneously marked as safe in the past
+# future-incompatible = { level = "warn", priority = -1 } # Lints that detect code that has future-compatibility problems
+# keyword-idents = { level = "warn", priority = -1 } # Lints that detect identifiers which will be come keywords in later editions
+# let-underscore = { level = "warn", priority = -1 } # Lints that detect wildcard let bindings that are likely to be invalid
+# nonstandard-style = { level = "warn", priority = -1 } # Violation of standard naming conventions
+# refining-impl-trait = { level = "warn", priority = -1 } # Detects refinement of impl Trait return types by trait implementations
+# rust-2018-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2015 edition to 2018
+# rust-2021-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2018 edition to 2021
+# rust-2018-idioms = { level = "warn", priority = -1 } # Lints to nudge you toward idiomatic features of Rust 2018
+# rust-2024-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2021 edition to 2024
+# unused = { level = "warn", priority = -1 } # Lints that detect things being declared but not used, or excess syntax
+## Individual
+ambiguous_negative_literals = "warn" # checks for cases that are confusing between a negative literal and a negation that's not part of the literal.
+closure_returning_async_block = "warn" # detects cases where users write a closure that returns an async block. # nightly
+ffi_unwind_calls = "warn"
+# fuzzy_provenance_casts = "warn" # unstable
+# lossy_provenance_casts = "warn" # unstable
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_abi = "warn"
+missing_copy_implementations = "allow" # detects potentially-forgotten implementations of Copy for public types.
+missing_debug_implementations = "allow" # detects missing implementations of fmt::Debug for public types.
+missing_docs = "warn"
+# multiple_supertrait_upcastable = "warn" # unstable
+# must_not_suspend = "warn" # unstable
+non_ascii_idents = "warn"
+# non_exhaustive_omitted_patterns = "warn" # unstable
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+rust_2024_incompatible_pat = "warn" # nightly
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unnameable_types = "warn"
+# unqualified_local_imports = "warn" # unstable
+unreachable_pub = "warn"
+unsafe_code = "forbid"
+unstable_features = "warn"
+# unused_crate_dependencies = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+unused_results = "warn"
+variant_size_differences = "warn"
+elided_lifetimes_in_paths = "allow"
+# unstable-features = "allow"
+
+[lints.clippy]
+# Groups
+# nursery = { level = "warn", priority = -1 }
+# correctness = { level = "warn", priority = -1 }
+# suspicious = { level = "warn", priority = -1 }
+# complexity = { level = "warn", priority = -1 }
+# perf = { level = "warn", priority = -1 }
+# style = { level = "warn", priority = -1 }
+
+# pedantic = { level = "warn", priority = -1 }
+# restriction = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# Temporary Allows
+single_call_fn = "allow"
+multiple_crate_versions = "allow"
+expect_used = "allow"
+# Style Allows
+implicit_return = "allow"
+self_named_module_files = "allow"
+else_if_without_else = "allow"
+std_instead_of_alloc = "allow"
+std_instead_of_core = "allow"
+blanket_clippy_restriction_lints = "allow"
+float_arithmetic = "allow"
+redundant_pub_crate = "allow"
+pub_with_shorthand = "allow"
+absolute_paths = "allow"
+module_name_repetitions = "allow"
+missing_trait_methods = "allow"
+separated_literal_suffix = "allow"
+exhaustive_structs = "allow"
+field_scoped_visibility_modifiers = "allow"
+allow_attributes_without_reason = "allow"
+# Warns
+missing_docs_in_private_items = "warn"
+use_self = "warn"
+str_to_string = "warn"
+print_stdout = "warn"
+unseparated_literal_suffix = "warn"
+unwrap_used = "warn"
+# Denys
+enum_glob_use = "deny"
+# expect_used = "deny"
 
 [dependencies]
 atrium-api = "0.25"

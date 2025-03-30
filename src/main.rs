@@ -1,3 +1,4 @@
+//! PDS implementation.
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
@@ -42,17 +43,23 @@ mod metrics;
 mod plc;
 mod storage;
 
+/// The application-wide result type.
 pub type Result<T> = std::result::Result<T, Error>;
 pub use error::Error;
 use uuid::Uuid;
 
+/// The reqwest client type with middleware.
 pub type Client = reqwest_middleware::ClientWithMiddleware;
+/// The database connection pool.
 pub type Db = SqlitePool;
+/// The Azure credential type.
 pub type Cred = Arc<dyn TokenCredential>;
 
+/// The application user agent. Concatenates the package name and version. e.g. `bluepds/0.0.0`.
 pub const APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+/// The key data structure.
 struct KeyData {
     /// Primary signing key for all repo operations.
     skey: Vec<u8>,
@@ -65,8 +72,10 @@ struct KeyData {
 //
 // Reference: https://soatok.blog/2022/05/19/guidance-for-choosing-an-elliptic-curve-signature-algorithm-in-2022/
 #[derive(Clone)]
+/// The signing key for PLC/DID operations.
 pub struct SigningKey(Arc<Secp256k1Keypair>);
 #[derive(Clone)]
+/// The rotation key for PLC operations.
 pub struct RotationKey(Arc<Secp256k1Keypair>);
 
 impl std::ops::Deref for SigningKey {
@@ -86,7 +95,9 @@ impl std::ops::Deref for RotationKey {
 }
 
 #[derive(Parser, Debug, Clone)]
+/// Command line arguments.
 struct Args {
+    /// The verbosity level.
     #[command(flatten)]
     verbosity: Verbosity<InfoLevel>,
 
@@ -97,18 +108,27 @@ struct Args {
 
 #[derive(Clone, FromRef)]
 struct AppState {
+    /// The application configuration.
     config: AppConfig,
+    /// The Azure credential.
     cred: Cred,
+    /// The database connection pool.
     db: Db,
 
+    /// The HTTP client with middleware.
     client: Client,
+    /// The simple HTTP client.
     simple_client: reqwest::Client,
+    /// The firehose producer.
     firehose: FirehoseProducer,
 
+    /// The signing key.
     signing_key: SigningKey,
+    /// The rotation key.
     rotation_key: RotationKey,
 }
 
+/// The index (/) route.
 async fn index() -> impl IntoResponse {
     r#"
          __                         __
@@ -149,7 +169,7 @@ mod actor_endpoints {
     ) -> Result<()> {
         let did = user.did();
         let prefs = sqlx::types::Json(input.preferences.clone());
-        sqlx::query!(
+        _ = sqlx::query!(
             r#"UPDATE accounts SET private_prefs = ? WHERE did = ?"#,
             prefs,
             did
@@ -191,6 +211,7 @@ mod actor_endpoints {
     }
 
     #[rustfmt::skip]
+    /// Register all actor endpoints.
     pub(crate) fn routes() -> Router<AppState> {
         // AP /xrpc/app.bsky.actor.putPreferences
         // AG /xrpc/app.bsky.actor.getPreferences
@@ -232,8 +253,8 @@ async fn service_proxy(
         }
         // HACK: Assume the bluesky appview by default.
         None => (
-            Did::new("did:web:api.bsky.app".to_string()).unwrap(),
-            "#bsky_appview".to_string(),
+            Did::new("did:web:api.bsky.app".to_owned()).expect("should be a valid DID"),
+            "#bsky_appview".to_owned(),
         ),
     };
 
@@ -280,10 +301,10 @@ async fn service_proxy(
 
     let mut h = HeaderMap::new();
     if let Some(hdr) = request.headers().get("atproto-accept-labelers") {
-        h.insert("atproto-accept-labelers", hdr.clone());
+        _ = h.insert("atproto-accept-labelers", hdr.clone());
     }
     if let Some(hdr) = request.headers().get(http::header::CONTENT_TYPE) {
-        h.insert(http::header::CONTENT_TYPE, hdr.clone());
+        _ = h.insert(http::header::CONTENT_TYPE, hdr.clone());
     }
 
     let r = client
@@ -309,6 +330,7 @@ async fn service_proxy(
     Ok(resp)
 }
 
+/// The main application entry point.
 async fn run() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -368,7 +390,7 @@ async fn run() -> anyhow::Result<()> {
         }))
         .build();
 
-    tokio::fs::create_dir_all(&config.key.parent().unwrap())
+    tokio::fs::create_dir_all(&config.key.parent().expect("should have parent"))
         .await
         .context("failed to create key directory")?;
 
@@ -458,10 +480,11 @@ async fn run() -> anyhow::Result<()> {
     .await
     .context("failed to query database")?;
 
+    #[allow(clippy::print_stdout)]
     if c == 0 {
         let uuid = Uuid::new_v4().to_string();
 
-        sqlx::query!(
+        _ = sqlx::query!(
             r#"
             INSERT INTO invites (id, did, count, created_at)
                 VALUES (?, NULL, 1, datetime('now'))
@@ -494,7 +517,7 @@ async fn run() -> anyhow::Result<()> {
     });
 
     // Now that the app is live, request a crawl from upstream relays.
-    let _ = firehose::reconnect_relays(&client, &config).await;
+    firehose::reconnect_relays(&client, &config).await;
 
     serve
         .await

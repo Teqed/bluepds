@@ -134,12 +134,12 @@ async fn create_account(
     // Account can be created. Synthesize a new DID for the user.
     // https://github.com/did-method-plc/did-method-plc?tab=readme-ov-file#did-creation
     let op = PlcOperation {
-        typ: "plc_operation".to_string(),
+        typ: "plc_operation".to_owned(),
         rotation_keys: recovery_keys,
-        verification_methods: HashMap::from([("atproto".to_string(), skey.did().to_string())]),
+        verification_methods: HashMap::from([("atproto".to_owned(), skey.did().to_string())]),
         also_known_as: vec![format!("at://{}", input.handle.as_str())],
         services: HashMap::from([(
-            "atproto_pds".to_string(),
+            "atproto_pds".to_owned(),
             PlcService::Pds {
                 endpoint: format!("https://{}", config.host_name),
             },
@@ -198,7 +198,7 @@ async fn create_account(
             .await
             .context("failed to create carstore")?;
 
-        let repo_builder = Repository::create(&mut store, Did::from_str(&did).unwrap())
+        let repo_builder = Repository::create(&mut store, Did::from_str(&did).expect("should be valid DID format"))
             .await
             .context("failed to initialize user repo")?;
 
@@ -233,7 +233,7 @@ async fn create_account(
     let cid_str = cid.to_string();
     let rev_str = rev.as_str();
 
-    sqlx::query!(
+    _ = sqlx::query!(
         r#"
         INSERT INTO accounts (did, email, password, root, plc_root, rev, created_at)
             VALUES (?, ?, ?, ?, ?, ?, datetime('now'));
@@ -264,8 +264,8 @@ async fn create_account(
     // Broadcast the identity event now that the new identity is resolvable on the public directory.
     fhp.identity(
         atrium_api::com::atproto::sync::subscribe_repos::IdentityData {
-            did: Did::from_str(&did).unwrap(),
-            handle: Some(Handle::new(handle).unwrap()),
+            did: Did::from_str(&did).expect("should be valid DID format"),
+            handle: Some(Handle::new(handle).expect("should be valid handle")),
             seq: 0, // Filled by firehose later.
             time: Datetime::now(),
         },
@@ -276,7 +276,7 @@ async fn create_account(
     fhp.account(
         atrium_api::com::atproto::sync::subscribe_repos::AccountData {
             active: true,
-            did: Did::from_str(&did).unwrap(),
+            did: Did::from_str(&did).expect("should be valid DID format"),
             seq: 0,       // Filled by firehose later.
             status: None, // "takedown" / "suspended" / "deactivated"
             time: Datetime::now(),
@@ -284,7 +284,7 @@ async fn create_account(
     )
     .await;
 
-    let did = Did::from_str(&did).unwrap();
+    let did = Did::from_str(&did).expect("should be valid DID format");
 
     fhp.commit(Commit {
         car: store,
@@ -375,7 +375,7 @@ async fn create_session(
         // determine whether or not an account exists.
         let _ = Argon2::default().verify_password(
             password.as_bytes(),
-            &PasswordHash::new(DUMMY_PASSWORD).unwrap(),
+            &PasswordHash::new(DUMMY_PASSWORD).expect("should be valid password hash"),
         );
 
         return Err(Error::with_status(
@@ -429,12 +429,12 @@ async fn create_session(
             refresh_jwt: refresh_token,
 
             active: Some(true),
-            did: Did::from_str(&did).unwrap(),
+            did: Did::from_str(&did).expect("should be valid DID format"),
             did_doc: None,
             email: None,
             email_auth_factor: None,
             email_confirmed: None,
-            handle: Handle::new(account.handle).unwrap(),
+            handle: Handle::new(account.handle).expect("should be valid handle"),
             status: None,
         }
         .into(),
@@ -517,9 +517,9 @@ async fn refresh_session(
             refresh_jwt: refresh_token,
 
             active: Some(active), // TODO?
-            did: Did::new(did.to_string()).unwrap(),
+            did: Did::new(did.to_owned()).expect("should be valid DID format"),
             did_doc: None,
-            handle: Handle::new(user.handle).unwrap(),
+            handle: Handle::new(user.handle).expect("should be valid handle"),
             status,
         }
         .into(),
@@ -589,12 +589,12 @@ async fn get_session(
         Ok(Json(
             server::get_session::OutputData {
                 active: Some(active),
-                did: Did::from_str(&did).unwrap(),
+                did: Did::from_str(&did).expect("should be valid DID format"),
                 did_doc: None,
                 email: Some(user.email),
                 email_auth_factor: None,
                 email_confirmed: None,
-                handle: Handle::new(user.handle).unwrap(),
+                handle: Handle::new(user.handle).expect("should be valid handle"),
                 status,
             }
             .into(),
@@ -614,7 +614,7 @@ async fn describe_server(
         server::describe_server::OutputData {
             available_user_domains: vec![],
             contact: None,
-            did: Did::from_str(&format!("did:web:{}", config.host_name)).unwrap(),
+            did: Did::from_str(&format!("did:web:{}", config.host_name)).expect("should be valid DID format"),
             invite_code_required: Some(true),
             links: None,
             phone_verification_required: Some(false), // email verification

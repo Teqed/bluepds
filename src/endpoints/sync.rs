@@ -294,8 +294,8 @@ async fn list_repos(
         .map(|r| {
             sync::list_repos::RepoData {
                 active: Some(true),
-                did: Did::new(r.did).unwrap(),
-                head: atrium_api::types::string::Cid::new(Cid::from_str(&r.root).unwrap()),
+                did: Did::new(r.did).expect("should be a valid DID"),
+                head: atrium_api::types::string::Cid::new(Cid::from_str(&r.root).expect("should be a valid CID")),
                 rev: r.rev,
                 status: None,
             }
@@ -326,11 +326,11 @@ async fn subscribe_repos(
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::empty())
-                .unwrap();
+                .expect("should be a valid response")
         }
     };
 
-    ws.on_upgrade(move |ws| async move {
+    ws.on_upgrade(async move |ws| {
         fh.client_connection(ws, cursor).await;
     })
 }

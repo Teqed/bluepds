@@ -1,3 +1,5 @@
+//! DID utilities.
+
 use anyhow::{Context, Result, bail};
 use atrium_api::types::string::Did;
 use serde::{Deserialize, Serialize};
@@ -10,6 +12,7 @@ const ALLOWED_URLS: &[&str] = &["bsky.app", "bsky.chat"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// DID verification method.
 pub(crate) struct DidVerificationMethod {
     pub id: String,
     #[serde(rename = "type")]
@@ -29,6 +32,7 @@ pub(crate) struct DidService {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// DID document.
 pub(crate) struct DidDocument {
     #[serde(rename = "@context", skip_serializing_if = "Vec::is_empty")]
     pub context: Vec<Url>,

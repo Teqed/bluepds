@@ -1,3 +1,4 @@
+//! The firehose module.
 use std::{collections::VecDeque, time::Duration};
 
 use anyhow::{Result, bail};
@@ -36,13 +37,13 @@ impl Serialize for FrameHeader {
         let mut map = serializer.serialize_map(None)?;
 
         match self {
-            FrameHeader::Message(s) => {
+            Self::Message(s) => {
                 map.serialize_key("op")?;
                 map.serialize_value(&1)?;
                 map.serialize_key("t")?;
                 map.serialize_value(s.as_str())?;
             }
-            FrameHeader::Error => {
+            Self::Error => {
                 map.serialize_key("op")?;
                 map.serialize_value(&-1)?;
             }
@@ -52,10 +53,31 @@ impl Serialize for FrameHeader {
     }
 }
 
-pub enum RepoOp {
-    Create { cid: Cid, path: String },
-    Update { cid: Cid, path: String, prev: Cid },
-    Delete { path: String, prev: Cid },
+/// A repository operation.
+pub(crate) enum RepoOp {
+    /// Create a new record.
+    Create {
+        /// The CID of the record.
+        cid: Cid,
+        /// The path of the record.
+        path: String
+    },
+    /// Update an existing record.
+    Update {
+        /// The CID of the record.
+        cid: Cid,
+        /// The path of the record.
+        path: String,
+        /// The previous CID of the record.
+        prev: Cid
+    },
+    /// Delete an existing record.
+    Delete {
+        /// The path of the record.
+        path: String,
+        /// The previous CID of the record.
+        prev: Cid
+    },
 }
 
 impl From<RepoOp> for sync::subscribe_repos::RepoOp {
@@ -71,7 +93,7 @@ impl From<RepoOp> for sync::subscribe_repos::RepoOp {
         };
 
         sync::subscribe_repos::RepoOpData {
-            action: action.to_string(),
+            action: action.to_owned(),
             cid: cid.map(atrium_api::types::CidLink),
             path,
         }
@@ -79,7 +101,8 @@ impl From<RepoOp> for sync::subscribe_repos::RepoOp {
     }
 }
 
-pub struct Commit {
+/// A commit to the repository.
+pub(crate) struct Commit {
     /// The car file containing the commit blocks.
     pub car: Vec<u8>,
     /// The operations performed in this commit.
@@ -155,6 +178,7 @@ impl FirehoseProducer {
             .await;
     }
 
+    /// Handle client connection.
     pub(crate) async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
         let _ = self
             .tx
@@ -168,7 +192,7 @@ async fn serialize_message(
     seq: u64,
     mut msg: sync::subscribe_repos::Message,
 ) -> (&'static str, Vec<u8>) {
-    let mut dummy_seq = 0i64;
+    let mut dummy_seq = 0_i64;
     let (ty, nseq) = match &mut msg {
         sync::subscribe_repos::Message::Account(m) => ("#account", &mut m.seq),
         sync::subscribe_repos::Message::Commit(m) => ("#commit", &mut m.seq),
@@ -182,11 +206,11 @@ async fn serialize_message(
     // Set the sequence number.
     *nseq = seq as i64;
 
-    let hdr = FrameHeader::Message(ty.to_string());
+    let hdr = FrameHeader::Message(ty.to_owned());
 
     let mut frame = Vec::new();
-    serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
-    serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
+    serde_ipld_dagcbor::to_writer(&mut frame, &hdr).expect("should serialize header");
+    serde_ipld_dagcbor::to_writer(&mut frame, &msg).expect("should serialize message");
 
     (ty, frame)
 }
@@ -199,7 +223,7 @@ async fn broadcast_message(clients: &mut Vec<WebSocket>, msg: Message) -> Result
         let client = &mut clients[i];
         if let Err(e) = client.send(msg.clone()).await {
             debug!("Firehose client disconnected: {e}");
-            clients.remove(i);
+            _ = clients.remove(i);
         }
     }
 
@@ -225,8 +249,8 @@ async fn handle_connect(
                 "cursor {cursor} is greater than the current sequence number {seq}"
             )));
 
-            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
-            serde_ipld_dagcbor::to_writer(&mut frame, &msg).unwrap();
+            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).expect("should serialize header");
+            serde_ipld_dagcbor::to_writer(&mut frame, &msg).expect("should serialize message");
 
             // Drop the connection.
             let _ = ws.send(Message::binary(frame)).await;
@@ -241,8 +265,8 @@ async fn handle_connect(
             }
 
             let hdr = FrameHeader::Message(ty.to_string());
-            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).unwrap();
-            serde_ipld_dagcbor::to_writer(&mut frame, msg).unwrap();
+            serde_ipld_dagcbor::to_writer(&mut frame, &hdr).expect("should serialize header");
+            serde_ipld_dagcbor::to_writer(&mut frame, msg).expect("should serialize message");
 
             if let Err(e) = ws.send(Message::binary(frame.clone())).await {
                 debug!("Firehose client disconnected during backfill: {e}");
@@ -257,6 +281,7 @@ async fn handle_connect(
     Ok(ws)
 }
 
+/// Reconnect to upstream relays.
 pub(crate) async fn reconnect_relays(client: &Client, config: &AppConfig) {
     // Avoid connecting to upstream relays in test mode.
     if config.test {
@@ -316,7 +341,7 @@ pub(crate) async fn spawn(
     let handle = tokio::spawn(async move {
         let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
-        let mut seq = 1u64;
+        let mut seq = 1_u64;
 
         // TODO: We should use `com.atproto.sync.notifyOfUpdate` to reach out to relays
         // that may have disconnected from us due to timeout.

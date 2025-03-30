@@ -34,7 +34,7 @@ async fn resolve_handle(
         .fetch_one(&db)
         .await
     {
-        let did = atrium_api::types::string::Did::new(did).unwrap();
+        let did = atrium_api::types::string::Did::new(did).expect("should be valid DID format");
         return Ok(Json(identity::resolve_handle::OutputData { did }.into()));
     }
 
@@ -85,7 +85,7 @@ async fn update_handle(
 ) -> Result<()> {
     let handle = input.handle.as_str();
     let did_str = user.did();
-    let did = atrium_api::types::string::Did::new(user.did()).unwrap();
+    let did = atrium_api::types::string::Did::new(user.did()).expect("should be valid DID format");
 
     let existing_did = sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
         .fetch_optional(&db)
@@ -113,12 +113,12 @@ async fn update_handle(
         .with_context(|| format!("failed to resolve DID for {did_str}"))?;
 
     let op = PlcOperation {
-        typ: "plc_operation".to_string(),
+        typ: "plc_operation".to_owned(),
         rotation_keys: vec![rkey.did().to_string()],
-        verification_methods: HashMap::from([("atproto".to_string(), skey.did().to_string())]),
-        also_known_as: vec![input.handle.as_str().to_string()],
+        verification_methods: HashMap::from([("atproto".to_owned(), skey.did().to_string())]),
+        also_known_as: vec![input.handle.as_str().to_owned()],
         services: HashMap::from([(
-            "atproto_pds".to_string(),
+            "atproto_pds".to_owned(),
             PlcService::Pds {
                 endpoint: config.host_name.clone(),
             },
@@ -137,7 +137,7 @@ async fn update_handle(
     }
 
     // FIXME: Properly abstract these implementation details.
-    let did_hash = did_str.strip_prefix("did:plc:").unwrap();
+    let did_hash = did_str.strip_prefix("did:plc:").expect("should be valid DID format");
     let doc = tokio::fs::File::options()
         .read(true)
         .write(true)
@@ -157,7 +157,7 @@ async fn update_handle(
 
     let cid_str = plc_cid.to_string();
 
-    sqlx::query!(
+    _ = sqlx::query!(
         r#"UPDATE accounts SET plc_root = ? WHERE did = ?"#,
         cid_str,
         did_str
@@ -170,7 +170,7 @@ async fn update_handle(
     fhp.identity(
         atrium_api::com::atproto::sync::subscribe_repos::IdentityData {
             did: did.clone(),
-            handle: Some(Handle::new(handle.to_string()).unwrap()),
+            handle: Some(Handle::new(handle.to_owned()).expect("should be valid handle")),
             seq: 0, // Filled by firehose later.
             time: Datetime::now(),
         },
