@@ -4,11 +4,11 @@ use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use atrium_repo::{
-    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore},
     Cid, Repository,
+    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore},
 };
 
-use crate::{config::RepoConfig, Db};
+use crate::{Db, config::RepoConfig};
 
 pub async fn open_store(
     config: &RepoConfig,
@@ -28,9 +28,7 @@ pub async fn open_store(
         .await
         .context("failed to open repository file")?;
 
-    CarStore::open(f)
-        .await
-        .context("failed to open car store")
+    CarStore::open(f).await.context("failed to open car store")
 }
 
 pub async fn open_repo_db(

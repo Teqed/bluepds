@@ -1,20 +1,20 @@
 use std::{collections::HashSet, str::FromStr};
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
     types::{
-        string::{AtIdentifier, Nsid, Tid},
         LimitedU32, Object, TryFromUnknown, TryIntoUnknown, Unknown,
+        string::{AtIdentifier, Nsid, Tid},
     },
 };
-use atrium_repo::{blockstore::CarStore, Cid};
+use atrium_repo::{Cid, blockstore::CarStore};
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Query, Request, State},
     http::{self, StatusCode},
     routing::{get, post},
-    Json, Router,
 };
 use constcat::concat;
 use futures::TryStreamExt;
@@ -24,11 +24,12 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::{
+    AppState, Db, Error, Result, SigningKey,
     auth::AuthenticatedUser,
     config::AppConfig,
     firehose::{self, FirehoseProducer, RepoOp},
     metrics::{REPO_COMMITS, REPO_OP_CREATE, REPO_OP_DELETE, REPO_OP_UPDATE},
-    storage, AppState, Db, Error, Result, SigningKey,
+    storage,
 };
 
 /// IPLD CID raw binary

@@ -1,28 +1,28 @@
 use std::str::FromStr;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use atrium_api::{com::atproto::sync, types::string::Did};
 use atrium_repo::{
-    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
     Cid,
+    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
 };
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Query, State, WebSocketUpgrade},
     http::{self, Response, StatusCode},
     response::IntoResponse,
     routing::get,
-    Json, Router,
 };
 use constcat::concat;
 use futures::stream::TryStreamExt;
 use tokio_util::io::ReaderStream;
 
 use crate::{
+    AppState, Db, Error, Result,
     config::AppConfig,
     firehose::FirehoseProducer,
     storage::{open_repo_db, open_store},
-    AppState, Db, Error, Result,
 };
 
 async fn get_blob(

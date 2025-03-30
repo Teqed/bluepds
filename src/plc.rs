@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use tracing::debug;

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use atrium_api::types::string::Did;
 use serde::{Deserialize, Serialize};
 use url::Url;

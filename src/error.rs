@@ -21,7 +21,11 @@ pub struct ErrorMessage {
 }
 impl std::fmt::Display for ErrorMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, r#"{{"error":"{}","message":"{}"}}"#, self.error, self.message)
+        write!(
+            f,
+            r#"{{"error":"{}","message":"{}"}}"#,
+            self.error, self.message
+        )
     }
 }
 impl ErrorMessage {
@@ -46,7 +50,11 @@ impl Error {
         }
     }
 
-    pub fn with_message(status: StatusCode, err: impl Into<anyhow::Error>, message: impl Into<ErrorMessage>) -> Self {
+    pub fn with_message(
+        status: StatusCode,
+        err: impl Into<anyhow::Error>,
+        message: impl Into<ErrorMessage>,
+    ) -> Self {
         Self {
             status,
             err: err.into(),

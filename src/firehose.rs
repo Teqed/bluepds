@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, time::Duration};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use atrium_api::{
     com::atproto::sync::{self},
     types::string::{Datetime, Did},
@@ -9,13 +9,13 @@ use atrium_repo::Cid;
 use axum::extract::ws::{Message, WebSocket};
 use metrics::{counter, gauge};
 use rand::Rng;
-use serde::{ser::SerializeMap, Serialize};
+use serde::{Serialize, ser::SerializeMap};
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    Client,
     config::AppConfig,
     metrics::{FIREHOSE_HISTORY, FIREHOSE_LISTENERS, FIREHOSE_MESSAGES, FIREHOSE_SEQUENCE},
-    Client,
 };
 
 enum FirehoseMessage {
@@ -156,7 +156,10 @@ impl FirehoseProducer {
     }
 
     pub async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
-        let _ = self.tx.send(FirehoseMessage::Connect(Box::new((ws, cursor)))).await;
+        let _ = self
+            .tx
+            .send(FirehoseMessage::Connect(Box::new((ws, cursor))))
+            .await;
     }
 }
 
@@ -227,7 +230,9 @@ async fn handle_connect(
 
             // Drop the connection.
             let _ = ws.send(Message::binary(frame)).await;
-            bail!("connection dropped: cursor {cursor} is greater than the current sequence number {seq}");
+            bail!(
+                "connection dropped: cursor {cursor} is greater than the current sequence number {seq}"
+            );
         }
 
         for (seq, ty, msg) in history.iter() {

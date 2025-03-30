@@ -9,27 +9,27 @@ use atrium_api::types::string::Did;
 use atrium_crypto::keypair::{Export, Secp256k1Keypair};
 use auth::AuthenticatedUser;
 use axum::{
+    Router,
     body::Body,
     extract::{FromRef, Request, State},
     http::{self, HeaderMap, Response, StatusCode, Uri},
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use azure_core::credentials::TokenCredential;
 use clap::Parser;
-use clap_verbosity_flag::{log::LevelFilter, InfoLevel, Verbosity};
+use clap_verbosity_flag::{InfoLevel, Verbosity, log::LevelFilter};
 use config::AppConfig;
-use figment::{providers::Format, Figment};
+use figment::{Figment, providers::Format};
 use firehose::FirehoseProducer;
 use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
+use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use tracing::{info, warn};
 
 mod auth;
@@ -137,7 +137,7 @@ Most API routes are under /xrpc/
 /// This will _very likely_ be changed in the future.
 mod actor_endpoints {
     use atrium_api::app::bsky::actor;
-    use axum::{routing::post, Json};
+    use axum::{Json, routing::post};
     use constcat::concat;
 
     use super::*;
@@ -247,7 +247,7 @@ async fn service_proxy(
             return Err(Error::with_status(
                 StatusCode::BAD_REQUEST,
                 anyhow!("could not find resolve service #{id}"),
-            ))
+            ));
         }
     };
 
@@ -347,7 +347,9 @@ async fn run() -> anyhow::Result<()> {
     if config.test {
         warn!("BluePDS starting up in TEST mode.");
         warn!("This means the application will not federate with the rest of the network.");
-        warn!("If you want to turn this off, either set `test` to false in the config or define `BLUEPDS_TEST = false`");
+        warn!(
+            "If you want to turn this off, either set `test` to false in the config or define `BLUEPDS_TEST = false`"
+        );
     }
 
     // Initialize metrics reporting.

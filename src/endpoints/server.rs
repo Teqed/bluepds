@@ -1,21 +1,21 @@
 use std::{collections::HashMap, str::FromStr};
 
-use anyhow::{anyhow, Context};
-use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use anyhow::{Context, anyhow};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier, password_hash::SaltString};
 use atrium_api::{
     com::atproto::server,
     types::string::{Datetime, Did, Handle, Tid},
 };
 use atrium_crypto::keypair::Did as _;
 use atrium_repo::{
-    blockstore::{AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
     Cid, Repository,
+    blockstore::{AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
 };
 use axum::{
+    Json, Router,
     extract::{Query, Request, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 use constcat::concat;
 use metrics::counter;
@@ -24,12 +24,12 @@ use sha2::Digest;
 use uuid::Uuid;
 
 use crate::{
+    AppState, Client, Db, Error, Result, RotationKey, SigningKey,
     auth::{self, AuthenticatedUser},
     config::AppConfig,
     firehose::{Commit, FirehoseProducer},
     metrics::AUTH_FAILED,
     plc::{self, PlcOperation, PlcService},
-    AppState, Client, Db, Error, Result, RotationKey, SigningKey,
 };
 
 /// This is a dummy password that can be used in absence of a real password.

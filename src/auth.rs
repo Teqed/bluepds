@@ -1,6 +1,6 @@
 //! Authentication primitives.
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use atrium_crypto::{
     keypair::{Did, Secp256k1Keypair},
     verify::Verifier,
@@ -8,7 +8,7 @@ use atrium_crypto::{
 use axum::{extract::FromRequestParts, http::StatusCode};
 use base64::Engine;
 
-use crate::{auth, error::ErrorMessage, AppState, Error};
+use crate::{AppState, Error, auth, error::ErrorMessage};
 
 /// This is an axum request extractor that represents an authenticated user.
 ///
@@ -46,7 +46,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                 return Err(Error::with_status(
                     StatusCode::UNAUTHORIZED,
                     anyhow!("no bearer token"),
-                ))
+                ));
             }
         };
 

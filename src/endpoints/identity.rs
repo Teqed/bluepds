@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use atrium_api::{
     com::atproto::identity,
     types::string::{Datetime, Handle},
@@ -8,20 +8,20 @@ use atrium_api::{
 use atrium_crypto::keypair::Did;
 use atrium_repo::blockstore::{AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256};
 use axum::{
+    Json, Router,
     extract::{Query, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 use constcat::concat;
 
 use crate::{
+    AppState, Client, Db, Error, Result, RotationKey, SigningKey,
     auth::AuthenticatedUser,
     config::AppConfig,
     did,
     firehose::FirehoseProducer,
     plc::{self, PlcOperation, PlcService},
-    AppState, Client, Db, Error, Result, RotationKey, SigningKey,
 };
 
 async fn resolve_handle(
@@ -69,7 +69,10 @@ async fn sign_plc_operation(
     todo!()
 }
 
-#[expect(clippy::too_many_arguments, reason = "Many parameters are required for this endpoint")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Many parameters are required for this endpoint"
+)]
 async fn update_handle(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
