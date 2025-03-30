@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use anyhow::Context;
+use anyhow::Context as _;
 use metrics::{describe_counter, describe_gauge};
 use metrics_exporter_prometheus::PrometheusBuilder;
 

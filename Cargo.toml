@@ -83,15 +83,24 @@ complexity = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 # pedantic = { level = "warn", priority = -1 }
-# restriction = { level = "warn", priority = -1 }
+restriction = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 # Temporary Allows
 single_call_fn = "allow"
 multiple_crate_versions = "allow"
 expect_used = "allow"
+# # Temporary Allows - Restriction
+question_mark_used = "allow"
+shadow_reuse = "allow"
+shadow_unrelated = "allow"
+min_ident_chars = "allow"
+arbitrary_source_item_ordering = "allow"
+renamed_function_params = "allow"
+pattern_type_mismatch = "allow"
 # Style Allows
 implicit_return = "allow"
-self_named_module_files = "allow"
+# self_named_module_files = "allow" # Choose one of self_named_module_files or mod_module_files
+mod_module_files = "allow"
 else_if_without_else = "allow"
 std_instead_of_alloc = "allow"
 std_instead_of_core = "allow"
@@ -106,6 +115,8 @@ separated_literal_suffix = "allow"
 exhaustive_structs = "allow"
 field_scoped_visibility_modifiers = "allow"
 allow_attributes_without_reason = "allow"
+tests_outside_test_module = "allow"
+ref_patterns = "allow"
 # Warns
 missing_docs_in_private_items = "warn"
 use_self = "warn"

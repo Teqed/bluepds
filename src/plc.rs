@@ -1,8 +1,8 @@
 //! PLC operations.
 use std::collections::HashMap;
 
-use anyhow::{Context, bail};
-use base64::Engine;
+use anyhow::{Context as _, bail};
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
@@ -19,7 +19,7 @@ pub(crate) enum PlcService {
     /// A personal data server.
     Pds {
         /// The URL of the PDS.
-        endpoint: String
+        endpoint: String,
     },
 }
 
@@ -64,7 +64,10 @@ pub(crate) struct SignedPlcOperation {
     pub sig: String,
 }
 
-pub(crate) async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Result<SignedPlcOperation> {
+pub(crate) async fn sign_op(
+    rkey: &RotationKey,
+    op: PlcOperation,
+) -> anyhow::Result<SignedPlcOperation> {
     let bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode op")?;
     let bytes = rkey.sign(&bytes).context("failed to sign op")?;
 
@@ -72,8 +75,16 @@ pub(crate) async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Res
 }
 
 /// Submit a PLC operation to the public directory.
-pub(crate) async fn submit(client: &Client, did: &str, op: &SignedPlcOperation) -> anyhow::Result<()> {
-    debug!("submitting {} {}", did, serde_json::to_string(&op).expect("should serialize"));
+pub(crate) async fn submit(
+    client: &Client,
+    did: &str,
+    op: &SignedPlcOperation,
+) -> anyhow::Result<()> {
+    debug!(
+        "submitting {} {}",
+        did,
+        serde_json::to_string(&op).expect("should serialize")
+    );
 
     let res = client
         .post(format!("{PLC_DIRECTORY}{did}"))

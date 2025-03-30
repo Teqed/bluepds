@@ -1,13 +1,13 @@
 //! Root module for all endpoints.
-use axum::{Json, Router, routing::get};
-use serde_json::json;
-
-use crate::{AppState, Result};
-
 mod identity;
 mod repo;
 mod server;
 mod sync;
+
+use axum::{Json, Router, routing::get};
+use serde_json::json;
+
+use crate::{AppState, Result};
 
 /// Health check endpoint. Returns name and version of the service.
 pub(crate) async fn health() -> Result<Json<serde_json::Value>> {

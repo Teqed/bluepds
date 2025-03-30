@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context as _, anyhow};
 use atrium_api::{
     com::atproto::identity,
     types::string::{Datetime, Handle},
 };
-use atrium_crypto::keypair::Did;
-use atrium_repo::blockstore::{AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256};
+use atrium_crypto::keypair::Did as _;
+use atrium_repo::blockstore::{AsyncBlockStoreWrite as _, CarStore, DAG_CBOR, SHA2_256};
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -34,31 +34,37 @@ async fn resolve_handle(
         .fetch_one(&db)
         .await
     {
-        let did = atrium_api::types::string::Did::new(did).expect("should be valid DID format");
-        return Ok(Json(identity::resolve_handle::OutputData { did }.into()));
+        return Ok(Json(
+            identity::resolve_handle::OutputData {
+                did: atrium_api::types::string::Did::new(did).expect("should be valid DID format"),
+            }
+            .into(),
+        ));
     }
 
     // HACK: Query bsky to see if they have this handle cached.
-    let r = client
+    let response = client
         .get(format!(
             "https://api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={handle}"
         ))
         .send()
         .await
-        .context("failed to query upstream server")?
+        .context("failed to query upstream server")
+        .expect("should be able to query upstream server for `handle` at provided api url")
         .json()
         .await
-        .context("failed to decode response as JSON")?;
+        .context("failed to decode response as JSON")
+        .expect("should be able to decode response as JSON");
 
-    Ok(Json(r))
+    Ok(Json(response))
 }
 
-#[expect(unused_variables, reason = "Not yet implemented")]
+#[expect(unused_variables, clippy::todo, reason = "Not yet implemented")]
 async fn request_plc_operation_signature(user: AuthenticatedUser) -> Result<()> {
     todo!()
 }
 
-#[expect(unused_variables, reason = "Not yet implemented")]
+#[expect(unused_variables, clippy::todo, reason = "Not yet implemented")]
 async fn sign_plc_operation(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -87,12 +93,13 @@ async fn update_handle(
     let did_str = user.did();
     let did = atrium_api::types::string::Did::new(user.did()).expect("should be valid DID format");
 
-    let existing_did = sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
-        .fetch_optional(&db)
-        .await
-        .context("failed to query did count")?;
-
-    if let Some(existing_did) = existing_did {
+    if let Some(existing_did) =
+        sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
+            .fetch_optional(&db)
+            .await
+            .context("failed to query did count")
+            .expect("should be able to fetch did from handles for handle")
+    {
         if existing_did != did_str {
             return Err(Error::with_status(
                 StatusCode::BAD_REQUEST,
@@ -101,59 +108,70 @@ async fn update_handle(
         }
     }
 
-    let plc_cid = sqlx::query_scalar!(r#"SELECT plc_root FROM accounts WHERE did = ?"#, did_str)
-        .fetch_one(&db)
-        .await
-        .context("failed to fetch user PLC root")?;
-
     // Ensure the existing DID is resolvable.
     // If not, we need to register the original handle.
     let _did = did::resolve(&client, did.clone())
         .await
-        .with_context(|| format!("failed to resolve DID for {did_str}"))?;
+        .with_context(|| format!("failed to resolve DID for {did_str}"))
+        .expect("should be able to resolve DID");
 
-    let op = PlcOperation {
-        typ: "plc_operation".to_owned(),
-        rotation_keys: vec![rkey.did()],
-        verification_methods: HashMap::from([("atproto".to_owned(), skey.did())]),
-        also_known_as: vec![input.handle.as_str().to_owned()],
-        services: HashMap::from([(
-            "atproto_pds".to_owned(),
-            PlcService::Pds {
-                endpoint: config.host_name.clone(),
-            },
-        )]),
-        prev: Some(plc_cid),
-    };
-
-    let op = plc::sign_op(&rkey, op)
-        .await
-        .context("failed to sign plc op")?;
+    let op = plc::sign_op(
+        &rkey,
+        PlcOperation {
+            typ: "plc_operation".to_owned(),
+            rotation_keys: vec![rkey.did()],
+            verification_methods: HashMap::from([("atproto".to_owned(), skey.did())]),
+            also_known_as: vec![input.handle.as_str().to_owned()],
+            services: HashMap::from([(
+                "atproto_pds".to_owned(),
+                PlcService::Pds {
+                    endpoint: config.host_name.clone(),
+                },
+            )]),
+            prev: Some(
+                sqlx::query_scalar!(r#"SELECT plc_root FROM accounts WHERE did = ?"#, did_str)
+                    .fetch_one(&db)
+                    .await
+                    .context("failed to fetch user PLC root")
+                    .expect("should be able to fetch plc_root from accounts for did"),
+            ),
+        },
+    )
+    .await
+    .context("failed to sign plc op")
+    .expect("should be able to sign plc op");
 
     if !config.test {
         plc::submit(&client, did.as_str(), &op)
             .await
-            .context("failed to submit PLC operation")?;
+            .context("failed to submit PLC operation")
+            .expect("should be able to submit PLC operation");
     }
 
     // FIXME: Properly abstract these implementation details.
-    let did_hash = did_str.strip_prefix("did:plc:").expect("should be valid DID format");
+    let did_hash = did_str
+        .strip_prefix("did:plc:")
+        .expect("should be valid DID format");
     let doc = tokio::fs::File::options()
         .read(true)
         .write(true)
         .open(config.plc.path.join(format!("{}.car", did_hash)))
         .await
-        .context("failed to open did doc")?;
+        .context("failed to open did doc")
+        .expect("should be able to open did doc at provided path to PLC carstore");
 
-    let mut plc_doc = CarStore::open(doc)
+    let op_bytes = serde_ipld_dagcbor::to_vec(&op)
+        .context("failed to encode plc op")
+        .expect("should be able to encode plc op");
+
+    let plc_cid = CarStore::open(doc)
         .await
-        .context("failed to open did carstore")?;
-
-    let op_bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode plc op")?;
-    let plc_cid = plc_doc
+        .context("failed to open did carstore")
+        .expect("should be able to open did carstore")
         .write_block(DAG_CBOR, SHA2_256, &op_bytes)
         .await
-        .context("failed to write genesis commit")?;
+        .context("failed to write genesis commit")
+        .expect("should be able to write genesis commit to did carstore");
 
     let cid_str = plc_cid.to_string();
 
@@ -164,7 +182,8 @@ async fn update_handle(
     )
     .execute(&db)
     .await
-    .context("failed to update account PLC root")?;
+    .context("failed to update account PLC root")
+    .expect("should be able to update `accounts` and set `plc_root` for `did`");
 
     // Broadcast the identity event now that the new identity is resolvable on the public directory.
     fhp.identity(

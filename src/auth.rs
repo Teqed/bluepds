@@ -1,12 +1,12 @@
 //! Authentication primitives.
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context as _, anyhow};
 use atrium_crypto::{
-    keypair::{Did, Secp256k1Keypair},
+    keypair::{Did as _, Secp256k1Keypair},
     verify::Verifier,
 };
 use axum::{extract::FromRequestParts, http::StatusCode};
-use base64::Engine;
+use base64::Engine as _;
 
 use crate::{AppState, Error, error::ErrorMessage};
 
@@ -36,9 +36,8 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|auth| {
-                auth.to_str()
-                    .ok()
-                    .and_then(|auth| auth.strip_prefix("Bearer "))
+                let auth = auth.to_str().ok()?;
+                auth.strip_prefix("Bearer ")
             });
 
         let token = match token {

@@ -1,10 +1,10 @@
-use std::{collections::HashSet, str::FromStr};
+use std::{collections::HashSet, str::FromStr as _};
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context as _, anyhow};
 use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
     types::{
-        LimitedU32, Object, TryFromUnknown, TryIntoUnknown, Unknown,
+        LimitedU32, Object, TryFromUnknown as _, TryIntoUnknown as _, Unknown,
         string::{AtIdentifier, Nsid, Tid},
     },
 };
@@ -17,11 +17,11 @@ use axum::{
     routing::{get, post},
 };
 use constcat::concat;
-use futures::TryStreamExt;
+use futures::TryStreamExt as _;
 use metrics::counter;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
+use sha2::{Digest as _, Sha256};
+use tokio::io::AsyncWriteExt as _;
 
 use crate::{
     AppState, Db, Error, Result, SigningKey,
@@ -43,6 +43,29 @@ struct BlobRef {
     link: String,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ListRecordsParameters {
+    ///The NSID of the record type.
+    pub collection: Nsid,
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub cursor: Option<String>,
+    ///The number of records to return.
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub limit: Option<String>,
+    ///The handle or DID of the repo.
+    pub repo: AtIdentifier,
+    ///Flag to reverse the order of the returned records.
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub reverse: Option<bool>,
+    ///DEPRECATED: The highest sort-ordered rkey to stop at (exclusive)
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub rkey_end: Option<String>,
+    ///DEPRECATED: The lowest sort-ordered rkey to start from (exclusive)
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub rkey_start: Option<String>,
+}
+
 async fn swap_commit(
     db: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
     cid: Cid,
@@ -53,10 +76,10 @@ async fn swap_commit(
     let cid_str = cid.to_string();
     let rev_str = rev.to_string();
 
-    if let Some(swap) = &old_cid {
+    if let Some(swap) = old_cid {
         let swap_str = swap.to_string();
 
-        let r = sqlx::query!(
+        let result = sqlx::query!(
             r#"UPDATE accounts SET root = ?, rev = ? WHERE did = ? AND root = ?"#,
             cid_str,
             rev_str,
@@ -65,10 +88,13 @@ async fn swap_commit(
         )
         .execute(db)
         .await
-        .context("failed to update root")?;
+        .context("failed to update root")
+        .expect(
+            "should be able to update `accounts` by setting `root` and `rev` for `did` and `root`",
+        );
 
         // If the swap failed, indicate as such.
-        Ok(r.rows_affected() != 0)
+        Ok(result.rows_affected() != 0)
     } else {
         _ = sqlx::query!(
             r#"UPDATE accounts SET root = ?, rev = ? WHERE did = ?"#,
@@ -78,7 +104,8 @@ async fn swap_commit(
         )
         .execute(db)
         .await
-        .context("failed to update root")?;
+        .context("failed to update root")
+        .expect("should be able to update `accounts` by setting `root` and `rev` for `did`");
 
         Ok(true)
     }
@@ -86,59 +113,73 @@ async fn swap_commit(
 
 async fn resolve_did(
     db: &Db,
-    ident: &AtIdentifier,
+    identifier: &AtIdentifier,
 ) -> anyhow::Result<(
     atrium_api::types::string::Did,
     atrium_api::types::string::Handle,
 )> {
-    let (handle, did) = match &ident {
-        AtIdentifier::Handle(handle) => {
-            let handle = handle.as_str();
-            let did = sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
-                .fetch_one(db)
-                .await
-                .context("failed to query did")?;
-
-            (handle.to_owned(), did)
+    let (handle, did) = match *identifier {
+        AtIdentifier::Handle(ref handle) => {
+            let handle_as_str = &handle.as_str();
+            (
+                &handle.to_owned(),
+                &atrium_api::types::string::Did::new(
+                    sqlx::query_scalar!(
+                        r#"SELECT did FROM handles WHERE handle = ?"#,
+                        handle_as_str
+                    )
+                    .fetch_one(db)
+                    .await
+                    .context("failed to query did")
+                    .expect("should be able to query `did` by `handle`"),
+                )
+                .expect("should be valid DID"),
+            )
         }
-        AtIdentifier::Did(did) => {
-            let did = did.as_str();
-            let handle = sqlx::query_scalar!(r#"SELECT handle FROM handles WHERE did = ?"#, did)
-                .fetch_one(db)
-                .await
-                .context("failed to query did")?;
-
-            (handle, did.to_owned())
+        AtIdentifier::Did(ref did) => {
+            let did_as_str = &did.as_str();
+            (
+                &atrium_api::types::string::Handle::new(
+                    sqlx::query_scalar!(r#"SELECT handle FROM handles WHERE did = ?"#, did_as_str)
+                        .fetch_one(db)
+                        .await
+                        .context("failed to query did")
+                        .expect("should be able to query `handle` by `did`"),
+                )
+                .expect("should be valid handle"),
+                &did.to_owned(),
+            )
         }
     };
 
-    Ok((
-        atrium_api::types::string::Did::new(did).expect("should be valid DID"),
-        atrium_api::types::string::Handle::new(handle).expect("should be valid handle"),
-    ))
+    Ok((did.to_owned(), handle.to_owned()))
 }
 
-fn scan_blobs(o: &Unknown) -> anyhow::Result<Vec<Cid>> {
+fn scan_blobs(unknown: &Unknown) -> anyhow::Result<Vec<Cid>> {
     // { "$type": "blob", "ref": { "$link": "bafyrei..." } }
-    let v = serde_json::Value::try_from_unknown(o.clone())
-        .context("failed to convert unknown into json")?;
 
     let mut cids = Vec::new();
-    let mut stack = vec![v];
-    while let Some(v) = stack.pop() {
-        match v {
+    let mut stack = vec![
+        serde_json::Value::try_from_unknown(unknown.clone())
+            .context("failed to convert unknown into json")
+            .expect("should be valid JSON"),
+    ];
+    while let Some(value) = stack.pop() {
+        match value {
             serde_json::Value::Null => (),
             serde_json::Value::Bool(_) => (),
             serde_json::Value::Number(_) => (),
             serde_json::Value::String(_) => (),
             serde_json::Value::Array(values) => stack.extend(values.into_iter()),
             serde_json::Value::Object(map) => {
-                let (ty, rf) = (map.get("$type"), map.get("ref"));
-
-                if let (Some(ty), Some(rf)) = (ty, rf) {
-                    if ty == &serde_json::Value::String("blob".to_owned()) {
-                        if let Ok(rf) = serde_json::from_value::<BlobRef>(rf.clone()) {
-                            cids.push(Cid::from_str(&rf.link).context("failed to convert cid")?);
+                if let (Some(blob_type), Some(blob_ref)) = (map.get("$type"), map.get("ref")) {
+                    if blob_type == &serde_json::Value::String("blob".to_owned()) {
+                        if let Ok(rf) = serde_json::from_value::<BlobRef>(blob_ref.clone()) {
+                            cids.push(
+                                Cid::from_str(&rf.link)
+                                    .context("failed to convert cid")
+                                    .expect("should be valid CID"),
+                            );
                         }
                     }
                 }
@@ -153,7 +194,7 @@ fn scan_blobs(o: &Unknown) -> anyhow::Result<Vec<Cid>> {
 
 #[test]
 fn test_scan_blobs() {
-    use std::str::FromStr;
+    use std::str::FromStr as _;
 
     let json = serde_json::json!({
         "test": "a",
@@ -165,9 +206,9 @@ fn test_scan_blobs() {
         }
     });
 
-    let b = scan_blobs(&json.try_into_unknown().unwrap()).unwrap();
+    let blob = scan_blobs(&json.try_into_unknown().unwrap()).unwrap();
     assert_eq!(
-        b,
+        blob,
         vec![Cid::from_str("bafkreifzxf2wa6dyakzbdaxkz2wkvfrv3hiuafhxewbn5wahcw6eh3hzji").unwrap()]
     );
 }
@@ -187,7 +228,8 @@ async fn apply_writes(
 
     let (target_did, _) = resolve_did(&db, &input.repo)
         .await
-        .context("failed to resolve did")?;
+        .context("failed to resolve did")
+        .expect("should be able to resolve DID");
 
     // Ensure that we are updating the correct repository.
     if target_did.as_str() != user.did() {
@@ -199,7 +241,8 @@ async fn apply_writes(
 
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
         .await
-        .context("failed to open user repo")?;
+        .context("failed to open user repo")
+        .expect("should be able to open user repo");
     let orig_rev = repo.commit().rev();
 
     let mut blobs = vec![];
@@ -207,90 +250,101 @@ async fn apply_writes(
     let mut ops = vec![];
     let mut keys = vec![];
     for write in &input.writes {
-        let (builder, key) = match write {
-            InputWritesItem::Create(object) => {
+        let (builder, key) = match *write {
+            InputWritesItem::Create(ref object) => {
                 let now = Tid::now(LimitedU32::MIN);
                 let key = format!(
                     "{}/{}",
-                    object.collection.as_str(),
-                    object
-                        .rkey
-                        .as_deref()
-                        .unwrap_or_else(|| now.as_str())
+                    &object.collection.as_str(),
+                    &object.rkey.as_deref().unwrap_or_else(|| now.as_str())
                 );
                 let uri = format!("at://{}/{}", user.did(), key);
 
-                let (b, c) = repo
+                let (builder, cid) = repo
                     .add_raw(&key, &object.value)
                     .await
-                    .context("failed to add record")?;
+                    .context("failed to add record")
+                    .expect("should be able to add record");
 
                 if let Ok(new_blobs) = scan_blobs(&object.value) {
-                    blobs.extend(new_blobs.into_iter().map(|b| (key.to_string(), b)));
+                    blobs.extend(
+                        new_blobs
+                            .into_iter()
+                            .map(|blob_cid| (key.to_owned(), blob_cid)),
+                    );
                 }
 
                 ops.push(RepoOp::Create {
-                    cid: c,
+                    cid,
                     path: key.clone(),
                 });
 
                 res.push(OutputResultsItem::CreateResult(Box::new(
                     apply_writes::CreateResultData {
-                        cid: atrium_api::types::string::Cid::new(c),
+                        cid: atrium_api::types::string::Cid::new(cid),
                         uri,
                         validation_status: None,
                     }
                     .into(),
                 )));
 
-                (b, key)
+                (builder, key)
             }
-            InputWritesItem::Update(object) => {
-                let key = format!("{}/{}", object.collection.as_str(), object.rkey);
+            InputWritesItem::Update(ref object) => {
+                let key = format!("{}/{}", &object.collection.as_str(), &object.rkey);
                 let uri = format!("at://{}/{}", user.did(), key);
 
                 let prev = repo
                     .tree()
                     .get(&key)
                     .await
-                    .context("failed to search MST")?
-                    .context("previous record does not exist")?;
+                    .context("failed to search MST")
+                    .expect("should be able to search MST for previous record")
+                    .context("previous record does not exist")
+                    .expect("should be able to find previous record");
 
-                let (b, c) = repo
+                let (builder, cid) = repo
                     .update_raw(&key, &object.value)
                     .await
-                    .context("failed to add record")?;
+                    .context("failed to add record")
+                    .expect("should be able to add record");
 
                 if let Ok(new_blobs) = scan_blobs(&object.value) {
-                    blobs.extend(new_blobs.into_iter().map(|b| (key.to_string(), b)));
+                    blobs.extend(
+                        new_blobs
+                            .into_iter()
+                            .map(|blod_cid| (key.to_owned(), blod_cid)),
+                    );
                 }
 
                 ops.push(RepoOp::Update {
-                    cid: c,
+                    cid,
                     path: key.clone(),
                     prev,
                 });
 
                 res.push(OutputResultsItem::UpdateResult(Box::new(
                     apply_writes::UpdateResultData {
-                        cid: atrium_api::types::string::Cid::new(c),
+                        cid: atrium_api::types::string::Cid::new(cid),
                         uri,
                         validation_status: None,
                     }
                     .into(),
                 )));
 
-                (b, key)
+                (builder, key)
             }
-            InputWritesItem::Delete(object) => {
-                let key = format!("{}/{}", object.collection.as_str(), object.rkey);
+            InputWritesItem::Delete(ref object) => {
+                let key = format!("{}/{}", &object.collection.as_str(), &object.rkey);
 
                 let prev = repo
                     .tree()
                     .get(&key)
                     .await
-                    .context("failed to search MST")?
-                    .context("previous record does not exist")?;
+                    .context("failed to search MST")
+                    .expect("should be able to search MST for previous record")
+                    .context("previous record does not exist")
+                    .expect("should be able to find previous record");
 
                 ops.push(RepoOp::Delete {
                     path: key.clone(),
@@ -301,23 +355,26 @@ async fn apply_writes(
                     apply_writes::DeleteResultData {}.into(),
                 )));
 
-                let b = repo
+                let builder = repo
                     .delete_raw(&key)
                     .await
-                    .context("failed to add record")?;
+                    .context("failed to add record")
+                    .expect("should be able to add record");
 
-                (b, key)
+                (builder, key)
             }
         };
 
         let sig = skey
             .sign(&builder.bytes())
-            .context("failed to sign commit")?;
+            .context("failed to sign commit")
+            .expect("should be able to sign commit");
 
         _ = builder
             .finalize(sig)
             .await
-            .context("failed to write signed commit")?;
+            .context("failed to write signed commit")
+            .expect("should be able to write signed commit");
 
         keys.push(key);
     }
@@ -326,29 +383,39 @@ async fn apply_writes(
     let mut mem = Vec::new();
     let mut store = CarStore::create_with_roots(std::io::Cursor::new(&mut mem), [repo.root()])
         .await
-        .context("failed to create temp store")?;
+        .context("failed to create temp store")
+        .expect("should be able to create temp store");
 
     // Extract the records out of the user's repository.
     for key in keys {
         repo.extract_raw_into(&key, &mut store)
             .await
-            .context("failed to extract key")?;
+            .context("failed to extract key")
+            .expect("should be able to extract key");
     }
 
-    let mut tx = db.begin().await.context("failed to begin transaction")?;
+    let mut tx = db
+        .begin()
+        .await
+        .context("failed to begin transaction")
+        .expect("should be able to begin transaction");
 
     if !swap_commit(
         &mut *tx,
         repo.root(),
         repo.commit().rev(),
-        input.swap_commit.as_ref().map(|c| *c.as_ref()),
+        input.swap_commit.as_ref().map(|cid| *cid.as_ref()),
         &user.did(),
     )
     .await
-    .context("failed to swap commit")?
+    .context("failed to swap commit")
+    .expect("should be able to swap commit")
     {
         // This should always succeed.
-        let old = input.swap_commit.clone().expect("swap_commit should always be Some");
+        let old = input
+            .swap_commit
+            .clone()
+            .expect("swap_commit should always be Some");
 
         // The swap failed. Return the old commit and do not update the repository.
         return Ok(Json(
@@ -371,24 +438,28 @@ async fn apply_writes(
     // For updates and removals, unlink the old/deleted record from the blob_ref table.
     for op in &ops {
         match op {
-            RepoOp::Update { path, .. } | RepoOp::Delete { path, .. } => {
+            &RepoOp::Update { ref path, .. } | &RepoOp::Delete { ref path, .. } => {
                 // FIXME: This may cause issues if a user deletes more than one record referencing the same blob.
-                _ = sqlx::query!(
+                _ = &sqlx::query!(
                     r#"UPDATE blob_ref SET record = NULL WHERE did = ? AND record = ?"#,
                     did_str,
                     path
                 )
                 .execute(&mut *tx)
                 .await
-                .context("failed to remove blob_ref")?;
+                .context("failed to remove blob_ref")
+                .expect("should be able to remove blob_ref");
             }
             _ => {}
         }
     }
 
-    for (key, cid) in &blobs {
+    // for (key, cid) in &blobs {
+    for &mut (ref key, cid) in &mut blobs {
         let cid_str = cid.to_string();
-        let r = sqlx::query!(
+
+        // Handle the case where a new record references an existing blob.
+        if sqlx::query!(
             r#"UPDATE blob_ref SET record = ? WHERE cid = ? AND did = ? AND record IS NULL"#,
             key,
             cid_str,
@@ -396,10 +467,11 @@ async fn apply_writes(
         )
         .execute(&mut *tx)
         .await
-        .context("failed to update blob_ref")?;
-
-        // Handle the case where a new record references an existing blob.
-        if r.rows_affected() == 0 {
+        .context("failed to update blob_ref")
+        .expect("should be able to update blob_ref")
+        .rows_affected()
+            == 0
+        {
             _ = sqlx::query!(
                 r#"INSERT INTO blob_ref (record, cid, did) VALUES (?, ?, ?)"#,
                 key,
@@ -408,18 +480,20 @@ async fn apply_writes(
             )
             .execute(&mut *tx)
             .await
-            .context("failed to update blob_ref")?;
+            .context("failed to update blob_ref")
+            .expect("should be able to update blob_ref");
         }
     }
 
     tx.commit()
         .await
-        .context("failed to commit blob ref to database")?;
+        .context("failed to commit blob ref to database")
+        .expect("should be able to commit blob ref to database");
 
     // Update counters.
     counter!(REPO_COMMITS).increment(1);
     for op in &ops {
-        match op {
+        match *op {
             RepoOp::Create { .. } => counter!(REPO_OP_CREATE).increment(1),
             RepoOp::Update { .. } => counter!(REPO_OP_UPDATE).increment(1),
             RepoOp::Delete { .. } => counter!(REPO_OP_DELETE).increment(1),
@@ -435,7 +509,7 @@ async fn apply_writes(
         cid: repo.root(),
         rev: repo.commit().rev().to_string(),
         did: atrium_api::types::string::Did::new(user.did()).expect("should be valid DID"),
-        blobs: blobs.into_iter().map(|(_, c)| c).collect::<Vec<_>>(),
+        blobs: blobs.into_iter().map(|(_, cid)| cid).collect::<Vec<_>>(),
     })
     .await;
 
@@ -462,50 +536,53 @@ async fn create_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::create_record::Input>,
 ) -> Result<Json<repo::create_record::Output>> {
-    let input = (*input).clone();
-    let input = repo::apply_writes::InputData {
-        repo: input.repo,
-        validate: input.validate,
-        swap_commit: input.swap_commit,
-        writes: vec![repo::apply_writes::InputWritesItem::Create(Box::new(
-            repo::apply_writes::CreateData {
-                collection: input.collection,
-                rkey: input.rkey,
-                value: input.record,
-            }
-            .into(),
-        ))],
-    }
-    .into();
-
-    let r = apply_writes(
+    let write_result = apply_writes(
         user,
         State(skey),
         State(config),
         State(db),
         State(fhp),
-        Json(input),
+        Json(
+            repo::apply_writes::InputData {
+                repo: input.repo.to_owned(),
+                validate: input.validate.to_owned(),
+                swap_commit: input.swap_commit.to_owned(),
+                writes: vec![repo::apply_writes::InputWritesItem::Create(Box::new(
+                    repo::apply_writes::CreateData {
+                        collection: input.collection.to_owned(),
+                        rkey: input.rkey.to_owned(),
+                        value: input.record.to_owned(),
+                    }
+                    .into(),
+                ))],
+            }
+            .into(),
+        ),
     )
     .await
-    .context("failed to apply writes")?;
-    let r = (**r).clone();
+    .context("failed to apply writes")
+    .expect("should be able to apply writes");
 
-    let res = r
-        .results
-        .and_then(|r| r.first().cloned())
-        .context("unexpected output from apply_writes")?;
-    let res = if let repo::apply_writes::OutputResultsItem::CreateResult(c) = res {
-        Some(c)
+    let create_result = if let repo::apply_writes::OutputResultsItem::CreateResult(create_result) =
+        write_result
+            .results
+            .to_owned()
+            .and_then(|result| result.first().cloned())
+            .context("unexpected output from apply_writes")
+            .expect("should be able to get first result from apply_writes")
+    {
+        Some(create_result)
     } else {
         None
-    };
-    let res = res.context("unexpected result from apply_writes")?;
+    }
+    .context("unexpected result from apply_writes")
+    .expect("should be able to get create result");
 
     Ok(Json(
         repo::create_record::OutputData {
-            cid: res.cid.clone(),
-            commit: r.commit,
-            uri: res.uri.clone(),
+            cid: create_result.cid.to_owned(),
+            commit: write_result.commit.to_owned(),
+            uri: create_result.uri.to_owned(),
             validation_status: Some("unknown".to_owned()),
         }
         .into(),
@@ -522,50 +599,53 @@ async fn put_record(
 ) -> Result<Json<repo::put_record::Output>> {
     // TODO: `input.swap_record`
 
-    let input = (*input).clone();
-    let input = repo::apply_writes::InputData {
-        repo: input.repo,
-        validate: input.validate,
-        swap_commit: input.swap_commit,
-        writes: vec![repo::apply_writes::InputWritesItem::Update(Box::new(
-            repo::apply_writes::UpdateData {
-                collection: input.collection,
-                rkey: input.rkey,
-                value: input.record,
-            }
-            .into(),
-        ))],
-    }
-    .into();
-
-    let r = apply_writes(
+    let write_result = apply_writes(
         user,
         State(skey),
         State(config),
         State(db),
         State(fhp),
-        Json(input),
+        Json(
+            repo::apply_writes::InputData {
+                repo: input.repo.to_owned(),
+                validate: input.validate,
+                swap_commit: input.swap_commit.to_owned(),
+                writes: vec![repo::apply_writes::InputWritesItem::Update(Box::new(
+                    repo::apply_writes::UpdateData {
+                        collection: input.collection.to_owned(),
+                        rkey: input.rkey.to_owned(),
+                        value: input.record.to_owned(),
+                    }
+                    .into(),
+                ))],
+            }
+            .into(),
+        ),
     )
     .await
-    .context("failed to apply writes")?;
-    let r = (**r).clone();
+    .context("failed to apply writes")
+    .expect("should be able to apply writes");
 
-    let res = r
-        .results
-        .and_then(|r| r.first().cloned())
-        .context("unexpected output from apply_writes")?;
-    let res = if let repo::apply_writes::OutputResultsItem::UpdateResult(c) = res {
-        Some(c)
+    let update_result = if let repo::apply_writes::OutputResultsItem::UpdateResult(update_result) =
+        write_result
+            .results
+            .to_owned()
+            .and_then(|result| result.first().cloned())
+            .context("unexpected output from apply_writes")
+            .expect("should be able to get first result from apply_writes")
+    {
+        Some(update_result)
     } else {
         None
-    };
-    let res = res.context("unexpected result from apply_writes")?;
+    }
+    .context("unexpected result from apply_writes")
+    .expect("should be able to get update result");
 
     Ok(Json(
         repo::put_record::OutputData {
-            cid: res.cid.clone(),
-            commit: r.commit,
-            uri: res.uri.clone(),
+            cid: update_result.cid.clone(),
+            commit: write_result.commit.to_owned(),
+            uri: update_result.uri.clone(),
             validation_status: Some("unknown".to_owned()),
         }
         .into(),
@@ -582,35 +662,37 @@ async fn delete_record(
 ) -> Result<Json<repo::delete_record::Output>> {
     // TODO: `input.swap_record`
 
-    let input = (*input).clone();
-    let input = repo::apply_writes::InputData {
-        repo: input.repo,
-        swap_commit: input.swap_commit,
-        validate: None,
-        writes: vec![repo::apply_writes::InputWritesItem::Delete(Box::new(
-            repo::apply_writes::DeleteData {
-                collection: input.collection,
-                rkey: input.rkey,
-            }
-            .into(),
-        ))],
-    }
-    .into();
-
-    let r = apply_writes(
-        user,
-        State(skey),
-        State(config),
-        State(db),
-        State(fhp),
-        Json(input),
-    )
-    .await
-    .context("failed to apply writes")?;
-    let r = (**r).clone();
-
     Ok(Json(
-        repo::delete_record::OutputData { commit: r.commit }.into(),
+        repo::delete_record::OutputData {
+            commit: apply_writes(
+                user,
+                State(skey),
+                State(config),
+                State(db),
+                State(fhp),
+                Json(
+                    repo::apply_writes::InputData {
+                        repo: input.repo.to_owned(),
+                        swap_commit: input.swap_commit.to_owned(),
+                        validate: None,
+                        writes: vec![repo::apply_writes::InputWritesItem::Delete(Box::new(
+                            repo::apply_writes::DeleteData {
+                                collection: input.collection.to_owned(),
+                                rkey: input.rkey.to_owned(),
+                            }
+                            .into(),
+                        ))],
+                    }
+                    .into(),
+                ),
+            )
+            .await
+            .context("failed to apply writes")
+            .expect("should be able to apply writes to delete record")
+            .commit
+            .to_owned(),
+        }
+        .into(),
     ))
 }
 
@@ -622,17 +704,24 @@ async fn describe_repo(
     // Lookup the DID by the provided handle.
     let (did, handle) = resolve_did(&db, &input.repo)
         .await
-        .context("failed to resolve handle")?;
+        .context("failed to resolve handle")
+        .expect("should be able to resolve handle");
 
     let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
         .await
-        .context("failed to open user repo")?;
+        .context("failed to open user repo")
+        .expect("should be able to open user repo");
 
     let mut collections = HashSet::new();
 
     let mut tree = repo.tree();
     let mut it = Box::pin(tree.keys());
-    while let Some(key) = it.try_next().await.context("failed to iterate repo keys")? {
+    while let Some(key) = it
+        .try_next()
+        .await
+        .context("failed to iterate repo keys")
+        .expect("should be able to iterate repo keys")
+    {
         if let Some((collection, _rkey)) = key.split_once('/') {
             _ = collections.insert(collection.to_owned());
         }
@@ -642,7 +731,7 @@ async fn describe_repo(
         repo::describe_repo::OutputData {
             collections: collections
                 .into_iter()
-                .map(|s| Nsid::new(s).expect("should be valid NSID"))
+                .map(|nsid| Nsid::new(nsid).expect("should be valid NSID"))
                 .collect::<Vec<_>>(),
             did: did.clone(),
             did_doc: Unknown::Null, // TODO: Fetch the DID document from the PLC directory
@@ -667,11 +756,13 @@ async fn get_record(
     // Lookup the DID by the provided handle.
     let (did, _handle) = resolve_did(&db, &input.repo)
         .await
-        .context("failed to resolve handle")?;
+        .context("failed to resolve handle")
+        .expect("should be able to resolve handle");
 
     let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
         .await
-        .context("failed to open user repo")?;
+        .context("failed to open user repo")
+        .expect("should be able to open user repo");
 
     let key = format!("{}/{}", input.collection.as_str(), input.rkey);
     let uri = format!("at://{}/{}", did.as_str(), &key);
@@ -680,45 +771,35 @@ async fn get_record(
         .tree()
         .get(&key)
         .await
-        .context("failed to find record")?;
+        .context("failed to find record")
+        .expect("should be able to find record");
 
-    let record: Option<serde_json::Value> =
-        repo.get_raw(&key).await.context("failed to read record")?;
+    let record: Option<serde_json::Value> = repo
+        .get_raw(&key)
+        .await
+        .context("failed to read record")
+        .expect("should be able to read record");
 
-    record.map_or_else(|| Err(Error::with_status(
-            StatusCode::NOT_FOUND,
-            anyhow!("could not find the requested record"),
-        )), |record| Ok(Json(
-            repo::get_record::OutputData {
-                cid: cid.map(atrium_api::types::string::Cid::new),
-                uri,
-                value: record.try_into_unknown().expect("should be valid JSON"),
-            }
-            .into(),
-        )))
-}
-
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct ListRecordsParameters {
-    ///The NSID of the record type.
-    pub collection: Nsid,
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: Option<String>,
-    ///The number of records to return.
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: Option<String>,
-    ///The handle or DID of the repo.
-    pub repo: AtIdentifier,
-    ///Flag to reverse the order of the returned records.
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub reverse: Option<bool>,
-    ///DEPRECATED: The highest sort-ordered rkey to stop at (exclusive)
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub rkey_end: Option<String>,
-    ///DEPRECATED: The lowest sort-ordered rkey to start from (exclusive)
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub rkey_start: Option<String>,
+    record.map_or_else(
+        || {
+            Err(Error::with_status(
+                StatusCode::NOT_FOUND,
+                anyhow!("could not find the requested record"),
+            ))
+        },
+        |record_value| {
+            Ok(Json(
+                repo::get_record::OutputData {
+                    cid: cid.map(atrium_api::types::string::Cid::new),
+                    uri,
+                    value: record_value
+                        .try_into_unknown()
+                        .expect("should be valid JSON"),
+                }
+                .into(),
+            ))
+        },
+    )
 }
 
 async fn list_records(
@@ -731,21 +812,28 @@ async fn list_records(
     // Lookup the DID by the provided handle.
     let (did, _handle) = resolve_did(&db, &input.repo)
         .await
-        .context("failed to resolve handle")?;
+        .context("failed to resolve handle")
+        .expect("should be able to resolve handle");
 
     let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
         .await
-        .context("failed to open user repo")?;
+        .context("failed to open user repo")
+        .expect("should be able to open user repo");
 
     let mut keys = Vec::new();
     let mut tree = repo.tree();
 
-    let mut it = Box::pin(tree.entries_prefixed(input.collection.as_str()));
-    while let Some((key, cid)) = it.try_next().await.context("failed to iterate keys")? {
+    let mut iterator = Box::pin(tree.entries_prefixed(input.collection.as_str()));
+    while let Some((key, cid)) = iterator
+        .try_next()
+        .await
+        .context("failed to iterate keys")
+        .expect("should be able to iterate keys")
+    {
         keys.push((key, cid));
     }
 
-    drop(it);
+    drop(iterator);
 
     // TODO: Calculate the view on `keys` using `cursor` and `limit`.
 
@@ -754,8 +842,10 @@ async fn list_records(
         let value: serde_json::Value = repo
             .get_raw(key)
             .await
-            .context("failed to get record")?
-            .context("record not found")?;
+            .context("failed to get record")
+            .expect("should be able to get record")
+            .context("record not found")
+            .expect("should be able to find record");
 
         records.push(
             repo::list_records::RecordData {
@@ -769,7 +859,7 @@ async fn list_records(
 
     Ok(Json(
         repo::list_records::OutputData {
-            cursor: keys.last().map(|(k, _)| k.clone()),
+            cursor: keys.last().map(|(key, _)| key.to_owned()),
             records,
         }
         .into(),
@@ -785,17 +875,21 @@ async fn upload_blob(
     let length = request
         .headers()
         .get(http::header::CONTENT_LENGTH)
-        .context("no content length provided")?
+        .context("no content length provided")
+        .expect("should be able to get content-length")
         .to_str()
         .map_err(anyhow::Error::from)
-        .and_then(|s| s.parse::<u64>().map_err(anyhow::Error::from))
-        .context("invalid content-length header")?;
+        .and_then(|content_length| content_length.parse::<u64>().map_err(anyhow::Error::from))
+        .context("invalid content-length header")
+        .expect("should be able to parse content-length");
     let mime = request
         .headers()
         .get(http::header::CONTENT_TYPE)
-        .context("no content-type provided")?
+        .context("no content-type provided")
+        .expect("should be able to get content-type")
         .to_str()
-        .context("invalid content-type provided")?
+        .context("invalid content-type provided")
+        .expect("should be able to get content-type")
         .to_owned();
 
     if length > config.blob.limit {
@@ -812,20 +906,34 @@ async fn upload_blob(
         .join(format!("temp-{}.blob", chrono::Utc::now().timestamp()));
     let mut file = tokio::fs::File::create(&filename)
         .await
-        .context("failed to create temporary file")?;
+        .context("failed to create temporary file")
+        .expect("should be able to create temporary file");
 
     let mut len = 0_usize;
     let mut sha = Sha256::new();
     let mut stream = request.into_body().into_data_stream();
-    while let Some(bytes) = stream.try_next().await.context("failed to receive file")? {
-        len += bytes.len();
+    while let Some(bytes) = stream
+        .try_next()
+        .await
+        .context("failed to receive file")
+        .expect("should be able to receive file")
+    {
+        len = len
+            .checked_add(bytes.len())
+            .context("size overflow")
+            .expect("should be able to add size without overflow");
 
         // Deal with any sneaky end-users trying to bypass size limitations.
-        if len as u64 > config.blob.limit {
+        let len_u64: u64 = len
+            .try_into()
+            .context("failed to convert `len`")
+            .expect("should be able to convert `len` to u64");
+        if len_u64 > config.blob.limit {
             drop(file);
             tokio::fs::remove_file(&filename)
                 .await
-                .context("failed to remove temp file")?;
+                .context("failed to remove temp file")
+                .expect("should be able to remove temp file");
 
             return Err(Error::with_status(
                 StatusCode::PAYLOAD_TOO_LARGE,
@@ -837,7 +945,8 @@ async fn upload_blob(
 
         file.write_all(&bytes)
             .await
-            .context("failed to write blob")?;
+            .context("failed to write blob")
+            .expect("should be able to write blob");
     }
 
     drop(file);
@@ -845,7 +954,8 @@ async fn upload_blob(
 
     let cid = Cid::new_v1(
         IPLD_RAW,
-        atrium_repo::Multihash::wrap(IPLD_MH_SHA2_256, hash.as_slice()).expect("should be valid hash"),
+        atrium_repo::Multihash::wrap(IPLD_MH_SHA2_256, hash.as_slice())
+            .expect("should be valid hash"),
     );
 
     let cid_str = cid.to_string();
@@ -855,7 +965,8 @@ async fn upload_blob(
         config.blob.path.join(format!("{}.blob", cid_str)),
     )
     .await
-    .context("failed to finalize blob")?;
+    .context("failed to finalize blob")
+    .expect("should be able to finalize blob");
 
     let did_str = user.did();
 
@@ -866,7 +977,8 @@ async fn upload_blob(
     )
     .execute(&db)
     .await
-    .context("failed to insert blob into database")?;
+    .context("failed to insert blob into database")
+    .expect("should be able to insert blob into database");
 
     Ok(Json(
         repo::upload_blob::OutputData {

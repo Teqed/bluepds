@@ -2,12 +2,12 @@
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
-    str::FromStr,
+    str::FromStr as _,
     sync::Arc,
 };
 
 use atrium_api::types::string::Did;
-use atrium_crypto::keypair::{Export, Secp256k1Keypair};
+use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
 use auth::AuthenticatedUser;
 use axum::{
     Router,
@@ -21,16 +21,16 @@ use azure_core::credentials::TokenCredential;
 use clap::Parser;
 use clap_verbosity_flag::{InfoLevel, Verbosity, log::LevelFilter};
 use config::AppConfig;
-use figment::{Figment, providers::Format};
+use figment::{Figment, providers::Format as _};
 use firehose::FirehoseProducer;
 use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
-use rand::Rng;
+use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use tokio::net::TcpListener;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context as _, anyhow};
 use tracing::{info, warn};
 
 mod auth;
@@ -187,7 +187,7 @@ mod actor_endpoints {
     ) -> Result<Json<actor::get_preferences::Output>> {
         let did = user.did();
         let json: Option<sqlx::types::Json<actor::defs::Preferences>> =
-            sqlx::query_scalar(r#"SELECT private_prefs FROM accounts WHERE did = ?"#)
+            sqlx::query_scalar("SELECT private_prefs FROM accounts WHERE did = ?")
                 .bind(did)
                 .fetch_one(&db)
                 .await
@@ -331,7 +331,10 @@ async fn service_proxy(
 }
 
 /// The main application entry point.
-#[expect(clippy::cognitive_complexity, reason = "main function has high complexity")]
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "main function has high complexity"
+)]
 async fn run() -> anyhow::Result<()> {
     let args = Args::parse();
 
@@ -481,7 +484,7 @@ async fn run() -> anyhow::Result<()> {
     .await
     .context("failed to query database")?;
 
-    #[allow(clippy::print_stdout)]
+    #[expect(clippy::print_stdout)]
     if c == 0 {
         let uuid = Uuid::new_v4().to_string();
 

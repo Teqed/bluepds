@@ -1,6 +1,6 @@
 //! DID utilities.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use atrium_api::types::string::Did;
 use serde::{Deserialize, Serialize};
 use url::Url;

@@ -9,8 +9,8 @@ use atrium_api::{
 use atrium_repo::Cid;
 use axum::extract::ws::{Message, WebSocket};
 use metrics::{counter, gauge};
-use rand::Rng;
-use serde::{Serialize, ser::SerializeMap};
+use rand::Rng as _;
+use serde::{Serialize, ser::SerializeMap as _};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -60,7 +60,7 @@ pub(crate) enum RepoOp {
         /// The CID of the record.
         cid: Cid,
         /// The path of the record.
-        path: String
+        path: String,
     },
     /// Update an existing record.
     Update {
@@ -69,14 +69,14 @@ pub(crate) enum RepoOp {
         /// The path of the record.
         path: String,
         /// The previous CID of the record.
-        prev: Cid
+        prev: Cid,
     },
     /// Delete an existing record.
     Delete {
         /// The path of the record.
         path: String,
         /// The previous CID of the record.
-        prev: Cid
+        prev: Cid,
     },
 }
 
@@ -150,40 +150,44 @@ pub(crate) struct FirehoseProducer {
 impl FirehoseProducer {
     /// Broadcast an `#account` event.
     pub(crate) async fn account(&self, account: impl Into<sync::subscribe_repos::Account>) {
-        drop(self
-            .tx
-            .send(FirehoseMessage::Broadcast(
-                sync::subscribe_repos::Message::Account(Box::new(account.into())),
-            ))
-            .await);
+        drop(
+            self.tx
+                .send(FirehoseMessage::Broadcast(
+                    sync::subscribe_repos::Message::Account(Box::new(account.into())),
+                ))
+                .await,
+        );
     }
 
     /// Broadcast an `#identity` event.
     pub(crate) async fn identity(&self, identity: impl Into<sync::subscribe_repos::Identity>) {
-        drop(self
-            .tx
-            .send(FirehoseMessage::Broadcast(
-                sync::subscribe_repos::Message::Identity(Box::new(identity.into())),
-            ))
-            .await);
+        drop(
+            self.tx
+                .send(FirehoseMessage::Broadcast(
+                    sync::subscribe_repos::Message::Identity(Box::new(identity.into())),
+                ))
+                .await,
+        );
     }
 
     /// Broadcast a `#commit` event.
     pub(crate) async fn commit(&self, commit: impl Into<sync::subscribe_repos::Commit>) {
-        drop(self
-            .tx
-            .send(FirehoseMessage::Broadcast(
-                sync::subscribe_repos::Message::Commit(Box::new(commit.into())),
-            ))
-            .await);
+        drop(
+            self.tx
+                .send(FirehoseMessage::Broadcast(
+                    sync::subscribe_repos::Message::Commit(Box::new(commit.into())),
+                ))
+                .await,
+        );
     }
 
     /// Handle client connection.
     pub(crate) async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
-        drop(self
-            .tx
-            .send(FirehoseMessage::Connect(Box::new((ws, cursor))))
-            .await);
+        drop(
+            self.tx
+                .send(FirehoseMessage::Connect(Box::new((ws, cursor))))
+                .await,
+        );
     }
 }
 

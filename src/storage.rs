@@ -1,8 +1,8 @@
 //! ATProto user repository datastore functionality.
 
-use std::str::FromStr;
+use std::str::FromStr as _;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use atrium_repo::{
     Cid, Repository,
     blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore},
@@ -50,7 +50,12 @@ pub(crate) async fn open_repo_db(
     .await
     .context("failed to query database")?;
 
-    open_repo(config, did, Cid::from_str(&cid).expect("should be valid CID")).await
+    open_repo(
+        config,
+        did,
+        Cid::from_str(&cid).expect("should be valid CID"),
+    )
+    .await
 }
 
 /// Open a repository for a given DID and CID.

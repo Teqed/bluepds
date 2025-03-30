@@ -1,10 +1,12 @@
-use std::str::FromStr;
+use std::str::FromStr as _;
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context as _, anyhow};
 use atrium_api::{com::atproto::sync, types::string::Did};
 use atrium_repo::{
     Cid,
-    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, DAG_CBOR, SHA2_256},
+    blockstore::{
+        AsyncBlockStoreRead as _, AsyncBlockStoreWrite as _, CarStore, DAG_CBOR, SHA2_256,
+    },
 };
 use axum::{
     Json, Router,
@@ -15,7 +17,7 @@ use axum::{
     routing::get,
 };
 use constcat::concat;
-use futures::stream::TryStreamExt;
+use futures::stream::TryStreamExt as _;
 use tokio_util::io::ReaderStream;
 
 use crate::{
@@ -150,7 +152,7 @@ async fn get_repo_status(
         return Err(Error::with_status(
             StatusCode::NOT_FOUND,
             anyhow!("account not found"),
-        ))?;
+        ));
     };
 
     let active = r.status == "active";
@@ -295,7 +297,9 @@ async fn list_repos(
             sync::list_repos::RepoData {
                 active: Some(true),
                 did: Did::new(r.did).expect("should be a valid DID"),
-                head: atrium_api::types::string::Cid::new(Cid::from_str(&r.root).expect("should be a valid CID")),
+                head: atrium_api::types::string::Cid::new(
+                    Cid::from_str(&r.root).expect("should be a valid CID"),
+                ),
                 rev: r.rev,
                 status: None,
             }
@@ -326,7 +330,7 @@ async fn subscribe_repos(
             return Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .body(Body::empty())
-                .expect("should be a valid response")
+                .expect("should be a valid response");
         }
     };
 
