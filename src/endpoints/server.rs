@@ -467,7 +467,7 @@ async fn refresh_session(
     }
 
     let did = claims
-        .get("iss")
+        .get("aud")
         .and_then(|s| s.as_str())
         .context("invalid jwt")?;
 
