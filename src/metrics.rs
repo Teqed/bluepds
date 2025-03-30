@@ -8,20 +8,20 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 
 use crate::config;
 
-pub const AUTH_FAILED: &str = "bluepds.auth.failed"; // Counter.
+pub(crate) const AUTH_FAILED: &str = "bluepds.auth.failed"; // Counter.
 
-pub const FIREHOSE_HISTORY: &str = "bluepds.firehose.history"; // Gauge.
-pub const FIREHOSE_LISTENERS: &str = "bluepds.firehose.listeners"; // Gauge.
-pub const FIREHOSE_MESSAGES: &str = "bluepds.firehose.messages"; // Counter.
-pub const FIREHOSE_SEQUENCE: &str = "bluepds.firehose.sequence"; // Counter.
+pub(crate) const FIREHOSE_HISTORY: &str = "bluepds.firehose.history"; // Gauge.
+pub(crate) const FIREHOSE_LISTENERS: &str = "bluepds.firehose.listeners"; // Gauge.
+pub(crate) const FIREHOSE_MESSAGES: &str = "bluepds.firehose.messages"; // Counter.
+pub(crate) const FIREHOSE_SEQUENCE: &str = "bluepds.firehose.sequence"; // Counter.
 
-pub const REPO_COMMITS: &str = "bluepds.repo.commits"; // Counter.
-pub const REPO_OP_CREATE: &str = "bluepds.repo.op.create"; // Counter.
-pub const REPO_OP_UPDATE: &str = "bluepds.repo.op.update"; // Counter.
-pub const REPO_OP_DELETE: &str = "bluepds.repo.op.delete"; // Counter.
+pub(crate) const REPO_COMMITS: &str = "bluepds.repo.commits"; // Counter.
+pub(crate) const REPO_OP_CREATE: &str = "bluepds.repo.op.create"; // Counter.
+pub(crate) const REPO_OP_UPDATE: &str = "bluepds.repo.op.update"; // Counter.
+pub(crate) const REPO_OP_DELETE: &str = "bluepds.repo.op.delete"; // Counter.
 
 /// Must be ran exactly once on startup. This will declare all of the instruments for `metrics`.
-pub fn setup(config: &Option<config::MetricConfig>) -> anyhow::Result<()> {
+pub(crate) fn setup(config: &Option<config::MetricConfig>) -> anyhow::Result<()> {
     describe_counter!(AUTH_FAILED, "The number of failed authentication attempts.");
 
     describe_gauge!(FIREHOSE_HISTORY, "The size of the firehose history buffer.");

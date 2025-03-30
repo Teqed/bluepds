@@ -350,7 +350,7 @@ async fn apply_writes(
 
         // The swap failed. Return the old commit and do not update the repository.
         return Ok(Json(
-            repo::apply_writes::OutputData {
+            apply_writes::OutputData {
                 results: None,
                 commit: Some(
                     CommitMetaData {
@@ -438,7 +438,7 @@ async fn apply_writes(
     .await;
 
     Ok(Json(
-        repo::apply_writes::OutputData {
+        apply_writes::OutputData {
             results: Some(res),
             commit: Some(
                 CommitMetaData {
@@ -702,25 +702,25 @@ async fn get_record(
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ListRecordsParameters {
+pub(super) struct ListRecordsParameters {
     ///The NSID of the record type.
-    pub collection: atrium_api::types::string::Nsid,
+    pub collection: Nsid,
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: core::option::Option<String>,
+    pub cursor: Option<String>,
     ///The number of records to return.
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: core::option::Option<String>,
+    pub limit: Option<String>,
     ///The handle or DID of the repo.
-    pub repo: atrium_api::types::string::AtIdentifier,
+    pub repo: AtIdentifier,
     ///Flag to reverse the order of the returned records.
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub reverse: core::option::Option<bool>,
+    pub reverse: Option<bool>,
     ///DEPRECATED: The highest sort-ordered rkey to stop at (exclusive)
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub rkey_end: core::option::Option<String>,
+    pub rkey_end: Option<String>,
     ///DEPRECATED: The lowest sort-ordered rkey to start from (exclusive)
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub rkey_start: core::option::Option<String>,
+    pub rkey_start: Option<String>,
 }
 
 async fn list_records(
@@ -845,7 +845,7 @@ async fn upload_blob(
     drop(file);
     let hash = sha.finalize();
 
-    let cid = atrium_repo::Cid::new_v1(
+    let cid = Cid::new_v1(
         IPLD_RAW,
         atrium_repo::Multihash::wrap(IPLD_MH_SHA2_256, hash.as_slice()).unwrap(),
     );
@@ -885,7 +885,7 @@ async fn upload_blob(
 }
 
 #[rustfmt::skip]
-pub fn routes() -> Router<AppState> {
+pub(super) fn routes() -> Router<AppState> {
     // AP /xrpc/com.atproto.repo.applyWrites
     // AP /xrpc/com.atproto.repo.createRecord
     // AP /xrpc/com.atproto.repo.putRecord

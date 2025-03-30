@@ -181,7 +181,7 @@ async fn update_handle(
 }
 
 #[rustfmt::skip]
-pub fn routes() -> Router<AppState> {
+pub(super) fn routes() -> Router<AppState> {
     // AP /xrpc/com.atproto.identity.updateHandle
     // AP /xrpc/com.atproto.identity.requestPlcOperationSignature
     // AP /xrpc/com.atproto.identity.signPlcOperation

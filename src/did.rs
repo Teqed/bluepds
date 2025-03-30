@@ -10,7 +10,7 @@ const ALLOWED_URLS: &[&str] = &["bsky.app", "bsky.chat"];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DidVerificationMethod {
+pub(crate) struct DidVerificationMethod {
     pub id: String,
     #[serde(rename = "type")]
     pub ty: String,
@@ -20,7 +20,7 @@ pub struct DidVerificationMethod {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DidService {
+pub(crate) struct DidService {
     pub id: String,
     #[serde(rename = "type")]
     pub ty: String,
@@ -29,7 +29,7 @@ pub struct DidService {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DidDocument {
+pub(crate) struct DidDocument {
     #[serde(rename = "@context", skip_serializing_if = "Vec::is_empty")]
     pub context: Vec<Url>,
     pub id: Did,
@@ -39,7 +39,7 @@ pub struct DidDocument {
 }
 
 /// Resolve a DID document using the specified reqwest client.
-pub async fn resolve(client: &Client, did: Did) -> Result<DidDocument> {
+pub(crate) async fn resolve(client: &Client, did: Did) -> Result<DidDocument> {
     let url = match did.method() {
         "did:web" => {
             // N.B: This is a potentially hostile operation, so we are only going to allow

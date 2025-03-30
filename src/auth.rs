@@ -8,29 +8,29 @@ use atrium_crypto::{
 use axum::{extract::FromRequestParts, http::StatusCode};
 use base64::Engine;
 
-use crate::{AppState, Error, auth, error::ErrorMessage};
+use crate::{AppState, Error, error::ErrorMessage};
 
 /// This is an axum request extractor that represents an authenticated user.
 ///
 /// If specified in an API endpoint, this will guarantee that the API can only be called
 /// by an authenticated user.
-pub struct AuthenticatedUser {
+pub(crate) struct AuthenticatedUser {
     did: String,
 }
 
 impl AuthenticatedUser {
-    pub fn did(&self) -> String {
+    pub(crate) fn did(&self) -> String {
         self.did.clone()
     }
 }
 
 impl FromRequestParts<AppState> for AuthenticatedUser {
-    type Rejection = crate::Error;
+    type Rejection = Error;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
         state: &AppState,
-    ) -> std::result::Result<Self, Self::Rejection> {
+    ) -> Result<Self, Self::Rejection> {
         let token = parts
             .headers
             .get(axum::http::header::AUTHORIZATION)
@@ -52,7 +52,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
 
         // N.B: We ignore all fields inside of the token up until this point because they can be
         // attacker-controlled.
-        let (typ, claims) = auth::verify(&state.signing_key.did(), token).map_err(|e| {
+        let (typ, claims) = verify(&state.signing_key.did(), token).map_err(|e| {
             Error::with_status(
                 StatusCode::UNAUTHORIZED,
                 e.context("failed to verify auth token"),
@@ -97,7 +97,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
 }
 
 /// Cryptographically sign a JSON web token with the specified key.
-pub fn sign(
+pub(crate) fn sign(
     key: &Secp256k1Keypair,
     typ: &str,
     claims: serde_json::Value,
@@ -120,7 +120,7 @@ pub fn sign(
 }
 
 /// Cryptographically verify a JSON web token's validity using the specified public key.
-pub fn verify(key: &str, token: &str) -> anyhow::Result<(String, serde_json::Value)> {
+pub(crate) fn verify(key: &str, token: &str) -> anyhow::Result<(String, serde_json::Value)> {
     let mut parts = token.splitn(3, '.');
     let hdr = parts.next().context("no header")?;
     let claims = parts.next().context("no claims")?;

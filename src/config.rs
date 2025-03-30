@@ -3,11 +3,11 @@ use std::{net::SocketAddr, path::PathBuf};
 use serde::Deserialize;
 use url::Url;
 
-pub mod metrics {
+pub(crate) mod metrics {
     use super::*;
 
     #[derive(Deserialize, Debug, Clone)]
-    pub struct PrometheusConfig {
+    pub(crate) struct PrometheusConfig {
         /// The URL of the Prometheus server's exporter endpoint.
         pub url: Url,
     }
@@ -15,30 +15,30 @@ pub mod metrics {
 
 #[derive(Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
-pub enum MetricConfig {
+pub(crate) enum MetricConfig {
     PrometheusPush(metrics::PrometheusConfig),
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct FirehoseConfig {
+pub(crate) struct FirehoseConfig {
     /// A list of upstream relays that this PDS will try to reach out to.
     pub relays: Vec<Url>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct RepoConfig {
+pub(crate) struct RepoConfig {
     /// The path to the repository storage.
     pub path: PathBuf,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct PlcConfig {
+pub(crate) struct PlcConfig {
     /// The path to the local PLC cache.
     pub path: PathBuf,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct BlobConfig {
+pub(crate) struct BlobConfig {
     /// The path to store blobs into.
     pub path: PathBuf,
     /// The maximum size limit of blobs.
@@ -46,7 +46,7 @@ pub struct BlobConfig {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct AppConfig {
+pub(crate) struct AppConfig {
     /// The primary signing keys for all PLC/DID operations.
     pub key: PathBuf,
     /// The hostname of the PDS. Typically a domain name.

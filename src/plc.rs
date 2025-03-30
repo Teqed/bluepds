@@ -12,14 +12,14 @@ const PLC_DIRECTORY: &str = "https://plc.directory/";
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase", tag = "type")]
-pub enum PlcService {
+pub(crate) enum PlcService {
     #[serde(rename = "AtprotoPersonalDataServer")]
     Pds { endpoint: String },
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct PlcOperation {
+pub(crate) struct PlcOperation {
     #[serde(rename = "type")]
     pub typ: String,
     pub rotation_keys: Vec<String>,
@@ -30,7 +30,7 @@ pub struct PlcOperation {
 }
 
 impl PlcOperation {
-    pub fn sign(self, sig: Vec<u8>) -> SignedPlcOperation {
+    pub(crate) fn sign(self, sig: Vec<u8>) -> SignedPlcOperation {
         SignedPlcOperation {
             typ: self.typ,
             rotation_keys: self.rotation_keys,
@@ -45,7 +45,7 @@ impl PlcOperation {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct SignedPlcOperation {
+pub(crate) struct SignedPlcOperation {
     #[serde(rename = "type")]
     pub typ: String,
     pub rotation_keys: Vec<String>,
@@ -56,7 +56,7 @@ pub struct SignedPlcOperation {
     pub sig: String,
 }
 
-pub async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Result<SignedPlcOperation> {
+pub(crate) async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Result<SignedPlcOperation> {
     let bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode op")?;
     let bytes = rkey.sign(&bytes).context("failed to sign op")?;
 
@@ -64,7 +64,7 @@ pub async fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Result<Sig
 }
 
 /// Submit a PLC operation to the public directory.
-pub async fn submit(client: &Client, did: &str, op: &SignedPlcOperation) -> anyhow::Result<()> {
+pub(crate) async fn submit(client: &Client, did: &str, op: &SignedPlcOperation) -> anyhow::Result<()> {
     debug!("submitting {} {}", did, serde_json::to_string(&op).unwrap());
 
     let res = client

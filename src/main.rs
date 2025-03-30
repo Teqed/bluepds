@@ -42,12 +42,12 @@ mod metrics;
 mod plc;
 mod storage;
 
-pub type Result<T> = std::result::Result<T, error::Error>;
+pub type Result<T> = std::result::Result<T, Error>;
 pub use error::Error;
 use uuid::Uuid;
 
 pub type Client = reqwest_middleware::ClientWithMiddleware;
-pub type Db = sqlx::SqlitePool;
+pub type Db = SqlitePool;
 pub type Cred = Arc<dyn TokenCredential>;
 
 pub const APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
@@ -191,7 +191,7 @@ mod actor_endpoints {
     }
 
     #[rustfmt::skip]
-    pub fn routes() -> Router<AppState> {
+    pub(crate) fn routes() -> Router<AppState> {
         // AP /xrpc/app.bsky.actor.putPreferences
         // AG /xrpc/app.bsky.actor.getPreferences
         Router::new()
@@ -289,7 +289,7 @@ async fn service_proxy(
     let r = client
         .request(request.method().clone(), url)
         .headers(h)
-        .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(http::header::AUTHORIZATION, format!("Bearer {token}"))
         .body(reqwest::Body::wrap_stream(
             request.into_body().into_data_stream(),
         ))

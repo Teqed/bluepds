@@ -20,7 +20,7 @@ use crate::{
 
 enum FirehoseMessage {
     Broadcast(sync::subscribe_repos::Message),
-    Connect(Box<(axum::extract::ws::WebSocket, Option<i64>)>),
+    Connect(Box<(WebSocket, Option<i64>)>),
 }
 
 enum FrameHeader {
@@ -120,13 +120,13 @@ impl From<Commit> for sync::subscribe_repos::Commit {
 
 /// A firehose producer. This is used to transmit messages to the firehose for broadcast.
 #[derive(Clone, Debug)]
-pub struct FirehoseProducer {
+pub(crate) struct FirehoseProducer {
     tx: tokio::sync::mpsc::Sender<FirehoseMessage>,
 }
 
 impl FirehoseProducer {
     /// Broadcast an `#account` event.
-    pub async fn account(&self, account: impl Into<sync::subscribe_repos::Account>) {
+    pub(crate) async fn account(&self, account: impl Into<sync::subscribe_repos::Account>) {
         let _ = self
             .tx
             .send(FirehoseMessage::Broadcast(
@@ -136,7 +136,7 @@ impl FirehoseProducer {
     }
 
     /// Broadcast an `#identity` event.
-    pub async fn identity(&self, identity: impl Into<sync::subscribe_repos::Identity>) {
+    pub(crate) async fn identity(&self, identity: impl Into<sync::subscribe_repos::Identity>) {
         let _ = self
             .tx
             .send(FirehoseMessage::Broadcast(
@@ -146,7 +146,7 @@ impl FirehoseProducer {
     }
 
     /// Broadcast a `#commit` event.
-    pub async fn commit(&self, commit: impl Into<sync::subscribe_repos::Commit>) {
+    pub(crate) async fn commit(&self, commit: impl Into<sync::subscribe_repos::Commit>) {
         let _ = self
             .tx
             .send(FirehoseMessage::Broadcast(
@@ -155,7 +155,7 @@ impl FirehoseProducer {
             .await;
     }
 
-    pub async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
+    pub(crate) async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
         let _ = self
             .tx
             .send(FirehoseMessage::Connect(Box::new((ws, cursor))))
@@ -213,7 +213,7 @@ async fn handle_connect(
     seq: u64,
     history: &VecDeque<(u64, &str, sync::subscribe_repos::Message)>,
     cursor: Option<i64>,
-) -> anyhow::Result<WebSocket> {
+) -> Result<WebSocket> {
     if let Some(cursor) = cursor {
         let mut frame = Vec::new();
         let cursor = cursor as u64;
@@ -257,7 +257,7 @@ async fn handle_connect(
     Ok(ws)
 }
 
-pub async fn reconnect_relays(client: &Client, config: &AppConfig) {
+pub(crate) async fn reconnect_relays(client: &Client, config: &AppConfig) {
     // Avoid connecting to upstream relays in test mode.
     if config.test {
         return;
@@ -308,7 +308,7 @@ pub async fn reconnect_relays(client: &Client, config: &AppConfig) {
 /// This will broadcast all updates in this PDS out to anyone who is listening.
 ///
 /// Reference: https://atproto.com/specs/sync
-pub async fn spawn(
+pub(crate) async fn spawn(
     client: Client,
     config: AppConfig,
 ) -> (tokio::task::JoinHandle<()>, FirehoseProducer) {

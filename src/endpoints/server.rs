@@ -373,7 +373,7 @@ async fn create_session(
         // SEC: Call argon2's `verify_password` to simulate password verification and discard the result.
         // We do this to avoid exposing a timing attack where attackers can measure the response time to
         // determine whether or not an account exists.
-        let _ = argon2::Argon2::default().verify_password(
+        let _ = Argon2::default().verify_password(
             password.as_bytes(),
             &PasswordHash::new(DUMMY_PASSWORD).unwrap(),
         );
@@ -384,7 +384,7 @@ async fn create_session(
         ));
     };
 
-    match argon2::Argon2::default().verify_password(
+    match Argon2::default().verify_password(
         password.as_bytes(),
         &PasswordHash::new(account.password.as_str()).context("invalid password hash in db")?,
     ) {
@@ -517,9 +517,9 @@ async fn refresh_session(
             refresh_jwt: refresh_token,
 
             active: Some(active), // TODO?
-            did: atrium_api::types::string::Did::new(did.to_string()).unwrap(),
+            did: Did::new(did.to_string()).unwrap(),
             did_doc: None,
-            handle: atrium_api::types::string::Handle::new(user.handle).unwrap(),
+            handle: Handle::new(user.handle).unwrap(),
             status,
         }
         .into(),
@@ -624,7 +624,7 @@ async fn describe_server(
 }
 
 #[rustfmt::skip]
-pub fn routes() -> Router<AppState> {
+pub(super) fn routes() -> Router<AppState> {
     // UG /xrpc/com.atproto.server.describeServer
     // UP /xrpc/com.atproto.server.createAccount
     // UP /xrpc/com.atproto.server.createSession

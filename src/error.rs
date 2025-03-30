@@ -86,7 +86,7 @@ impl std::fmt::Debug for Error {
 }
 
 impl IntoResponse for Error {
-    fn into_response(self) -> axum::response::Response {
+    fn into_response(self) -> Response {
         error!("{:?}", self.err);
 
         // N.B: Forward out the error message to the requester if this is a debug build.

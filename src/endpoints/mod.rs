@@ -8,13 +8,13 @@ mod repo;
 mod server;
 mod sync;
 
-pub async fn health() -> Result<Json<serde_json::Value>> {
+pub(crate) async fn health() -> Result<Json<serde_json::Value>> {
     Ok(Json(json!({
         "version": "bluepds"
     })))
 }
 
-pub fn routes() -> Router<AppState> {
+pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route("/_health", get(health))
         .merge(identity::routes()) // com.atproto.identity

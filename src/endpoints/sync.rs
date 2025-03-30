@@ -194,16 +194,16 @@ async fn get_repo(
 // HACK: `limit` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ListBlobsParameters {
+pub(super) struct ListBlobsParameters {
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: core::option::Option<String>,
+    pub cursor: Option<String>,
     ///The DID of the repo.
-    pub did: atrium_api::types::string::Did,
+    pub did: Did,
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: core::option::Option<String>,
+    pub limit: Option<String>,
     ///Optional revision of the repo to list blobs since.
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub since: core::option::Option<String>,
+    pub since: Option<String>,
 }
 
 async fn list_blobs(
@@ -224,7 +224,7 @@ async fn list_blobs(
     let cids = cids
         .into_iter()
         .map(|c| {
-            atrium_repo::Cid::from_str(&c)
+            Cid::from_str(&c)
                 .map(atrium_api::types::string::Cid::new)
                 .map_err(anyhow::Error::new)
         })
@@ -239,11 +239,11 @@ async fn list_blobs(
 // HACK: `limit` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct ListReposParameters {
+pub(super) struct ListReposParameters {
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: core::option::Option<String>,
+    pub cursor: Option<String>,
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: core::option::Option<String>,
+    pub limit: Option<String>,
 }
 
 async fn list_repos(
@@ -309,10 +309,10 @@ async fn list_repos(
 // HACK: `cursor` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
-pub struct SubscribeReposParametersData {
+pub(super) struct SubscribeReposParametersData {
     ///The last known event seq number to backfill from.
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: core::option::Option<String>,
+    pub cursor: Option<String>,
 }
 
 async fn subscribe_repos(
@@ -336,7 +336,7 @@ async fn subscribe_repos(
 }
 
 #[rustfmt::skip]
-pub fn routes() -> axum::Router<AppState> {
+pub(super) fn routes() -> Router<AppState> {
     // UG /xrpc/com.atproto.sync.getBlob
     // UG /xrpc/com.atproto.sync.getBlocks
     // UG /xrpc/com.atproto.sync.getLatestCommit

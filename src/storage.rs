@@ -10,7 +10,7 @@ use atrium_repo::{
 
 use crate::{Db, config::RepoConfig};
 
-pub async fn open_store(
+pub(crate) async fn open_store(
     config: &RepoConfig,
     did: impl Into<String>,
 ) -> Result<impl AsyncBlockStoreRead + AsyncBlockStoreWrite> {
@@ -31,7 +31,7 @@ pub async fn open_store(
     CarStore::open(f).await.context("failed to open car store")
 }
 
-pub async fn open_repo_db(
+pub(crate) async fn open_repo_db(
     config: &RepoConfig,
     db: &Db,
     did: impl Into<String>,
@@ -51,7 +51,7 @@ pub async fn open_repo_db(
     open_repo(config, did, Cid::from_str(&cid).unwrap()).await
 }
 
-pub async fn open_repo(
+pub(crate) async fn open_repo(
     config: &RepoConfig,
     did: impl Into<String>,
     cid: Cid,
