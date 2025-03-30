@@ -1,8 +1,9 @@
-cargo-features = ["edition2024"]
+# cargo-features = ["edition2024"]
 [package]
 name = "bluepds"
 version = "0.0.0"
-edition = "2024"
+# edition = "2024"
+edition = "2021"
 publish = false
 authors = ["Justin Moore", "Timothy Quilling <teqed@shatteredsky.net>"]
 description = "Alternative ATProto PDS implementation"
