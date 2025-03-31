@@ -529,21 +529,12 @@ async fn refresh_session(
             anyhow!("invalid refresh token"),
         ));
     }
-    if (claims
+    if claims
         .get("exp")
         .and_then(|exp| exp.as_i64())
         .context("failed to get `exp`")
         .expect("should have a valid `exp` field in claims")
-        > chrono::Utc::now().timestamp())
-        || claims
-            .get("iat")
-            .and_then(|iat| iat.as_i64())
-            .context("failed to get `iat`")
-            .expect("should have a valid `iat` field in claims")
-            < chrono::Utc::now()
-                .checked_sub_days(chrono::Days::new(90))
-                .expect("should be valid time")
-                .timestamp()
+        > chrono::Utc::now().timestamp()
     {
         return Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
