@@ -67,6 +67,16 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             ));
         }
 
+        // Ensure we are in the audience field.
+        if let Some(aud) = claims.get("aud").and_then(serde_json::Value::as_str) {
+            if aud != format!("did:web:{}", state.config.host_name) {
+                return Err(Error::with_status(
+                    StatusCode::UNAUTHORIZED,
+                    anyhow!("invalid audience {aud}"),
+                ));
+            }
+        }
+
         if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
             let now = chrono::Utc::now().timestamp();
             if now >= exp {
@@ -78,7 +88,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             }
         }
 
-        if let Some(did) = claims.get("aud").and_then(serde_json::Value::as_str) {
+        if let Some(did) = claims.get("sub").and_then(serde_json::Value::as_str) {
             let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
                 .fetch_one(&state.db)
                 .await
