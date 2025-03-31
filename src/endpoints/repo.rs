@@ -16,7 +16,6 @@ use axum::{
     http::{self, StatusCode},
     routing::{get, post},
 };
-use clap::builder;
 use constcat::concat;
 use futures::TryStreamExt as _;
 use metrics::counter;
@@ -651,26 +650,32 @@ async fn put_record(
     .context("failed to apply writes")
     .expect("should be able to apply writes");
 
-    let update_result = if let repo::apply_writes::OutputResultsItem::UpdateResult(update_result) =
-        write_result
-            .results
-            .to_owned()
-            .and_then(|result| result.first().cloned())
-            .context("unexpected output from apply_writes")
-            .expect("should be able to get first result from apply_writes")
-    {
-        Some(update_result)
-    } else {
-        None
-    }
-    .context("unexpected result from apply_writes")
-    .expect("should be able to get update result");
-
+    let update_result = write_result
+        .results
+        .to_owned()
+        .and_then(|result| result.first().cloned())
+        .context("unexpected output from apply_writes")
+        .expect("should be able to get first result from apply_writes");
+    let (cid, uri) = match update_result {
+        repo::apply_writes::OutputResultsItem::CreateResult(create_result) => (
+            Some(create_result.cid.to_owned()),
+            Some(create_result.uri.to_owned()),
+        ),
+        repo::apply_writes::OutputResultsItem::UpdateResult(update_result) => (
+            Some(update_result.cid.to_owned()),
+            Some(update_result.uri.to_owned()),
+        ),
+        _ => (None, None),
+    };
     Ok(Json(
         repo::put_record::OutputData {
-            cid: update_result.cid.clone(),
+            cid: cid
+                .context("missing cid")
+                .expect("should be able to get cid"),
             commit: write_result.commit.to_owned(),
-            uri: update_result.uri.clone(),
+            uri: uri
+                .context("missing uri")
+                .expect("should be able to get uri"),
             validation_status: Some("unknown".to_owned()),
         }
         .into(),
