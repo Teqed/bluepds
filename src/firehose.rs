@@ -346,7 +346,11 @@ pub(crate) async fn spawn(
         let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
         fn time_since_inception() -> u64 {
-            chrono::Utc::now().timestamp_micros().checked_sub(1_743_442_000_000_000).expect("should not wrap").unsigned_abs()
+            chrono::Utc::now()
+                .timestamp_micros()
+                .checked_sub(1_743_442_000_000_000)
+                .expect("should not wrap")
+                .unsigned_abs()
         }
         let mut seq = time_since_inception();
 

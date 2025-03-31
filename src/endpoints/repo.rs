@@ -315,7 +315,10 @@ async fn apply_writes(
                                 .map(|blod_cid| (key.to_owned(), blod_cid)),
                         );
                     }
-                    ops.push(RepoOp::Create{ cid, path: key.clone() });
+                    ops.push(RepoOp::Create {
+                        cid,
+                        path: key.clone(),
+                    });
                     res.push(OutputResultsItem::CreateResult(Box::new(
                         apply_writes::CreateResultData {
                             cid: atrium_api::types::string::Cid::new(cid),

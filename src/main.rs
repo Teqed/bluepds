@@ -399,30 +399,36 @@ async fn run() -> anyhow::Result<()> {
         .context("failed to create key directory")?;
 
     // Check if crypto keys exist. If not, create new ones.
-    let (skey, rkey) = match std::fs::File::open(&config.key) { Ok(f) => {
-        let keys: KeyData = serde_ipld_dagcbor::from_reader(std::io::BufReader::new(f))
-            .context("failed to deserialize crypto keys")?;
+    let (skey, rkey) = match std::fs::File::open(&config.key) {
+        Ok(f) => {
+            let keys: KeyData = serde_ipld_dagcbor::from_reader(std::io::BufReader::new(f))
+                .context("failed to deserialize crypto keys")?;
 
-        let skey = Secp256k1Keypair::import(&keys.skey).context("failed to import signing key")?;
-        let rkey = Secp256k1Keypair::import(&keys.rkey).context("failed to import rotation key")?;
+            let skey =
+                Secp256k1Keypair::import(&keys.skey).context("failed to import signing key")?;
+            let rkey =
+                Secp256k1Keypair::import(&keys.rkey).context("failed to import rotation key")?;
 
-        (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
-    } _ => {
-        info!("signing keys not found, generating new ones");
+            (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
+        }
+        _ => {
+            info!("signing keys not found, generating new ones");
 
-        let skey = Secp256k1Keypair::create(&mut rand::thread_rng());
-        let rkey = Secp256k1Keypair::create(&mut rand::thread_rng());
+            let skey = Secp256k1Keypair::create(&mut rand::thread_rng());
+            let rkey = Secp256k1Keypair::create(&mut rand::thread_rng());
 
-        let keys = KeyData {
-            skey: skey.export(),
-            rkey: rkey.export(),
-        };
+            let keys = KeyData {
+                skey: skey.export(),
+                rkey: rkey.export(),
+            };
 
-        let mut f = std::fs::File::create(&config.key).context("failed to create key file")?;
-        serde_ipld_dagcbor::to_writer(&mut f, &keys).context("failed to serialize crypto keys")?;
+            let mut f = std::fs::File::create(&config.key).context("failed to create key file")?;
+            serde_ipld_dagcbor::to_writer(&mut f, &keys)
+                .context("failed to serialize crypto keys")?;
 
-        (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
-    }};
+            (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
+        }
+    };
 
     tokio::fs::create_dir_all(&config.repo.path).await?;
     tokio::fs::create_dir_all(&config.plc.path).await?;
