@@ -16,7 +16,12 @@
           inherit system;
           overlays = [ (import rust-overlay) ];
         };
-        craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default));
+        craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
+          extensions = [
+            "rust-src" # for rust-analyzer
+            "rust-analyzer"
+          ];
+        }));
         
         inherit (pkgs) lib;
         unfilteredRoot = ./.; # The original, unfiltered source
@@ -33,8 +38,9 @@
         commonArgs = {
           inherit src;
           strictDeps = true;
-          nativeBuildInputs = [
-            pkgs.pkg-config
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+            gcc
           ];
           buildInputs = [
             # Add additional build inputs here
@@ -89,6 +95,8 @@
 
           # Additional dev-shell environment variables can be set directly
           # MY_CUSTOM_DEVELOPMENT_VAR = "something else";
+          RUST_BACKTRACE = 1;
+          NIXOS_OZONE_WL=1;
 
           # Extra inputs can be added here; cargo and rustc are provided by default.
           packages = with pkgs; [
