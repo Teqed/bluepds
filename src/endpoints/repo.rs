@@ -784,14 +784,14 @@ async fn get_record(
         || {
             Err(Error::with_status(
                 StatusCode::NOT_FOUND,
-                anyhow!("could not find the requested record"),
+                anyhow!("could not find the requested record at {}", uri),
             ))
         },
         |record_value| {
             Ok(Json(
                 repo::get_record::OutputData {
                     cid: cid.map(atrium_api::types::string::Cid::new),
-                    uri,
+                    uri: uri.to_owned(),
                     value: record_value
                         .try_into_unknown()
                         .expect("should be valid JSON"),
