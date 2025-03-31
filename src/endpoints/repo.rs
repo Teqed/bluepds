@@ -16,6 +16,7 @@ use axum::{
     http::{self, StatusCode},
     routing::{get, post},
 };
+use clap::builder;
 use constcat::concat;
 use futures::TryStreamExt as _;
 use metrics::counter;
@@ -291,6 +292,7 @@ async fn apply_writes(
                 (builder, key)
             }
             InputWritesItem::Update(ref object) => {
+                let builder: atrium_repo::repo::CommitBuilder<_>;
                 let key = format!("{}/{}", &object.collection.as_str(), &object.rkey);
                 let uri = format!("at://{}/{}", user.did(), key);
 
@@ -299,39 +301,59 @@ async fn apply_writes(
                     .get(&key)
                     .await
                     .context("failed to search MST")
-                    .expect("should be able to search MST for previous record")
-                    .context("previous record does not exist")
-                    .expect("should be able to find previous record");
-
-                let (builder, cid) = repo
-                    .update_raw(&key, &object.value)
-                    .await
-                    .context("failed to add record")
-                    .expect("should be able to add record");
-
-                if let Ok(new_blobs) = scan_blobs(&object.value) {
-                    blobs.extend(
-                        new_blobs
-                            .into_iter()
-                            .map(|blod_cid| (key.to_owned(), blod_cid)),
-                    );
-                }
-
-                ops.push(RepoOp::Update {
-                    cid,
-                    path: key.clone(),
-                    prev,
-                });
-
-                res.push(OutputResultsItem::UpdateResult(Box::new(
-                    apply_writes::UpdateResultData {
-                        cid: atrium_api::types::string::Cid::new(cid),
-                        uri,
-                        validation_status: None,
+                    .expect("should be able to search MST for previous record");
+                if prev.is_none() {
+                    let (create_builder, cid) = repo
+                        .add_raw(&key, &object.value)
+                        .await
+                        .context("failed to add record")
+                        .expect("should be able to add record");
+                    if let Ok(new_blobs) = scan_blobs(&object.value) {
+                        blobs.extend(
+                            new_blobs
+                                .into_iter()
+                                .map(|blod_cid| (key.to_owned(), blod_cid)),
+                        );
                     }
-                    .into(),
-                )));
-
+                    ops.push(RepoOp::Create{ cid, path: key.clone() });
+                    res.push(OutputResultsItem::CreateResult(Box::new(
+                        apply_writes::CreateResultData {
+                            cid: atrium_api::types::string::Cid::new(cid),
+                            uri,
+                            validation_status: None,
+                        }
+                        .into(),
+                    )));
+                    builder = create_builder;
+                } else {
+                    let prev = prev.expect("should be able to find previous record");
+                    let (update_builder, cid) = repo
+                        .update_raw(&key, &object.value)
+                        .await
+                        .context("failed to add record")
+                        .expect("should be able to add record");
+                    if let Ok(new_blobs) = scan_blobs(&object.value) {
+                        blobs.extend(
+                            new_blobs
+                                .into_iter()
+                                .map(|blod_cid| (key.to_owned(), blod_cid)),
+                        );
+                    }
+                    ops.push(RepoOp::Update {
+                        cid,
+                        path: key.clone(),
+                        prev,
+                    });
+                    res.push(OutputResultsItem::UpdateResult(Box::new(
+                        apply_writes::UpdateResultData {
+                            cid: atrium_api::types::string::Cid::new(cid),
+                            uri,
+                            validation_status: None,
+                        }
+                        .into(),
+                    )));
+                    builder = update_builder;
+                }
                 (builder, key)
             }
             InputWritesItem::Delete(ref object) => {
