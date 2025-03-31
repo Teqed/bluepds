@@ -699,7 +699,7 @@ async fn delete_record(
 async fn describe_repo(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<repo::describe_repo::ParametersData>,
+    Query(input): Query<repo::describe_repo::Parameters>,
 ) -> Result<Json<repo::describe_repo::Output>> {
     // Lookup the DID by the provided handle.
     let (did, handle) = resolve_did(&db, &input.repo)
@@ -745,7 +745,7 @@ async fn describe_repo(
 async fn get_record(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<repo::get_record::ParametersData>,
+    Query(input): Query<repo::get_record::Parameters>,
 ) -> Result<Json<repo::get_record::Output>> {
     if input.cid.is_some() {
         return Err(Error::unimplemented(anyhow!(
@@ -805,7 +805,7 @@ async fn get_record(
 async fn list_records(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<Object<repo::list_records::ParametersData>>,
+    Query(input): Query<Object<ListRecordsParameters>>,
 ) -> Result<Json<repo::list_records::Output>> {
     // TODO: `input.reverse`
 
