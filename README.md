@@ -43,6 +43,39 @@ cargo run
 ```
 
 ## To-do
+### Teqed's fork
+- [X] Session management (JWT)
+  - [X] Match token fields to reference implementation
+  - [X] RefreshSession from Bluesky Client
+    - [X] Respond with JSON error messages
+- [X] Cursor handling
+  - [X] Implement time-based unix microsecond sequences
+  - [X] Startup with present cursor
+- [ ] Records
+  - [ ] app.bsky.feed.postgate
+  - [ ] app.bsky.feed.threadgate
+- [ ] Linting
+  - [X] Rustfmt
+    - [X] warnings
+    - [X] deprecated-safe
+    - [X] future-incompatible
+    - [X] keyword-idents
+    - [X] let-underscore
+    - [X] nonstandard-style
+    - [X] refining-impl-trait
+    - [X] rust-2018-idioms
+    - [X] rust-2018/2021/2024-compatibility
+    - [X] ungrouped
+  - [ ] Clippy
+    - [X] nursery
+    - [X] correctness
+    - [X] suspicious
+    - [X] complexity
+    - [X] perf
+    - [X] style
+    - [ ] pedantic
+    - [X] cargo
+    - [ ] ungrouped
 ### High-level features
 - [ ] Authentication
   - [ ] OAuth support
@@ -56,8 +89,8 @@ cargo run
 ### APIs
 - [X] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)
 - [X] UG /xrpc/_health (undocumented, but impl by reference PDS)
-- [ ] xx /xrpc/app.bsky.notification.registerPush
-<!-- - app.bsky.actor
+<!-- - [ ] xx /xrpc/app.bsky.notification.registerPush
+- app.bsky.actor
     - [X] AG /xrpc/app.bsky.actor.getPreferences
     - [ ] xx /xrpc/app.bsky.actor.getProfile
     - [ ] xx /xrpc/app.bsky.actor.getProfiles
