@@ -78,7 +78,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             }
         }
 
-        if let Some(did) = claims.get("iss").and_then(serde_json::Value::as_str) {
+        if let Some(did) = claims.get("aud").and_then(serde_json::Value::as_str) {
             let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
                 .fetch_one(&state.db)
                 .await
