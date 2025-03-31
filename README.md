@@ -181,3 +181,32 @@ az acr login --name <insert name of ACR resource here>
 docker build -t <ACR>.azurecr.io/testapp:latest .
 docker push <ACR>.azurecr.io/testapp:latest
 ```
+## Quick Deployment (NixOS)
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    bluepds = {
+      url = "github:Teqed/bluesky-pds";
+    };
+  };
+  outputs = {
+    nixpkgs,
+    bluepds,
+    ...
+  }: {
+    nixosConfigurations.mysystem = nixpkgs.lib.nixosSystem {
+      modules = [
+        ({ pkgs, ... }: {
+          config.services.bluepds = {
+            enable = true;
+            host_name = "pds.example.com";
+            listen_address = "0.0.0.0:8000";
+            test = "true"; # Set to false for production
+          };
+        })
+      ];
+    };
+  };
+}
+```
