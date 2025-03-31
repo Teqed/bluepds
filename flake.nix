@@ -67,9 +67,9 @@
             pkgs.sqlx-cli
           ];
           preBuild = ''
-            export DATABASE_URL=sqlite://data/sqlite.db
-            sqlx database create
-            sqlx migrate run
+            export DATABASE_URL=sqlite:./sqlite.db
+            cargo sqlx database create
+            cargo sqlx migrate run
           '';
           postInstall = ''
             mkdir -p $out/var/lib/bluepds
