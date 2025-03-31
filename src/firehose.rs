@@ -345,7 +345,10 @@ pub(crate) async fn spawn(
     let handle = tokio::spawn(async move {
         let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
-        let mut seq = 1_u64;
+        fn time_since_inception() -> u64 {
+            chrono::Utc::now().timestamp_micros().checked_sub(1_743_442_000_000_000).expect("should not wrap").unsigned_abs()
+        }
+        let mut seq = time_since_inception();
 
         // TODO: We should use `com.atproto.sync.notifyOfUpdate` to reach out to relays
         // that may have disconnected from us due to timeout.
@@ -367,7 +370,12 @@ pub(crate) async fn spawn(
                         );
 
                         counter!(FIREHOSE_SEQUENCE).absolute(seq);
-                        seq = seq.wrapping_add(1);
+                        let now = time_since_inception();
+                        if now > seq {
+                            seq = now;
+                        } else {
+                            seq = seq.checked_add(1).expect("should not wrap");
+                        }
 
                         drop(broadcast_message(&mut clients, Message::binary(by)).await);
                     }
