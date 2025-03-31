@@ -534,7 +534,7 @@ async fn refresh_session(
         .and_then(|exp| exp.as_i64())
         .context("failed to get `exp`")
         .expect("should have a valid `exp` field in claims")
-        > chrono::Utc::now().timestamp()
+        < chrono::Utc::now().timestamp()
     {
         return Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
