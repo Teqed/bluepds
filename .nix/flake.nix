@@ -8,7 +8,6 @@
       url = "github:oxalica/rust-overlay";
       inputs = {
         nixpkgs.follows = "nixpkgs";
-        flake-utils.follows = "flake-utils";
       };
     };
   };
@@ -32,13 +31,13 @@
       pkgs = import nixpkgs {
         inherit system overlays;
       };
-      rust = pkgs.rust-bin.selectLatestNightlyWith (toolchain: toolchain.default.override {
+      rust = pkgs.rust-bin.nightly."2025-03-22".default.override {
         extensions = [
           "rust-src" # for rust-analyzer
           "rust-analyzer"
         ];
-        targets = [ "wasm32-unknown-unknown" ];
-      });
+        # targets = [ "wasm32-unknown-unknown" ];
+      };
       nativeBuildInputs = with pkgs; [ rust pkg-config ];
     in
     with pkgs;
