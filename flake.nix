@@ -111,7 +111,9 @@
             direnv
           ];
         };
-
+      })
+      // flake-utils.lib.eachDefaultSystemPassThrough (system:
+      {
         nixosModules = {
           default = { pkgs, lib, config, ... }: with lib; let
               cfg = config.services.bluepds;
