@@ -24,7 +24,13 @@ use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
 
 use crate::{
-    auth::AuthenticatedUser, config::AppConfig, error::ErrorMessage, firehose::{self, FirehoseProducer, RepoOp}, metrics::{REPO_COMMITS, REPO_OP_CREATE, REPO_OP_DELETE, REPO_OP_UPDATE}, storage, AppState, Db, Error, Result, SigningKey
+    AppState, Db, Error, Result, SigningKey,
+    auth::AuthenticatedUser,
+    config::AppConfig,
+    error::ErrorMessage,
+    firehose::{self, FirehoseProducer, RepoOp},
+    metrics::{REPO_COMMITS, REPO_OP_CREATE, REPO_OP_DELETE, REPO_OP_UPDATE},
+    storage,
 };
 
 /// IPLD CID raw binary
@@ -813,7 +819,7 @@ async fn get_record(
                 ErrorMessage::new(
                     "RecordNotFound",
                     format!("Could not locate record: {}", uri),
-                )
+                ),
             ))
         },
         |record_value| {
