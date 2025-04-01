@@ -853,7 +853,9 @@ async fn list_records(
     let mut keys = Vec::new();
     let mut tree = repo.tree();
 
-    let mut iterator = Box::pin(tree.entries_prefixed(input.collection.as_str()));
+    let mut entry = input.collection.to_string();
+    entry.push('/');
+    let mut iterator = Box::pin(tree.entries_prefixed(entry.as_str()));
     while let Some((key, cid)) = iterator
         .try_next()
         .await
@@ -889,7 +891,7 @@ async fn list_records(
 
     Ok(Json(
         repo::list_records::OutputData {
-            cursor: keys.last().map(|(key, _)| key.to_owned()),
+            cursor: keys.last().map(|(_, cid)| cid.to_string()),
             records,
         }
         .into(),
