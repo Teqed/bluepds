@@ -45,6 +45,7 @@ mod storage;
 
 /// The application-wide result type.
 pub type Result<T> = std::result::Result<T, Error>;
+#[expect(clippy::pub_use, clippy::useless_attribute)]
 pub use error::Error;
 use uuid::Uuid;
 
@@ -253,7 +254,8 @@ async fn service_proxy(
         }
         // HACK: Assume the bluesky appview by default.
         None => (
-            Did::new("did:web:api.bsky.app".to_owned()).expect("should be a valid DID"),
+            Did::new("did:web:api.bsky.app".to_owned())
+                .expect("service proxy should be a valid DID"),
             "#bsky_appview".to_owned(),
         ),
     };
@@ -277,7 +279,9 @@ async fn service_proxy(
         .join(&format!("/xrpc{}", url_path))
         .context("failed to construct target url")?;
 
-    let exp = (chrono::Utc::now() + std::time::Duration::from_secs(60)).timestamp();
+    let exp = (chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(1)))
+        .expect("should be valid expiration datetime")
+        .timestamp();
     let jti = rand::thread_rng()
         .sample_iter(rand::distributions::Alphanumeric)
         .take(10)

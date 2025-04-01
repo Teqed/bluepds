@@ -69,7 +69,7 @@ async fn get_blocks(
     for cid in &input.cids {
         // SEC: This can potentially fetch stale blocks from a repository (e.g. those that were deleted).
         // We'll want to prevent accesses to stale blocks eventually just to respect a user's right to be forgotten.
-        let _ = store
+        _ = store
             .write_block(
                 DAG_CBOR,
                 SHA2_256,

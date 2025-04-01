@@ -9,6 +9,7 @@ use tracing::error;
 
 /// `axum`-compatible error handler.
 #[derive(Error)]
+#[expect(clippy::error_impl_error, reason = "just one")]
 pub struct Error {
     status: StatusCode,
     err: anyhow::Error,
@@ -42,12 +43,12 @@ impl ErrorMessage {
 
 impl Error {
     /// Returned when a route is not yet implemented.
-    pub fn unimplemented(err: impl Into<anyhow::Error>) -> Self {
+    pub fn unimplemented<T: Into<anyhow::Error>>(err: T) -> Self {
         Self::with_status(StatusCode::NOT_IMPLEMENTED, err)
     }
 
     /// Returned when just providing a status code.
-    pub fn with_status(status: StatusCode, err: impl Into<anyhow::Error>) -> Self {
+    pub fn with_status<T: Into<anyhow::Error>>(status: StatusCode, err: T) -> Self {
         Self {
             status,
             err: err.into(),

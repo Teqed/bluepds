@@ -628,7 +628,9 @@ async fn get_service_auth(
     let user_did = user.did();
     let aud = input.aud.as_str();
 
-    let exp = (chrono::Utc::now() + std::time::Duration::from_secs(60)).timestamp();
+    let exp = (chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(1)))
+        .expect("should be valid expiration datetime")
+        .timestamp();
     let jti = rand::thread_rng()
         .sample_iter(rand::distributions::Alphanumeric)
         .take(10)
@@ -643,7 +645,11 @@ async fn get_service_auth(
     });
 
     if let Some(lxm) = &input.lxm {
-        claims["lxm"] = serde_json::Value::String(lxm.to_string());
+        claims = claims
+            .as_object_mut()
+            .expect("should be a valid object")
+            .insert("lxm".to_owned(), serde_json::Value::String(lxm.to_string()))
+            .expect("should be able to insert lxm into claims");
     }
 
     // Mint a bearer token by signing a JSON web token.

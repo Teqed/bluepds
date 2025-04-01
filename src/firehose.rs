@@ -39,13 +39,13 @@ impl Serialize for FrameHeader {
         match self {
             Self::Message(s) => {
                 map.serialize_key("op")?;
-                map.serialize_value(&1)?;
+                map.serialize_value(&1_i32)?;
                 map.serialize_key("t")?;
                 map.serialize_value(s.as_str())?;
             }
             Self::Error => {
                 map.serialize_key("op")?;
-                map.serialize_value(&-1)?;
+                map.serialize_value(&-1_i32)?;
             }
         }
 
@@ -191,6 +191,15 @@ impl FirehoseProducer {
     }
 }
 
+#[expect(clippy::as_conversions)]
+const fn convert_usize_f64(x: usize) -> Result<f64, &'static str> {
+    let result = x as f64;
+    if result as usize != x {
+        return Err("cannot convert");
+    }
+    Ok(result)
+}
+
 /// Serialize a message.
 async fn serialize_message(
     seq: u64,
@@ -207,8 +216,16 @@ async fn serialize_message(
         sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
     };
 
+    #[expect(clippy::as_conversions)]
+    const fn convert_u64_i64(x: u64) -> Result<i64, &'static str> {
+        let result = x as i64;
+        if result as u64 != x {
+            return Err("cannot convert");
+        }
+        Ok(result)
+    }
     // Set the sequence number.
-    *nseq = seq as i64;
+    *nseq = convert_u64_i64(seq).expect("should find seq");
 
     let hdr = FrameHeader::Message(ty.to_owned());
 
@@ -224,14 +241,15 @@ async fn broadcast_message(clients: &mut Vec<WebSocket>, msg: Message) -> Result
     counter!(FIREHOSE_MESSAGES).increment(1);
 
     for i in (0..clients.len()).rev() {
-        let client = &mut clients[i];
+        let client = clients.get_mut(i).expect("should find client");
         if let Err(e) = client.send(msg.clone()).await {
             debug!("Firehose client disconnected: {e}");
             drop(clients.remove(i));
         }
     }
 
-    gauge!(FIREHOSE_LISTENERS).set(clients.len() as f64);
+    gauge!(FIREHOSE_LISTENERS)
+        .set(convert_usize_f64(clients.len()).expect("should find clients length"));
     Ok(())
 }
 
@@ -244,7 +262,15 @@ async fn handle_connect(
 ) -> Result<WebSocket> {
     if let Some(cursor) = cursor {
         let mut frame = Vec::new();
-        let cursor = cursor as u64;
+        #[expect(clippy::as_conversions)]
+        const fn convert_i64_u64(x: i64) -> Result<u64, &'static str> {
+            let result = x as u64;
+            if result as i64 != x {
+                return Err("cannot convert");
+            }
+            Ok(result)
+        }
+        let cursor = convert_i64_u64(cursor).expect("should find cursor");
 
         // Cursor specified; attempt to backfill the consumer.
         if cursor > seq {
@@ -364,7 +390,9 @@ pub(crate) async fn spawn(
                         let (ty, by) = serialize_message(seq, msg.clone()).await;
 
                         history.push_back((seq, ty, msg));
-                        gauge!(FIREHOSE_HISTORY).set(history.len() as f64);
+                        gauge!(FIREHOSE_HISTORY).set(
+                            convert_usize_f64(history.len()).expect("should find history length"),
+                        );
 
                         info!(
                             "Broadcasting message {} {} to {} clients",
@@ -387,7 +415,7 @@ pub(crate) async fn spawn(
                         let (ws, cursor) = *ws_cursor;
                         match handle_connect(ws, seq, &history, cursor).await {
                             Ok(r) => {
-                                gauge!(FIREHOSE_LISTENERS).increment(1);
+                                gauge!(FIREHOSE_LISTENERS).increment(1_i32);
                                 clients.push(r);
                             }
                             Err(e) => {
