@@ -25,8 +25,8 @@ enum FirehoseMessage {
 }
 
 enum FrameHeader {
-    Message(String),
     Error,
+    Message(String),
 }
 
 impl Serialize for FrameHeader {
@@ -62,17 +62,17 @@ pub(crate) enum RepoOp {
         /// The path of the record.
         path: String,
     },
-    /// Update an existing record.
-    Update {
-        /// The CID of the record.
-        cid: Cid,
+    /// Delete an existing record.
+    Delete {
         /// The path of the record.
         path: String,
         /// The previous CID of the record.
         prev: Cid,
     },
-    /// Delete an existing record.
-    Delete {
+    /// Update an existing record.
+    Update {
+        /// The CID of the record.
+        cid: Cid,
         /// The path of the record.
         path: String,
         /// The previous CID of the record.
@@ -103,18 +103,18 @@ impl From<RepoOp> for sync::subscribe_repos::RepoOp {
 
 /// A commit to the repository.
 pub(crate) struct Commit {
-    /// The car file containing the commit blocks.
-    pub car: Vec<u8>,
-    /// The operations performed in this commit.
-    pub ops: Vec<RepoOp>,
-    /// The CID of the commit.
-    pub cid: Cid,
-    /// The revision of the commit.
-    pub rev: String,
-    /// The DID of the repository changed.
-    pub did: Did,
     /// Blobs that were created in this commit.
     pub blobs: Vec<Cid>,
+    /// The car file containing the commit blocks.
+    pub car: Vec<u8>,
+    /// The CID of the commit.
+    pub cid: Cid,
+    /// The DID of the repository changed.
+    pub did: Did,
+    /// The operations performed in this commit.
+    pub ops: Vec<RepoOp>,
+    /// The revision of the commit.
+    pub rev: String,
 }
 
 impl From<Commit> for sync::subscribe_repos::Commit {
@@ -158,18 +158,14 @@ impl FirehoseProducer {
                 .await,
         );
     }
-
-    /// Broadcast an `#identity` event.
-    pub(crate) async fn identity(&self, identity: impl Into<sync::subscribe_repos::Identity>) {
+    /// Handle client connection.
+    pub(crate) async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
         drop(
             self.tx
-                .send(FirehoseMessage::Broadcast(
-                    sync::subscribe_repos::Message::Identity(Box::new(identity.into())),
-                ))
+                .send(FirehoseMessage::Connect(Box::new((ws, cursor))))
                 .await,
         );
     }
-
     /// Broadcast a `#commit` event.
     pub(crate) async fn commit(&self, commit: impl Into<sync::subscribe_repos::Commit>) {
         drop(
@@ -180,12 +176,13 @@ impl FirehoseProducer {
                 .await,
         );
     }
-
-    /// Handle client connection.
-    pub(crate) async fn client_connection(&self, ws: WebSocket, cursor: Option<i64>) {
+    /// Broadcast an `#identity` event.
+    pub(crate) async fn identity(&self, identity: impl Into<sync::subscribe_repos::Identity>) {
         drop(
             self.tx
-                .send(FirehoseMessage::Connect(Box::new((ws, cursor))))
+                .send(FirehoseMessage::Broadcast(
+                    sync::subscribe_repos::Message::Identity(Box::new(identity.into())),
+                ))
                 .await,
         );
     }

@@ -23,6 +23,10 @@ pub(crate) enum PlcService {
     },
 }
 
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "serialized data might be structured"
+)]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PlcOperation {
@@ -50,6 +54,10 @@ impl PlcOperation {
     }
 }
 
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "serialized data might be structured"
+)]
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 /// A signed PLC operation.

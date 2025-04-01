@@ -10,6 +10,10 @@ use crate::Client;
 /// URL whitelist for DID document resolution.
 const ALLOWED_URLS: &[&str] = &["bsky.app", "bsky.chat"];
 
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "serialized data might be structured"
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// DID verification method.
@@ -21,6 +25,10 @@ pub(crate) struct DidVerificationMethod {
     pub public_key_multibase: String,
 }
 
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "serialized data might be structured"
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DidService {
@@ -30,6 +38,10 @@ pub(crate) struct DidService {
     pub service_endpoint: Url,
 }
 
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "serialized data might be structured"
+)]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// DID document.

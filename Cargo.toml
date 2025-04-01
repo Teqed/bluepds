@@ -94,7 +94,7 @@ question_mark_used = "allow"
 shadow_reuse = "allow"
 shadow_unrelated = "allow"
 min_ident_chars = "allow"
-arbitrary_source_item_ordering = "allow"
+# arbitrary_source_item_ordering = "allow"
 renamed_function_params = "allow"
 # pattern_type_mismatch = "allow"
 # Style Allows

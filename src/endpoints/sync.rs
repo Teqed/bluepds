@@ -27,6 +27,38 @@ use crate::{
     storage::{open_repo_db, open_store},
 };
 
+// HACK: `limit` may be passed as a string, so we must treat it as one.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ListBlobsParameters {
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub cursor: Option<String>,
+    ///The DID of the repo.
+    pub did: Did,
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub limit: Option<String>,
+    ///Optional revision of the repo to list blobs since.
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub since: Option<String>,
+}
+// HACK: `limit` may be passed as a string, so we must treat it as one.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct ListReposParameters {
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub limit: Option<String>,
+}
+// HACK: `cursor` may be passed as a string, so we must treat it as one.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct SubscribeReposParametersData {
+    ///The last known event seq number to backfill from.
+    #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    pub cursor: Option<String>,
+}
+
 async fn get_blob(
     State(config): State<AppConfig>,
     Query(input): Query<sync::get_blob::Parameters>,
@@ -193,21 +225,6 @@ async fn get_repo(
         .context("failed to construct response")?)
 }
 
-// HACK: `limit` may be passed as a string, so we must treat it as one.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct ListBlobsParameters {
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: Option<String>,
-    ///The DID of the repo.
-    pub did: Did,
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: Option<String>,
-    ///Optional revision of the repo to list blobs since.
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub since: Option<String>,
-}
-
 async fn list_blobs(
     State(db): State<Db>,
     Query(input): Query<ListBlobsParameters>,
@@ -238,24 +255,14 @@ async fn list_blobs(
     ))
 }
 
-// HACK: `limit` may be passed as a string, so we must treat it as one.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct ListReposParameters {
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: Option<String>,
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub limit: Option<String>,
-}
-
 async fn list_repos(
     State(db): State<Db>,
     Query(input): Query<ListReposParameters>,
 ) -> Result<Json<sync::list_repos::Output>> {
     struct Record {
         did: String,
-        root: String,
         rev: String,
+        root: String,
     }
 
     let limit = input
@@ -308,15 +315,6 @@ async fn list_repos(
         .collect::<Vec<_>>();
 
     Ok(Json(sync::list_repos::OutputData { cursor, repos }.into()))
-}
-
-// HACK: `cursor` may be passed as a string, so we must treat it as one.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct SubscribeReposParametersData {
-    ///The last known event seq number to backfill from.
-    #[serde(skip_serializing_if = "core::option::Option::is_none")]
-    pub cursor: Option<String>,
 }
 
 async fn subscribe_repos(

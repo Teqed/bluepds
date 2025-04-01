@@ -1,38 +1,4 @@
 //! PDS implementation.
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
-    str::FromStr as _,
-    sync::Arc,
-};
-
-use atrium_api::types::string::Did;
-use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
-use auth::AuthenticatedUser;
-use axum::{
-    Router,
-    body::Body,
-    extract::{FromRef, Request, State},
-    http::{self, HeaderMap, Response, StatusCode, Uri},
-    response::IntoResponse,
-    routing::get,
-};
-use azure_core::credentials::TokenCredential;
-use clap::Parser;
-use clap_verbosity_flag::{InfoLevel, Verbosity, log::LevelFilter};
-use config::AppConfig;
-use figment::{Figment, providers::Format as _};
-use firehose::FirehoseProducer;
-use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
-use rand::Rng as _;
-use serde::{Deserialize, Serialize};
-use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
-use tokio::net::TcpListener;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
-
-use anyhow::{Context as _, anyhow};
-use tracing::{info, warn};
-
 mod auth;
 mod config;
 mod did;
@@ -42,115 +8,6 @@ mod firehose;
 mod metrics;
 mod plc;
 mod storage;
-
-/// The application-wide result type.
-pub type Result<T> = std::result::Result<T, Error>;
-#[expect(clippy::pub_use, clippy::useless_attribute)]
-pub use error::Error;
-use uuid::Uuid;
-
-/// The reqwest client type with middleware.
-pub type Client = reqwest_middleware::ClientWithMiddleware;
-/// The database connection pool.
-pub type Db = SqlitePool;
-/// The Azure credential type.
-pub type Cred = Arc<dyn TokenCredential>;
-
-/// The application user agent. Concatenates the package name and version. e.g. `bluepds/0.0.0`.
-pub const APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-/// The key data structure.
-struct KeyData {
-    /// Primary signing key for all repo operations.
-    skey: Vec<u8>,
-    /// Primary signing (rotation) key for all PLC operations.
-    rkey: Vec<u8>,
-}
-
-// FIXME: We should use P256Keypair instead. SecP256K1 is primarily used for cryptocurrencies,
-// and the implementations of this algorithm are much more limited as compared to P256.
-//
-// Reference: https://soatok.blog/2022/05/19/guidance-for-choosing-an-elliptic-curve-signature-algorithm-in-2022/
-#[derive(Clone)]
-/// The signing key for PLC/DID operations.
-pub struct SigningKey(Arc<Secp256k1Keypair>);
-#[derive(Clone)]
-/// The rotation key for PLC operations.
-pub struct RotationKey(Arc<Secp256k1Keypair>);
-
-impl std::ops::Deref for SigningKey {
-    type Target = Secp256k1Keypair;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for RotationKey {
-    type Target = Secp256k1Keypair;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Parser, Debug, Clone)]
-/// Command line arguments.
-struct Args {
-    /// The verbosity level.
-    #[command(flatten)]
-    verbosity: Verbosity<InfoLevel>,
-
-    /// Path to the configuration file
-    #[arg(short, long, default_value = "default.toml")]
-    config: PathBuf,
-}
-
-#[derive(Clone, FromRef)]
-struct AppState {
-    /// The application configuration.
-    config: AppConfig,
-    /// The Azure credential.
-    cred: Cred,
-    /// The database connection pool.
-    db: Db,
-
-    /// The HTTP client with middleware.
-    client: Client,
-    /// The simple HTTP client.
-    simple_client: reqwest::Client,
-    /// The firehose producer.
-    firehose: FirehoseProducer,
-
-    /// The signing key.
-    signing_key: SigningKey,
-    /// The rotation key.
-    rotation_key: RotationKey,
-}
-
-/// The index (/) route.
-async fn index() -> impl IntoResponse {
-    r#"
-         __                         __
-        /\ \__                     /\ \__
-    __  \ \ ,_\  _____   _ __   ___\ \ ,_\   ___
-  /'__'\ \ \ \/ /\ '__'\/\''__\/ __'\ \ \/  / __'\
- /\ \L\.\_\ \ \_\ \ \L\ \ \ \//\ \L\ \ \ \_/\ \L\ \
- \ \__/.\_\\ \__\\ \ ,__/\ \_\\ \____/\ \__\ \____/
-  \/__/\/_/ \/__/ \ \ \/  \/_/ \/___/  \/__/\/___/
-                   \ \_\
-                    \/_/
-
-
-This is an AT Protocol Personal Data Server (aka, an atproto PDS)
-
-Most API routes are under /xrpc/
-
-      Code: https://github.com/DrChat/bluepds
-  Protocol: https://atproto.com
-    "#
-}
 
 /// HACK: store private user preferences in the PDS.
 ///
@@ -220,6 +77,150 @@ mod actor_endpoints {
             .route(concat!("/", actor::put_preferences::NSID), post(put_preferences))
             .route(concat!("/", actor::get_preferences::NSID),  get(get_preferences))
     }
+}
+
+use anyhow::{Context as _, anyhow};
+use atrium_api::types::string::Did;
+use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
+use auth::AuthenticatedUser;
+use axum::{
+    Router,
+    body::Body,
+    extract::{FromRef, Request, State},
+    http::{self, HeaderMap, Response, StatusCode, Uri},
+    response::IntoResponse,
+    routing::get,
+};
+use azure_core::credentials::TokenCredential;
+use clap::Parser;
+use clap_verbosity_flag::{InfoLevel, Verbosity, log::LevelFilter};
+use config::AppConfig;
+#[expect(clippy::pub_use, clippy::useless_attribute)]
+pub use error::Error;
+use figment::{Figment, providers::Format as _};
+use firehose::FirehoseProducer;
+use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
+use rand::Rng as _;
+use serde::{Deserialize, Serialize};
+use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
+use std::{
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    path::PathBuf,
+    str::FromStr as _,
+    sync::Arc,
+};
+use tokio::net::TcpListener;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tracing::{info, warn};
+use uuid::Uuid;
+
+/// The application user agent. Concatenates the package name and version. e.g. `bluepds/0.0.0`.
+pub const APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
+
+/// The application-wide result type.
+pub type Result<T> = std::result::Result<T, Error>;
+/// The reqwest client type with middleware.
+pub type Client = reqwest_middleware::ClientWithMiddleware;
+/// The database connection pool.
+pub type Db = SqlitePool;
+/// The Azure credential type.
+pub type Cred = Arc<dyn TokenCredential>;
+
+#[expect(
+    clippy::arbitrary_source_item_ordering,
+    reason = "serialized data might be structured"
+)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+/// The key data structure.
+struct KeyData {
+    /// Primary signing key for all repo operations.
+    skey: Vec<u8>,
+    /// Primary signing (rotation) key for all PLC operations.
+    rkey: Vec<u8>,
+}
+
+// FIXME: We should use P256Keypair instead. SecP256K1 is primarily used for cryptocurrencies,
+// and the implementations of this algorithm are much more limited as compared to P256.
+//
+// Reference: https://soatok.blog/2022/05/19/guidance-for-choosing-an-elliptic-curve-signature-algorithm-in-2022/
+#[derive(Clone)]
+/// The signing key for PLC/DID operations.
+pub struct SigningKey(Arc<Secp256k1Keypair>);
+#[derive(Clone)]
+/// The rotation key for PLC operations.
+pub struct RotationKey(Arc<Secp256k1Keypair>);
+
+impl std::ops::Deref for SigningKey {
+    type Target = Secp256k1Keypair;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for RotationKey {
+    type Target = Secp256k1Keypair;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Parser, Debug, Clone)]
+/// Command line arguments.
+struct Args {
+    /// Path to the configuration file
+    #[arg(short, long, default_value = "default.toml")]
+    config: PathBuf,
+    /// The verbosity level.
+    #[command(flatten)]
+    verbosity: Verbosity<InfoLevel>,
+}
+
+#[expect(clippy::arbitrary_source_item_ordering, reason = "arbitrary")]
+#[derive(Clone, FromRef)]
+struct AppState {
+    /// The application configuration.
+    config: AppConfig,
+    /// The Azure credential.
+    cred: Cred,
+    /// The database connection pool.
+    db: Db,
+
+    /// The HTTP client with middleware.
+    client: Client,
+    /// The simple HTTP client.
+    simple_client: reqwest::Client,
+    /// The firehose producer.
+    firehose: FirehoseProducer,
+
+    /// The signing key.
+    signing_key: SigningKey,
+    /// The rotation key.
+    rotation_key: RotationKey,
+}
+
+/// The index (/) route.
+async fn index() -> impl IntoResponse {
+    r#"
+         __                         __
+        /\ \__                     /\ \__
+    __  \ \ ,_\  _____   _ __   ___\ \ ,_\   ___
+  /'__'\ \ \ \/ /\ '__'\/\''__\/ __'\ \ \/  / __'\
+ /\ \L\.\_\ \ \_\ \ \L\ \ \ \//\ \L\ \ \ \_/\ \L\ \
+ \ \__/.\_\\ \__\\ \ ,__/\ \_\\ \____/\ \__\ \____/
+  \/__/\/_/ \/__/ \ \ \/  \/_/ \/___/  \/__/\/___/
+                   \ \_\
+                    \/_/
+
+
+This is an AT Protocol Personal Data Server (aka, an atproto PDS)
+
+Most API routes are under /xrpc/
+
+      Code: https://github.com/DrChat/bluepds
+  Protocol: https://atproto.com
+    "#
 }
 
 /// Service proxy.
