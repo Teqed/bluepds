@@ -808,7 +808,7 @@ async fn get_record(
     record.map_or_else(
         || {
             Err(Error::with_message(
-                StatusCode::NOT_FOUND,
+                StatusCode::BAD_REQUEST,
                 anyhow!("could not find the requested record at {}", uri),
                 ErrorMessage::new(
                     "RecordNotFound",
