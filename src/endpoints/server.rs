@@ -111,7 +111,7 @@ async fn create_account(
         return Err(Error::unimplemented(anyhow!("plc_op")));
     }
 
-    let recovery_keys = if let Some(key) = &input.recovery_key {
+    let recovery_keys = if let Some(ref key) = input.recovery_key {
         // Ensure the provided recovery key is valid.
         if let Err(error) = atrium_crypto::did::parse_did_key(key) {
             return Err(Error::with_status(
@@ -134,8 +134,8 @@ async fn create_account(
         .context("failed to begin transaction")
         .expect("should be able to begin transaction");
 
-    let _invite = match &input.invite_code {
-        Some(code) => {
+    let _invite = match input.invite_code {
+        Some(ref code) => {
             let invite: Option<String> = sqlx::query_scalar!(
                 r#"
                 UPDATE invites
@@ -644,7 +644,7 @@ async fn get_service_auth(
         "jti": jti,
     });
 
-    if let Some(lxm) = &input.lxm {
+    if let Some(ref lxm) = input.lxm {
         claims = claims
             .as_object_mut()
             .expect("should be a valid object")

@@ -265,7 +265,7 @@ async fn list_repos(
         .parse::<u32>()
         .context("invalid limit parameter")?;
 
-    let r = if let Some(cursor) = &input.cursor {
+    let r = if let Some(ref cursor) = input.cursor {
         let r = sqlx::query_as!(
             Record,
             r#"SELECT did, root, rev FROM accounts WHERE did > ? LIMIT ?"#,

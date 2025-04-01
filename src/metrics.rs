@@ -53,9 +53,9 @@ pub(crate) fn setup(config: &Option<config::MetricConfig>) -> anyhow::Result<()>
     describe_counter!(REPO_OP_UPDATE, "The count of updated records.");
     describe_counter!(REPO_OP_DELETE, "The count of deleted records.");
 
-    if let Some(config) = config {
-        match config {
-            config::MetricConfig::PrometheusPush(prometheus_config) => {
+    if let Some(ref config) = *config {
+        match *config {
+            config::MetricConfig::PrometheusPush(ref prometheus_config) => {
                 PrometheusBuilder::new()
                     .with_push_gateway(
                         prometheus_config.url.clone(),

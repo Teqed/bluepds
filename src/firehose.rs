@@ -36,8 +36,8 @@ impl Serialize for FrameHeader {
     {
         let mut map = serializer.serialize_map(None)?;
 
-        match self {
-            Self::Message(s) => {
+        match *self {
+            Self::Message(ref s) => {
                 map.serialize_key("op")?;
                 map.serialize_value(&1_i32)?;
                 map.serialize_key("t")?;
@@ -206,6 +206,7 @@ async fn serialize_message(
     mut msg: sync::subscribe_repos::Message,
 ) -> (&'static str, Vec<u8>) {
     let mut dummy_seq = 0_i64;
+    #[expect(clippy::pattern_type_mismatch)]
     let (ty, nseq) = match &mut msg {
         sync::subscribe_repos::Message::Account(m) => ("#account", &mut m.seq),
         sync::subscribe_repos::Message::Commit(m) => ("#commit", &mut m.seq),
@@ -289,12 +290,12 @@ async fn handle_connect(
             );
         }
 
-        for (seq, ty, msg) in history.iter() {
-            if *seq > cursor {
+        for &(seq, ty, ref msg) in history.iter() {
+            if seq > cursor {
                 break;
             }
 
-            let hdr = FrameHeader::Message(ty.to_string());
+            let hdr = FrameHeader::Message(ty.to_owned());
             serde_ipld_dagcbor::to_writer(&mut frame, &hdr).expect("should serialize header");
             serde_ipld_dagcbor::to_writer(&mut frame, msg).expect("should serialize message");
 

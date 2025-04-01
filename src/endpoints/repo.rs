@@ -875,7 +875,7 @@ async fn list_records(
     // TODO: Calculate the view on `keys` using `cursor` and `limit`.
 
     let mut records = Vec::new();
-    for (key, cid) in &keys {
+    for &(ref key, cid) in &keys {
         let value: serde_json::Value = repo
             .get_raw(key)
             .await
@@ -886,7 +886,7 @@ async fn list_records(
 
         records.push(
             repo::list_records::RecordData {
-                cid: atrium_api::types::string::Cid::new(*cid),
+                cid: atrium_api::types::string::Cid::new(cid),
                 uri: format!("at://{}/{}", did.as_str(), key),
                 value: value.try_into_unknown().expect("should be valid JSON"),
             }
@@ -894,6 +894,7 @@ async fn list_records(
         )
     }
 
+    #[expect(clippy::pattern_type_mismatch)]
     Ok(Json(
         repo::list_records::OutputData {
             cursor: keys.last().map(|(_, cid)| cid.to_string()),
