@@ -43,17 +43,25 @@ cargo run
 ```
 
 ## To-do
-### Teqed's fork
+### Teqed's 
+- [ ] Email verification
+- [ ] 2FA
+- [ ] Admin endpoints
+- [ ] App passwords
+- [X] `listRecords` fixes
+  - [X] Fix collection prefixing (terminate with `/`)
+  - [X] Fix cursor handling (return `cid` instead of `key`)
 - [X] Session management (JWT)
   - [X] Match token fields to reference implementation
   - [X] RefreshSession from Bluesky Client
-    - [X] Respond with JSON error messages
+    - [X] Respond with JSON error message `ExpiredToken`
 - [X] Cursor handling
   - [X] Implement time-based unix microsecond sequences
   - [X] Startup with present cursor
-- [ ] Records
-  - [ ] app.bsky.feed.postgate
-  - [ ] app.bsky.feed.threadgate
+- [X] Respond `RecordNotFound`, required for:
+  - [X] app.bsky.feed.postgate
+  - [X] app.bsky.feed.threadgate
+  - [ ] app.bsky... (profile creation?)
 - [ ] Linting
   - [X] Rustfmt
     - [X] warnings
