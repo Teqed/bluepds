@@ -30,6 +30,7 @@ enum FrameHeader {
 }
 
 impl Serialize for FrameHeader {
+    #[expect(clippy::question_mark_used, reason = "returns a Result")]
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,

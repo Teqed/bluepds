@@ -53,7 +53,7 @@ pub(crate) async fn open_repo_db(
     open_repo(
         config,
         did,
-        Cid::from_str(&cid).expect("should be valid CID"),
+        Cid::from_str(&cid).context("should be valid CID")?,
     )
     .await
 }

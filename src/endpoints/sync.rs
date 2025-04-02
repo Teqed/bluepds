@@ -96,7 +96,7 @@ async fn get_blocks(
     let mut mem = Vec::new();
     let mut store = CarStore::create(std::io::Cursor::new(&mut mem))
         .await
-        .expect("failed to create intermediate carstore");
+        .context("failed to create intermediate carstore")?;
 
     for cid in &input.cids {
         // SEC: This can potentially fetch stale blocks from a repository (e.g. those that were deleted).

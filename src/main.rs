@@ -281,7 +281,7 @@ async fn service_proxy(
         .context("failed to construct target url")?;
 
     let exp = (chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(1)))
-        .expect("should be valid expiration datetime")
+        .context("should be valid expiration datetime")?
         .timestamp();
     let jti = rand::thread_rng()
         .sample_iter(rand::distributions::Alphanumeric)
@@ -399,7 +399,7 @@ async fn run() -> anyhow::Result<()> {
         }))
         .build();
 
-    tokio::fs::create_dir_all(&config.key.parent().expect("should have parent"))
+    tokio::fs::create_dir_all(&config.key.parent().context("should have parent")?)
         .await
         .context("failed to create key directory")?;
 

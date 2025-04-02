@@ -91,7 +91,7 @@ pub(crate) async fn submit(
     debug!(
         "submitting {} {}",
         did,
-        serde_json::to_string(&op).expect("should serialize")
+        serde_json::to_string(&op).context("should serialize")?
     );
 
     let res = client
@@ -111,7 +111,7 @@ pub(crate) async fn submit(
 
         bail!(
             "error from PLC directory: {}",
-            serde_json::to_string(&e).expect("should serialize")
+            serde_json::to_string(&e).context("should serialize")?
         );
     }
 }

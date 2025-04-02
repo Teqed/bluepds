@@ -64,8 +64,7 @@ async fn create_invite_code(
             )
             .fetch_one(&db)
             .await
-            .context("failed to create new invite code")
-            .expect("should be able to create invite code"),
+            .context("failed to create new invite code")?,
         }
         .into(),
     ))
@@ -83,21 +82,18 @@ async fn create_account(
     let email = input
         .email
         .as_deref()
-        .context("no email provided")
-        .expect("should be valid email");
+        .context("no email provided")?;
     // Hash the user's password.
     let pass = Argon2::default()
         .hash_password(
             input
                 .password
                 .as_deref()
-                .context("no password provided")
-                .expect("should be valid password")
+                .context("no password provided")?
                 .as_bytes(),
             SaltString::generate(&mut rand::thread_rng()).as_salt(),
         )
-        .context("failed to hash password")
-        .expect("should be able to hash password")
+        .context("failed to hash password")?
         .to_string();
     let handle = input.handle.as_str().to_owned();
 
@@ -131,8 +127,7 @@ async fn create_account(
     let mut tx = db
         .begin()
         .await
-        .context("failed to begin transaction")
-        .expect("should be able to begin transaction");
+        .context("failed to begin transaction")?;
 
     let _invite = match input.invite_code {
         Some(ref code) => {
@@ -148,12 +143,10 @@ async fn create_account(
             )
             .fetch_optional(&mut *tx)
             .await
-            .context("failed to check invite code")
-            .expect("should be able to check invite code");
+            .context("failed to check invite code")?;
 
             invite
-                .context("invalid invite code")
-                .expect("should be valid invite code")
+                .context("invalid invite code")?
         }
         None => {
             return Err(anyhow!("invite code required").into());
@@ -179,11 +172,9 @@ async fn create_account(
         },
     )
     .await
-    .context("failed to sign genesis op")
-    .expect("should be able to sign genesis op");
+    .context("failed to sign genesis op")?;
     let op_bytes = serde_ipld_dagcbor::to_vec(&op)
-        .context("failed to encode genesis op")
-        .expect("should be able to encode genesis op");
+        .context("failed to encode genesis op")?;
 
     let did_hash = {
         let digest = base32::encode(
@@ -200,27 +191,23 @@ async fn create_account(
 
     let doc = tokio::fs::File::create(config.plc.path.join(format!("{}.car", did_hash)))
         .await
-        .context("failed to create did doc")
-        .expect("should be able to create did doc");
+        .context("failed to create did doc")?;
 
     let mut plc_doc = CarStore::create(doc)
         .await
-        .context("failed to create did doc")
-        .expect("should be able to create did doc");
+        .context("failed to create did doc")?;
 
     let plc_cid = plc_doc
         .write_block(DAG_CBOR, SHA2_256, &op_bytes)
         .await
-        .context("failed to write genesis commit")
-        .expect("should be able to write genesis commit")
+        .context("failed to write genesis commit")?
         .to_string();
 
     if !config.test {
         // Send the new account's data to the PLC directory.
         plc::submit(&client, &did, &op)
             .await
-            .context("failed to submit PLC operation to directory")
-            .expect("should be able to submit PLC operation to directory");
+            .context("failed to submit PLC operation to directory")?;
     }
 
     // Write out an initial commit for the user.
@@ -228,31 +215,26 @@ async fn create_account(
     let (cid, rev, store) = async {
         let file = tokio::fs::File::create_new(config.repo.path.join(format!("{}.car", did_hash)))
             .await
-            .context("failed to create repo file")
-            .expect("should be able to create repo file");
+            .context("failed to create repo file")?;
         let mut store = CarStore::create(file)
             .await
-            .context("failed to create carstore")
-            .expect("should be able to create carstore");
+            .context("failed to create carstore")?;
 
         let repo_builder = Repository::create(
             &mut store,
             Did::from_str(&did).expect("should be valid DID format"),
         )
         .await
-        .context("failed to initialize user repo")
-        .expect("should be able to initialize user repo");
+        .context("failed to initialize user repo")?;
 
         // Sign the root commit.
         let sig = skey
             .sign(&repo_builder.bytes())
-            .context("failed to sign root commit")
-            .expect("should be able to sign root commit");
+            .context("failed to sign root commit")?;
         let mut repo = repo_builder
             .finalize(sig)
             .await
-            .context("failed to attach signature to root commit")
-            .expect("should be able to attach signature to root commit");
+            .context("failed to attach signature to root commit")?;
 
         let root = repo.root();
         let rev = repo.commit().rev();
@@ -261,13 +243,11 @@ async fn create_account(
         let mut firehose_store =
             CarStore::create_with_roots(std::io::Cursor::new(&mut mem), [repo.root()])
                 .await
-                .context("failed to create temp carstore")
-                .expect("should be able to create temp carstore");
+                .context("failed to create temp carstore")?;
 
         repo.export_into(&mut firehose_store)
             .await
-            .context("failed to export repository")
-            .expect("should be able to export repository");
+            .context("failed to export repository")?;
 
         Ok::<(Cid, Tid, Vec<u8>), anyhow::Error>((root, rev, mem))
     }
@@ -300,14 +280,12 @@ async fn create_account(
     )
     .execute(&mut *tx)
     .await
-    .context("failed to create new account")
-    .expect("should be able to create new account");
+    .context("failed to create new account")?;
 
     // The account is fully created. Commit the SQL transaction to the database.
     tx.commit()
         .await
-        .context("failed to commit transaction")
-        .expect("should be able to commit transaction to database");
+        .context("failed to commit transaction")?;
 
     // Broadcast the identity event now that the new identity is resolvable on the public directory.
     fhp.identity(
@@ -352,12 +330,11 @@ async fn create_account(
             "scope": "com.atproto.access",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
-            "exp": chrono::Utc::now().checked_add_signed(chrono::Duration::hours(4)).expect("should be valid time").timestamp(),
+            "exp": chrono::Utc::now().checked_add_signed(chrono::Duration::hours(4)).context("should be valid time")?.timestamp(),
             "aud": format!("did:web:{}", config.host_name)
         }),
     )
-    .context("failed to sign jwt")
-    .expect("should be able to sign jwt");
+    .context("failed to sign jwt")?;
 
     let refresh_token = auth::sign(
         &skey,
@@ -366,12 +343,11 @@ async fn create_account(
             "scope": "com.atproto.refresh",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
-            "exp": chrono::Utc::now().checked_add_days(chrono::Days::new(90)).expect("should be valid time").timestamp(),
+            "exp": chrono::Utc::now().checked_add_days(chrono::Days::new(90)).context("should be valid time")?.timestamp(),
             "aud": format!("did:web:{}", config.host_name)
         }),
     )
-    .context("failed to sign refresh jwt")
-    .expect("should be able to sign refresh jwt");
+    .context("failed to sign refresh jwt")?;
 
     Ok(Json(
         server::create_account::OutputData {
@@ -417,8 +393,7 @@ async fn create_session(
     )
     .fetch_optional(&db)
     .await
-    .context("failed to authenticate")
-    .expect("should be able to authenticate")
+    .context("failed to authenticate")?
     {
         account
     } else {
@@ -429,7 +404,7 @@ async fn create_session(
         // determine whether or not an account exists.
         _ = Argon2::default().verify_password(
             password.as_bytes(),
-            &PasswordHash::new(DUMMY_PASSWORD).expect("should be valid password hash"),
+            &PasswordHash::new(DUMMY_PASSWORD).context("should be valid password hash")?,
         );
 
         return Err(Error::with_status(
@@ -441,8 +416,7 @@ async fn create_session(
     match Argon2::default().verify_password(
         password.as_bytes(),
         &PasswordHash::new(account.password.as_str())
-            .context("invalid password hash in db")
-            .expect("should be valid password hash"),
+            .context("invalid password hash in db")?,
     ) {
         Ok(_) => {}
         Err(_e) => {
@@ -464,11 +438,11 @@ async fn create_session(
             "scope": "com.atproto.access",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
-            "exp": chrono::Utc::now().checked_add_signed(chrono::Duration::hours(4)).expect("should be valid time").timestamp(),
+            "exp": chrono::Utc::now().checked_add_signed(chrono::Duration::hours(4)).context("should be valid time")?.timestamp(),
             "aud": format!("did:web:{}", config.host_name)
         }),
     )
-    .context("failed to sign jwt").expect("should be able to sign jwt");
+    .context("failed to sign jwt")?;
 
     let refresh_token = auth::sign(
         &skey,
@@ -477,11 +451,11 @@ async fn create_session(
             "scope": "com.atproto.refresh",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
-            "exp": chrono::Utc::now().checked_add_days(chrono::Days::new(90)).expect("should be valid time").timestamp(),
+            "exp": chrono::Utc::now().checked_add_days(chrono::Days::new(90)).context("should be valid time")?.timestamp(),
             "aud": format!("did:web:{}", config.host_name)
         }),
     )
-    .context("failed to sign refresh jwt").expect("should be able to sign refresh jwt");
+    .context("failed to sign refresh jwt")?;
 
     Ok(Json(
         server::create_session::OutputData {
@@ -511,18 +485,15 @@ async fn refresh_session(
     let auth = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
-        .context("no authorization header provided")
-        .expect("should be a valid authorization header");
+        .context("no authorization header provided")?;
     let token = auth
         .to_str()
         .ok()
         .and_then(|auth| auth.strip_prefix("Bearer "))
-        .context("invalid authentication token")
-        .expect("should be a valid authentication token");
+        .context("invalid authentication token")?;
 
     let (typ, claims) = auth::verify(&skey.did(), token)
-        .context("failed to verify refresh token")
-        .expect("should be able to verify refresh token");
+        .context("failed to verify refresh token")?;
     if typ != "refresh+jwt" {
         return Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
@@ -532,8 +503,7 @@ async fn refresh_session(
     if claims
         .get("exp")
         .and_then(|exp| exp.as_i64())
-        .context("failed to get `exp`")
-        .expect("should have a valid `exp` field in claims")
+        .context("failed to get `exp`")?
         < chrono::Utc::now().timestamp()
     {
         return Err(Error::with_status(
@@ -544,8 +514,7 @@ async fn refresh_session(
     if claims
         .get("aud")
         .and_then(|audience| audience.as_str())
-        .context("invalid jwt")
-        .expect("should be a valid jwt")
+        .context("invalid jwt")?
         != format!("did:web:{}", config.host_name)
     {
         return Err(Error::with_status(
@@ -557,8 +526,7 @@ async fn refresh_session(
     let did = claims
         .get("sub")
         .and_then(|subject| subject.as_str())
-        .context("invalid jwt")
-        .expect("should be a valid jwt");
+        .context("invalid jwt")?;
 
     let user = sqlx::query!(
         r#"
@@ -573,8 +541,7 @@ async fn refresh_session(
     )
     .fetch_one(&db)
     .await
-    .context("failed to fetch user account")
-    .expect("should be able to fetch user account");
+    .context("failed to fetch user account")?;
 
     let token = auth::sign(
         &skey,
@@ -583,11 +550,11 @@ async fn refresh_session(
             "scope": "com.atproto.access",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
-            "exp": chrono::Utc::now().checked_add_signed(chrono::Duration::hours(4)).expect("should be valid time").timestamp(),
+            "exp": chrono::Utc::now().checked_add_signed(chrono::Duration::hours(4)).context("should be valid time")?.timestamp(),
             "aud": format!("did:web:{}", config.host_name)
         }),
     )
-    .context("failed to sign jwt").expect("should be able to sign jwt");
+    .context("failed to sign jwt")?;
 
     let refresh_token = auth::sign(
         &skey,
@@ -596,11 +563,11 @@ async fn refresh_session(
             "scope": "com.atproto.refresh",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
-            "exp": chrono::Utc::now().checked_add_days(chrono::Days::new(90)).expect("should be valid time").timestamp(),
+            "exp": chrono::Utc::now().checked_add_days(chrono::Days::new(90)).context("should be valid time")?.timestamp(),
             "aud": format!("did:web:{}", config.host_name)
         }),
     )
-    .context("failed to sign refresh jwt").expect("should be able to sign refresh jwt");
+    .context("failed to sign refresh jwt")?;
 
     let active = user.status == "active";
     let status = if active { None } else { Some(user.status) };
@@ -629,7 +596,7 @@ async fn get_service_auth(
     let aud = input.aud.as_str();
 
     let exp = (chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(1)))
-        .expect("should be valid expiration datetime")
+        .context("should be valid expiration datetime")?
         .timestamp();
     let jti = rand::thread_rng()
         .sample_iter(rand::distributions::Alphanumeric)
@@ -647,9 +614,9 @@ async fn get_service_auth(
     if let Some(ref lxm) = input.lxm {
         claims = claims
             .as_object_mut()
-            .expect("should be a valid object")
+            .context("should be a valid object")?
             .insert("lxm".to_owned(), serde_json::Value::String(lxm.to_string()))
-            .expect("should be able to insert lxm into claims");
+            .context("should be able to insert lxm into claims")?;
     }
 
     // Mint a bearer token by signing a JSON web token.
@@ -680,8 +647,7 @@ async fn get_session(
     )
     .fetch_optional(&db)
     .await
-    .context("failed to fetch session")
-    .expect("should be able to fetch session")
+    .context("failed to fetch session")?
     {
         let active = user.status == "active";
         let status = if active { None } else { Some(user.status) };

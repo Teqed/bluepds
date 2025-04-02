@@ -49,12 +49,10 @@ async fn resolve_handle(
         ))
         .send()
         .await
-        .context("failed to query upstream server")
-        .expect("should be able to query upstream server for `handle` at provided api url")
+        .context("failed to query upstream server")?
         .json()
         .await
-        .context("failed to decode response as JSON")
-        .expect("should be able to decode response as JSON");
+        .context("failed to decode response as JSON")?;
 
     Ok(Json(response))
 }
@@ -97,8 +95,7 @@ async fn update_handle(
         sqlx::query_scalar!(r#"SELECT did FROM handles WHERE handle = ?"#, handle)
             .fetch_optional(&db)
             .await
-            .context("failed to query did count")
-            .expect("should be able to fetch did from handles for handle")
+            .context("failed to query did count")?
     {
         if existing_did != did_str {
             return Err(Error::with_status(
@@ -113,7 +110,7 @@ async fn update_handle(
     let _did = did::resolve(&client, did.clone())
         .await
         .with_context(|| format!("failed to resolve DID for {did_str}"))
-        .expect("should be able to resolve DID");
+        .context("should be able to resolve DID")?;
 
     let op = plc::sign_op(
         &rkey,
@@ -132,46 +129,39 @@ async fn update_handle(
                 sqlx::query_scalar!(r#"SELECT plc_root FROM accounts WHERE did = ?"#, did_str)
                     .fetch_one(&db)
                     .await
-                    .context("failed to fetch user PLC root")
-                    .expect("should be able to fetch plc_root from accounts for did"),
+                    .context("failed to fetch user PLC root")?,
             ),
         },
     )
     .await
-    .context("failed to sign plc op")
-    .expect("should be able to sign plc op");
+    .context("failed to sign plc op")?;
 
     if !config.test {
         plc::submit(&client, did.as_str(), &op)
             .await
-            .context("failed to submit PLC operation")
-            .expect("should be able to submit PLC operation");
+            .context("failed to submit PLC operation")?;
     }
 
     // FIXME: Properly abstract these implementation details.
     let did_hash = did_str
         .strip_prefix("did:plc:")
-        .expect("should be valid DID format");
+        .context("should be valid DID format")?;
     let doc = tokio::fs::File::options()
         .read(true)
         .write(true)
         .open(config.plc.path.join(format!("{}.car", did_hash)))
         .await
-        .context("failed to open did doc")
-        .expect("should be able to open did doc at provided path to PLC carstore");
+        .context("failed to open did doc")?;
 
     let op_bytes = serde_ipld_dagcbor::to_vec(&op)
-        .context("failed to encode plc op")
-        .expect("should be able to encode plc op");
+        .context("failed to encode plc op")?;
 
     let plc_cid = CarStore::open(doc)
         .await
-        .context("failed to open did carstore")
-        .expect("should be able to open did carstore")
+        .context("failed to open did carstore")?
         .write_block(DAG_CBOR, SHA2_256, &op_bytes)
         .await
-        .context("failed to write genesis commit")
-        .expect("should be able to write genesis commit to did carstore");
+        .context("failed to write genesis commit")?;
 
     let cid_str = plc_cid.to_string();
 
@@ -182,8 +172,7 @@ async fn update_handle(
     )
     .execute(&db)
     .await
-    .context("failed to update account PLC root")
-    .expect("should be able to update `accounts` and set `plc_root` for `did`");
+    .context("failed to update account PLC root")?;
 
     // Broadcast the identity event now that the new identity is resolvable on the public directory.
     fhp.identity(

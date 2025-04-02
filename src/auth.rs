@@ -36,7 +36,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             .headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|auth| {
-                let auth = auth.to_str().ok()?;
+                let auth = auth.to_str().context("header should be valid utf-8").ok()?;
                 auth.strip_prefix("Bearer ")
             });
 
@@ -57,7 +57,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                 StatusCode::UNAUTHORIZED,
                 e.context("failed to verify auth token"),
             )
-        })?;
+        }).context("token auth should be verify")?;
 
         // Ensure this is an authentication token.
         if typ != "at+jwt" {
@@ -92,7 +92,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
                 .fetch_one(&state.db)
                 .await
-                .with_context(|| format!("failed to query account {did}"))?;
+                .with_context(|| format!("failed to query account {did}")).context("should fetch account status")?;
 
             Ok(Self {
                 did: did.to_owned(),
