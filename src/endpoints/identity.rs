@@ -153,8 +153,7 @@ async fn update_handle(
         .await
         .context("failed to open did doc")?;
 
-    let op_bytes = serde_ipld_dagcbor::to_vec(&op)
-        .context("failed to encode plc op")?;
+    let op_bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode plc op")?;
 
     let plc_cid = CarStore::open(doc)
         .await

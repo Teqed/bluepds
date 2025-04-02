@@ -169,10 +169,7 @@ fn scan_blobs(unknown: &Unknown) -> anyhow::Result<Vec<Cid>> {
                 if let (Some(blob_type), Some(blob_ref)) = (map.get("$type"), map.get("ref")) {
                     if blob_type == &serde_json::Value::String("blob".to_owned()) {
                         if let Ok(rf) = serde_json::from_value::<BlobRef>(blob_ref.clone()) {
-                            cids.push(
-                                Cid::from_str(&rf.link)
-                                    .context("failed to convert cid")?,
-                            );
+                            cids.push(Cid::from_str(&rf.link).context("failed to convert cid")?);
                         }
                     }
                 }
@@ -398,10 +395,7 @@ async fn apply_writes(
             .context("failed to extract key")?;
     }
 
-    let mut tx = db
-        .begin()
-        .await
-        .context("failed to begin transaction")?;
+    let mut tx = db.begin().await.context("failed to begin transaction")?;
 
     if !swap_commit(
         &mut *tx,
@@ -638,11 +632,9 @@ async fn put_record(
     };
     Ok(Json(
         repo::put_record::OutputData {
-            cid: cid
-                .context("missing cid")?,
+            cid: cid.context("missing cid")?,
             commit: write_result.commit.to_owned(),
-            uri: uri
-                .context("missing uri")?,
+            uri: uri.context("missing uri")?,
             validation_status: Some("unknown".to_owned()),
         }
         .into(),
@@ -710,11 +702,7 @@ async fn describe_repo(
 
     let mut tree = repo.tree();
     let mut it = Box::pin(tree.keys());
-    while let Some(key) = it
-        .try_next()
-        .await
-        .context("failed to iterate repo keys")?
-    {
+    while let Some(key) = it.try_next().await.context("failed to iterate repo keys")? {
         if let Some((collection, _rkey)) = key.split_once('/') {
             _ = collections.insert(collection.to_owned());
         }
@@ -764,10 +752,8 @@ async fn get_record(
         .await
         .context("failed to find record")?;
 
-    let record: Option<serde_json::Value> = repo
-        .get_raw(&key)
-        .await
-        .context("failed to read record")?;
+    let record: Option<serde_json::Value> =
+        repo.get_raw(&key).await.context("failed to read record")?;
 
     record.map_or_else(
         || {
@@ -898,19 +884,11 @@ async fn upload_blob(
     let mut len = 0_usize;
     let mut sha = Sha256::new();
     let mut stream = request.into_body().into_data_stream();
-    while let Some(bytes) = stream
-        .try_next()
-        .await
-        .context("failed to receive file")?
-    {
-        len = len
-            .checked_add(bytes.len())
-            .context("size overflow")?;
+    while let Some(bytes) = stream.try_next().await.context("failed to receive file")? {
+        len = len.checked_add(bytes.len()).context("size overflow")?;
 
         // Deal with any sneaky end-users trying to bypass size limitations.
-        let len_u64: u64 = len
-            .try_into()
-            .context("failed to convert `len`")?;
+        let len_u64: u64 = len.try_into().context("failed to convert `len`")?;
         if len_u64 > config.blob.limit {
             drop(file);
             tokio::fs::remove_file(&filename)

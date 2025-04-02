@@ -52,12 +52,14 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
 
         // N.B: We ignore all fields inside of the token up until this point because they can be
         // attacker-controlled.
-        let (typ, claims) = verify(&state.signing_key.did(), token).map_err(|e| {
-            Error::with_status(
-                StatusCode::UNAUTHORIZED,
-                e.context("failed to verify auth token"),
-            )
-        }).context("token auth should be verify")?;
+        let (typ, claims) = verify(&state.signing_key.did(), token)
+            .map_err(|e| {
+                Error::with_status(
+                    StatusCode::UNAUTHORIZED,
+                    e.context("failed to verify auth token"),
+                )
+            })
+            .context("token auth should be verify")?;
 
         // Ensure this is an authentication token.
         if typ != "at+jwt" {
@@ -92,7 +94,8 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
                 .fetch_one(&state.db)
                 .await
-                .with_context(|| format!("failed to query account {did}")).context("should fetch account status")?;
+                .with_context(|| format!("failed to query account {did}"))
+                .context("should fetch account status")?;
 
             Ok(Self {
                 did: did.to_owned(),

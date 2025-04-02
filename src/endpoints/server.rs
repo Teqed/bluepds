@@ -79,10 +79,7 @@ async fn create_account(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<server::create_account::Input>,
 ) -> Result<Json<server::create_account::Output>> {
-    let email = input
-        .email
-        .as_deref()
-        .context("no email provided")?;
+    let email = input.email.as_deref().context("no email provided")?;
     // Hash the user's password.
     let pass = Argon2::default()
         .hash_password(
@@ -124,10 +121,7 @@ async fn create_account(
 
     // Begin a new transaction to actually create the user's profile.
     // Unless committed, the transaction will be automatically rolled back.
-    let mut tx = db
-        .begin()
-        .await
-        .context("failed to begin transaction")?;
+    let mut tx = db.begin().await.context("failed to begin transaction")?;
 
     let _invite = match input.invite_code {
         Some(ref code) => {
@@ -145,8 +139,7 @@ async fn create_account(
             .await
             .context("failed to check invite code")?;
 
-            invite
-                .context("invalid invite code")?
+            invite.context("invalid invite code")?
         }
         None => {
             return Err(anyhow!("invite code required").into());
@@ -173,8 +166,7 @@ async fn create_account(
     )
     .await
     .context("failed to sign genesis op")?;
-    let op_bytes = serde_ipld_dagcbor::to_vec(&op)
-        .context("failed to encode genesis op")?;
+    let op_bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode genesis op")?;
 
     let did_hash = {
         let digest = base32::encode(
@@ -283,9 +275,7 @@ async fn create_account(
     .context("failed to create new account")?;
 
     // The account is fully created. Commit the SQL transaction to the database.
-    tx.commit()
-        .await
-        .context("failed to commit transaction")?;
+    tx.commit().await.context("failed to commit transaction")?;
 
     // Broadcast the identity event now that the new identity is resolvable on the public directory.
     fhp.identity(
@@ -415,8 +405,7 @@ async fn create_session(
 
     match Argon2::default().verify_password(
         password.as_bytes(),
-        &PasswordHash::new(account.password.as_str())
-            .context("invalid password hash in db")?,
+        &PasswordHash::new(account.password.as_str()).context("invalid password hash in db")?,
     ) {
         Ok(_) => {}
         Err(_e) => {
@@ -482,18 +471,17 @@ async fn refresh_session(
     req: Request,
 ) -> Result<Json<server::refresh_session::Output>> {
     // TODO: store hashes of refresh tokens and enforce single-use
-    let auth = req
+    let auth_token = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
-        .context("no authorization header provided")?;
-    let token = auth
+        .context("no authorization header provided")?
         .to_str()
         .ok()
         .and_then(|auth| auth.strip_prefix("Bearer "))
         .context("invalid authentication token")?;
 
-    let (typ, claims) = auth::verify(&skey.did(), token)
-        .context("failed to verify refresh token")?;
+    let (typ, claims) =
+        auth::verify(&skey.did(), auth_token).context("failed to verify refresh token")?;
     if typ != "refresh+jwt" {
         return Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
@@ -630,7 +618,7 @@ async fn get_session(
     State(db): State<Db>,
 ) -> Result<Json<server::get_session::Output>> {
     let did = user.did();
-
+    #[expect(clippy::shadow_unrelated, reason = "is related")]
     if let Some(user) = sqlx::query!(
         r#"
         SELECT a.email, a.status, (

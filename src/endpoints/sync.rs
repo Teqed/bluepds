@@ -318,7 +318,7 @@ async fn list_repos(
 }
 
 async fn subscribe_repos(
-    ws: WebSocketUpgrade,
+    ws_up: WebSocketUpgrade,
     State(fh): State<FirehoseProducer>,
     Query(input): Query<SubscribeReposParametersData>,
 ) -> impl IntoResponse {
@@ -331,8 +331,7 @@ async fn subscribe_repos(
                 .expect("should be a valid response");
         }
     };
-
-    ws.on_upgrade(async move |ws| {
+    ws_up.on_upgrade(async move |ws| {
         fh.client_connection(ws, cursor).await;
     })
 }

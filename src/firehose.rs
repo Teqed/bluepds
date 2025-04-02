@@ -277,10 +277,8 @@ async fn handle_connect(
             let msg = sync::subscribe_repos::Error::FutureCursor(Some(format!(
                 "cursor {cursor} is greater than the current sequence number {seq}"
             )));
-
             serde_ipld_dagcbor::to_writer(&mut frame, &hdr).expect("should serialize header");
             serde_ipld_dagcbor::to_writer(&mut frame, &msg).expect("should serialize message");
-
             // Drop the connection.
             drop(ws.send(Message::binary(frame)).await);
             bail!(
@@ -288,20 +286,17 @@ async fn handle_connect(
             );
         }
 
-        for &(seq, ty, ref msg) in history.iter() {
-            if seq > cursor {
-                break;
+        for &(historical_seq, ty, ref msg) in history.iter() {
+            if cursor > historical_seq {
+                continue;
             }
-
             let hdr = FrameHeader::Message(ty.to_owned());
             serde_ipld_dagcbor::to_writer(&mut frame, &hdr).expect("should serialize header");
             serde_ipld_dagcbor::to_writer(&mut frame, msg).expect("should serialize message");
-
             if let Err(e) = ws.send(Message::binary(frame.clone())).await {
                 debug!("Firehose client disconnected during backfill: {e}");
                 break;
             }
-
             // Clear out the frame to begin a new one.
             frame.clear();
         }

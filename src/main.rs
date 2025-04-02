@@ -227,14 +227,14 @@ Most API routes are under /xrpc/
 ///
 /// Reference: https://atproto.com/specs/xrpc#service-proxying
 async fn service_proxy(
-    url: Uri,
+    uri: Uri,
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
     State(client): State<reqwest::Client>,
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response<Body>> {
-    let url_path = url.path_and_query().context("invalid service proxy url")?;
+    let url_path = uri.path_and_query().context("invalid service proxy url")?;
     let lxm = url_path
         .path()
         .strip_prefix("/")
