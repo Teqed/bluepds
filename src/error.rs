@@ -11,15 +11,22 @@ use tracing::error;
 #[derive(Error)]
 #[expect(clippy::error_impl_error, reason = "just one")]
 pub struct Error {
+    /// The actual error that occurred.
     err: anyhow::Error,
+    /// The error message to be returned as JSON body.
     message: Option<ErrorMessage>,
+    /// The HTTP status code to be returned.
     status: StatusCode,
 }
 
 #[derive(Default, serde::Serialize)]
 /// A JSON error message.
 pub(crate) struct ErrorMessage {
+    /// The error type.
+    /// This is used to identify the error in the client.
+    /// E.g. `InvalidRequest`, `ExpiredToken`, `InvalidToken`, `HandleNotFound`.
     error: String,
+    /// The error message.
     message: String,
 }
 impl std::fmt::Display for ErrorMessage {
@@ -91,7 +98,6 @@ impl std::fmt::Debug for Error {
 }
 
 impl IntoResponse for Error {
-    #[expect(clippy::cognitive_complexity)]
     fn into_response(self) -> Response {
         error!("{:?}", self.err);
 

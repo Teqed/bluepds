@@ -1,3 +1,4 @@
+//! Identity endpoints (/xrpc/com.atproto.identity.*)
 use std::collections::HashMap;
 
 use anyhow::{Context as _, anyhow};
@@ -24,6 +25,13 @@ use crate::{
     plc::{self, PlcOperation, PlcService},
 };
 
+/// (GET) Resolves an atproto handle (hostname) to a DID. Does not necessarily bi-directionally verify against the the DID document.
+/// ### Query Parameters
+/// - handle: The handle to resolve.
+/// ### Responses
+/// - 200 OK: {did: did}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `HandleNotFound`]}
+/// - 401 Unauthorized
 async fn resolve_handle(
     State(db): State<Db>,
     State(client): State<Client>,
@@ -58,11 +66,28 @@ async fn resolve_handle(
 }
 
 #[expect(unused_variables, clippy::todo, reason = "Not yet implemented")]
+/// Request an email with a code to in order to request a signed PLC operation. Requires Auth.
+/// - POST /xrpc/com.atproto.identity.requestPlcOperationSignature
+/// ### Responses
+/// - 200 OK
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn request_plc_operation_signature(user: AuthenticatedUser) -> Result<()> {
     todo!()
 }
 
 #[expect(unused_variables, clippy::todo, reason = "Not yet implemented")]
+/// Signs a PLC operation to update some value(s) in the requesting DID's document.
+/// - POST /xrpc/com.atproto.identity.signPlcOperation
+/// ### Request Body
+/// - token: string // A token received through com.atproto.identity.requestPlcOperationSignature
+/// - rotationKeys: string[]
+/// - alsoKnownAs: string[]
+/// - verificationMethods: services
+/// ### Responses
+/// - 200 OK: {operation: string}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn sign_plc_operation(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -77,6 +102,18 @@ async fn sign_plc_operation(
     clippy::too_many_arguments,
     reason = "Many parameters are required for this endpoint"
 )]
+/// Updates the current account's handle. Verifies handle validity, and updates did:plc document if necessary. Implemented by PDS, and requires auth.
+/// - POST /xrpc/com.atproto.identity.updateHandle
+/// ### Query Parameters
+/// - handle: handle // The new handle.
+/// ### Responses
+/// - 200 OK
+/// ## Errors
+/// - If the handle is already in use.
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
+/// ## Panics
+/// - If the handle is not valid.
 async fn update_handle(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -133,7 +170,6 @@ async fn update_handle(
             ),
         },
     )
-    .await
     .context("failed to sign plc op")?;
 
     if !config.test {
@@ -149,7 +185,7 @@ async fn update_handle(
     let doc = tokio::fs::File::options()
         .read(true)
         .write(true)
-        .open(config.plc.path.join(format!("{}.car", did_hash)))
+        .open(config.plc.path.join(format!("{did_hash}.car")))
         .await
         .context("failed to open did doc")?;
 
@@ -188,11 +224,13 @@ async fn update_handle(
 }
 
 #[rustfmt::skip]
+/// Identity endpoints (/xrpc/com.atproto.identity.*)
+/// ### Routes
+/// - AP /xrpc/com.atproto.identity.updateHandle                    -> [`update_handle`]
+/// - AP /xrpc/com.atproto.identity.requestPlcOperationSignature    -> [`request_plc_operation_signature`]
+/// - AP /xrpc/com.atproto.identity.signPlcOperation                -> [`sign_plc_operation`]
+/// - UG /xrpc/com.atproto.identity.resolveHandle                   -> [`resolve_handle`]
 pub(super) fn routes() -> Router<AppState> {
-    // AP /xrpc/com.atproto.identity.updateHandle
-    // AP /xrpc/com.atproto.identity.requestPlcOperationSignature
-    // AP /xrpc/com.atproto.identity.signPlcOperation
-    // UG /xrpc/com.atproto.identity.resolveHandle
     Router::new()
         .route(concat!("/", identity::update_handle::NSID),                   post(update_handle))
         .route(concat!("/", identity::request_plc_operation_signature::NSID), post(request_plc_operation_signature))

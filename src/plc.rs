@@ -72,10 +72,7 @@ pub(crate) struct SignedPlcOperation {
     pub sig: String,
 }
 
-pub(crate) async fn sign_op(
-    rkey: &RotationKey,
-    op: PlcOperation,
-) -> anyhow::Result<SignedPlcOperation> {
+pub(crate) fn sign_op(rkey: &RotationKey, op: PlcOperation) -> anyhow::Result<SignedPlcOperation> {
     let bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode op")?;
     let bytes = rkey.sign(&bytes).context("failed to sign op")?;
 

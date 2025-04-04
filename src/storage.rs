@@ -1,4 +1,4 @@
-//! ATProto user repository datastore functionality.
+//! `ATProto` user repository datastore functionality.
 
 use std::str::FromStr as _;
 

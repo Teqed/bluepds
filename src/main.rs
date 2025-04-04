@@ -68,14 +68,19 @@ mod actor_endpoints {
         }
     }
 
-    #[rustfmt::skip]
     /// Register all actor endpoints.
     pub(crate) fn routes() -> Router<AppState> {
         // AP /xrpc/app.bsky.actor.putPreferences
         // AG /xrpc/app.bsky.actor.getPreferences
         Router::new()
-            .route(concat!("/", actor::put_preferences::NSID), post(put_preferences))
-            .route(concat!("/", actor::get_preferences::NSID),  get(get_preferences))
+            .route(
+                concat!("/", actor::put_preferences::NSID),
+                post(put_preferences),
+            )
+            .route(
+                concat!("/", actor::get_preferences::NSID),
+                get(get_preferences),
+            )
     }
 }
 
@@ -202,7 +207,7 @@ struct AppState {
 
 /// The index (/) route.
 async fn index() -> impl IntoResponse {
-    r#"
+    r"
          __                         __
         /\ \__                     /\ \__
     __  \ \ ,_\  _____   _ __   ___\ \ ,_\   ___
@@ -220,12 +225,12 @@ Most API routes are under /xrpc/
 
       Code: https://github.com/DrChat/bluepds
   Protocol: https://atproto.com
-    "#
+    "
 }
 
 /// Service proxy.
 ///
-/// Reference: https://atproto.com/specs/xrpc#service-proxying
+/// Reference: <https://atproto.com/specs/xrpc#service-proxying>
 async fn service_proxy(
     uri: Uri,
     user: AuthenticatedUser,
@@ -265,19 +270,16 @@ async fn service_proxy(
         .await
         .with_context(|| format!("failed to resolve did document {}", did.as_str()))?;
 
-    let service = match did_doc.service.iter().find(|s| s.id == id) {
-        Some(service) => service,
-        None => {
-            return Err(Error::with_status(
-                StatusCode::BAD_REQUEST,
-                anyhow!("could not find resolve service #{id}"),
-            ));
-        }
+    let Some(service) = did_doc.service.iter().find(|s| s.id == id) else {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("could not find resolve service #{id}"),
+        ));
     };
 
-    let url = service
+    let target_url: url::Url = service
         .service_endpoint
-        .join(&format!("/xrpc{}", url_path))
+        .join(&format!("/xrpc{url_path}"))
         .context("failed to construct target url")?;
 
     let exp = (chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(1)))
@@ -294,7 +296,7 @@ async fn service_proxy(
     let token = auth::sign(
         &skey,
         "JWT",
-        serde_json::json!({
+        &serde_json::json!({
             "iss": user_did.as_str(),
             "aud": did.as_str(),
             "lxm": lxm,
@@ -313,7 +315,7 @@ async fn service_proxy(
     }
 
     let r = client
-        .request(request.method().clone(), url)
+        .request(request.method().clone(), target_url)
         .headers(h)
         .header(http::header::AUTHORIZATION, format!("Bearer {token}"))
         .body(reqwest::Body::wrap_stream(
@@ -338,6 +340,7 @@ async fn service_proxy(
 /// The main application entry point.
 #[expect(
     clippy::cognitive_complexity,
+    clippy::too_many_lines,
     reason = "main function has high complexity"
 )]
 async fn run() -> anyhow::Result<()> {
@@ -346,10 +349,9 @@ async fn run() -> anyhow::Result<()> {
     // Set up trace logging to console and account for the user-provided verbosity flag.
     if args.verbosity.log_level_filter() != LevelFilter::Off {
         let lvl = match args.verbosity.log_level_filter() {
-            LevelFilter::Off => tracing::Level::INFO,
             LevelFilter::Error => tracing::Level::ERROR,
             LevelFilter::Warn => tracing::Level::WARN,
-            LevelFilter::Info => tracing::Level::INFO,
+            LevelFilter::Info | LevelFilter::Off => tracing::Level::INFO,
             LevelFilter::Debug => tracing::Level::DEBUG,
             LevelFilter::Trace => tracing::Level::TRACE,
         };
@@ -384,7 +386,7 @@ async fn run() -> anyhow::Result<()> {
     }
 
     // Initialize metrics reporting.
-    metrics::setup(&config.metrics).context("failed to set up metrics exporter")?;
+    metrics::setup(config.metrics.as_ref()).context("failed to set up metrics exporter")?;
 
     // Create a reqwest client that will be used for all outbound requests.
     let simple_client = reqwest::Client::builder()
@@ -404,35 +406,29 @@ async fn run() -> anyhow::Result<()> {
         .context("failed to create key directory")?;
 
     // Check if crypto keys exist. If not, create new ones.
-    let (skey, rkey) = match std::fs::File::open(&config.key) {
-        Ok(f) => {
-            let keys: KeyData = serde_ipld_dagcbor::from_reader(std::io::BufReader::new(f))
-                .context("failed to deserialize crypto keys")?;
+    let (skey, rkey) = if let Ok(f) = std::fs::File::open(&config.key) {
+        let keys: KeyData = serde_ipld_dagcbor::from_reader(std::io::BufReader::new(f))
+            .context("failed to deserialize crypto keys")?;
 
-            let skey =
-                Secp256k1Keypair::import(&keys.skey).context("failed to import signing key")?;
-            let rkey =
-                Secp256k1Keypair::import(&keys.rkey).context("failed to import rotation key")?;
+        let skey = Secp256k1Keypair::import(&keys.skey).context("failed to import signing key")?;
+        let rkey = Secp256k1Keypair::import(&keys.rkey).context("failed to import rotation key")?;
 
-            (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
-        }
-        _ => {
-            info!("signing keys not found, generating new ones");
+        (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
+    } else {
+        info!("signing keys not found, generating new ones");
 
-            let skey = Secp256k1Keypair::create(&mut rand::thread_rng());
-            let rkey = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let skey = Secp256k1Keypair::create(&mut rand::thread_rng());
+        let rkey = Secp256k1Keypair::create(&mut rand::thread_rng());
 
-            let keys = KeyData {
-                skey: skey.export(),
-                rkey: rkey.export(),
-            };
+        let keys = KeyData {
+            skey: skey.export(),
+            rkey: rkey.export(),
+        };
 
-            let mut f = std::fs::File::create(&config.key).context("failed to create key file")?;
-            serde_ipld_dagcbor::to_writer(&mut f, &keys)
-                .context("failed to serialize crypto keys")?;
+        let mut f = std::fs::File::create(&config.key).context("failed to create key file")?;
+        serde_ipld_dagcbor::to_writer(&mut f, &keys).context("failed to serialize crypto keys")?;
 
-            (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
-        }
+        (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
     };
 
     tokio::fs::create_dir_all(&config.repo.path).await?;
@@ -451,7 +447,7 @@ async fn run() -> anyhow::Result<()> {
         .await
         .context("failed to apply migrations")?;
 
-    let (_fh, fhp) = firehose::spawn(client.clone(), config.clone()).await;
+    let (_fh, fhp) = firehose::spawn(client.clone(), config.clone());
 
     let addr = config
         .listen_address
@@ -536,7 +532,7 @@ async fn run() -> anyhow::Result<()> {
 
     serve
         .await
-        .map_err(|e| e.into())
+        .map_err(Into::into)
         .and_then(|r| r)
         .context("failed to serve app")
 }

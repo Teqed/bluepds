@@ -69,7 +69,7 @@ pub(crate) async fn resolve(client: &Client, did: Did) -> Result<DidDocument> {
                 bail!("forbidden URL {host}");
             }
 
-            format!("https://{}/.well-known/did.json", host)
+            format!("https://{host}/.well-known/did.json")
         }
         "did:plc" => {
             format!("https://plc.directory/{}", did.as_str())

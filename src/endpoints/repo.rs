@@ -1,3 +1,4 @@
+//! PDS repository endpoints /xrpc/com.atproto.repo.*)
 use std::{collections::HashSet, str::FromStr as _};
 
 use anyhow::{Context as _, anyhow};
@@ -38,17 +39,21 @@ const IPLD_RAW: u64 = 0x55;
 /// SHA2-256 mulithash
 const IPLD_MH_SHA2_256: u64 = 0x12;
 
+/// Used in [`scan_blobs`] to identify a blob.
 #[derive(Deserialize, Debug, Clone)]
 struct BlobRef {
+    /// `BlobRef` link. Include `$` when serializing to JSON, since `$` isn't allowed in struct names.
     #[serde(rename = "$link")]
     link: String,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// Parameters for [`list_records`].
 pub(super) struct ListRecordsParameters {
     ///The NSID of the record type.
     pub collection: Nsid,
+    /// The cursor to start from.
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
     pub cursor: Option<String>,
     ///The number of records to return.
@@ -108,6 +113,13 @@ async fn swap_commit(
     }
 }
 
+/// Resolves DID to DID document. Does not bi-directionally verify handle.
+/// - GET /xrpc/com.atproto.repo.resolveDid
+/// ### Query Parameters
+/// - `did`: DID to resolve.
+/// ### Responses
+/// - 200 OK: {`did_doc`: `did_doc`}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `DidNotFound`, `DidDeactivated`]}
 async fn resolve_did(
     db: &Db,
     identifier: &AtIdentifier,
@@ -150,6 +162,7 @@ async fn resolve_did(
     Ok((did.to_owned(), handle.to_owned()))
 }
 
+/// Used in [`apply_writes`] to scan for blobs in the JSON object and return their CIDs.
 fn scan_blobs(unknown: &Unknown) -> anyhow::Result<Vec<Cid>> {
     // { "$type": "blob", "ref": { "$link": "bafyrei..." } }
 
@@ -160,10 +173,10 @@ fn scan_blobs(unknown: &Unknown) -> anyhow::Result<Vec<Cid>> {
     ];
     while let Some(value) = stack.pop() {
         match value {
-            serde_json::Value::Null => (),
-            serde_json::Value::Bool(_) => (),
-            serde_json::Value::Number(_) => (),
-            serde_json::Value::String(_) => (),
+            serde_json::Value::Bool(_)
+            | serde_json::Value::Null
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => (),
             serde_json::Value::Array(values) => stack.extend(values.into_iter()),
             serde_json::Value::Object(map) => {
                 if let (Some(blob_type), Some(blob_ref)) = (map.get("$type"), map.get("ref")) {
@@ -196,14 +209,28 @@ fn test_scan_blobs() {
         }
     });
 
-    let blob = scan_blobs(&json.try_into_unknown().unwrap()).unwrap();
+    let blob = scan_blobs(&json.try_into_unknown().expect("should be valid JSON"))
+        .expect("should be able to scan blobs");
     assert_eq!(
         blob,
-        vec![Cid::from_str("bafkreifzxf2wa6dyakzbdaxkz2wkvfrv3hiuafhxewbn5wahcw6eh3hzji").unwrap()]
+        vec![
+            Cid::from_str("bafkreifzxf2wa6dyakzbdaxkz2wkvfrv3hiuafhxewbn5wahcw6eh3hzji")
+                .expect("should be valid CID")
+        ]
     );
 }
 
-#[expect(clippy::large_stack_frames)]
+#[expect(clippy::too_many_lines)]
+/// Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
+/// - POST /xrpc/com.atproto.repo.applyWrites
+/// ### Request Body
+/// - `repo`: `at-identifier` // The handle or DID of the repo (aka, current account).
+/// - `validate`: `boolean` // Can be set to 'false' to skip Lexicon schema validation of record data across all operations, 'true' to require it, or leave unset to validate only for known Lexicons.
+/// - `writes`: `object[]` // One of:
+/// - - com.atproto.repo.applyWrites.create
+/// - - com.atproto.repo.applyWrites.update
+/// - - com.atproto.repo.applyWrites.delete
+/// - `swap_commit`: `cid` // If provided, the entire operation will fail if the current repo commit CID does not match this value. Used to prevent conflicting repo mutations.
 async fn apply_writes(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -257,7 +284,7 @@ async fn apply_writes(
                     blobs.extend(
                         new_blobs
                             .into_iter()
-                            .map(|blob_cid| (key.to_owned(), blob_cid)),
+                            .map(|blob_cid| (key.clone(), blob_cid)),
                     );
                 }
 
@@ -296,7 +323,7 @@ async fn apply_writes(
                         blobs.extend(
                             new_blobs
                                 .into_iter()
-                                .map(|blod_cid| (key.to_owned(), blod_cid)),
+                                .map(|blod_cid| (key.clone(), blod_cid)),
                         );
                     }
                     ops.push(RepoOp::Create {
@@ -322,7 +349,7 @@ async fn apply_writes(
                         blobs.extend(
                             new_blobs
                                 .into_iter()
-                                .map(|blod_cid| (key.to_owned(), blod_cid)),
+                                .map(|blod_cid| (key.clone(), blod_cid)),
                         );
                     }
                     ops.push(RepoOp::Update {
@@ -445,11 +472,10 @@ async fn apply_writes(
                 .await
                 .context("failed to remove blob_ref")?;
             }
-            _ => {}
+            &RepoOp::Create { .. } => {}
         }
     }
 
-    // for (key, cid) in &blobs {
     for &mut (ref key, cid) in &mut blobs {
         let cid_str = cid.to_string();
 
@@ -520,6 +546,19 @@ async fn apply_writes(
     ))
 }
 
+/// Create a single new repository record. Requires auth, implemented by PDS.
+/// - POST /xrpc/com.atproto.repo.createRecord
+/// ### Request Body
+/// - `repo`: `at-identifier` // The handle or DID of the repo (aka, current account).
+/// - `collection`: `nsid` // The NSID of the record collection.
+/// - `rkey`: `string` // The record key. <= 512 characters.
+/// - `validate`: `boolean` // Can be set to 'false' to skip Lexicon schema validation of record data, 'true' to require it, or leave unset to validate only for known Lexicons.
+/// - `record`
+/// - `swap_commit`: `cid` // Compare and swap with the previous commit by CID.
+/// ### Responses
+/// - 200 OK: {`cid`: `cid`, `uri`: `at-uri`, `commit`: {`cid`: `cid`, `rev`: `tid`}, `validation_status`: [`valid`, `unknown`]}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `InvalidSwap`]}
+/// - 401 Unauthorized
 async fn create_record(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -536,14 +575,14 @@ async fn create_record(
         State(fhp),
         Json(
             repo::apply_writes::InputData {
-                repo: input.repo.to_owned(),
-                validate: input.validate.to_owned(),
-                swap_commit: input.swap_commit.to_owned(),
+                repo: input.repo.clone(),
+                validate: input.validate,
+                swap_commit: input.swap_commit.clone(),
                 writes: vec![repo::apply_writes::InputWritesItem::Create(Box::new(
                     repo::apply_writes::CreateData {
-                        collection: input.collection.to_owned(),
-                        rkey: input.rkey.to_owned(),
-                        value: input.record.to_owned(),
+                        collection: input.collection.clone(),
+                        rkey: input.rkey.clone(),
+                        value: input.record.clone(),
                     }
                     .into(),
                 ))],
@@ -557,7 +596,7 @@ async fn create_record(
     let create_result = if let repo::apply_writes::OutputResultsItem::CreateResult(create_result) =
         write_result
             .results
-            .to_owned()
+            .clone()
             .and_then(|result| result.first().cloned())
             .context("unexpected output from apply_writes")?
     {
@@ -569,15 +608,29 @@ async fn create_record(
 
     Ok(Json(
         repo::create_record::OutputData {
-            cid: create_result.cid.to_owned(),
-            commit: write_result.commit.to_owned(),
-            uri: create_result.uri.to_owned(),
+            cid: create_result.cid.clone(),
+            commit: write_result.commit.clone(),
+            uri: create_result.uri.clone(),
             validation_status: Some("unknown".to_owned()),
         }
         .into(),
     ))
 }
 
+/// Write a repository record, creating or updating it as needed. Requires auth, implemented by PDS.
+/// - POST /xrpc/com.atproto.repo.putRecord
+/// ### Request Body
+/// - `repo`: `at-identifier` // The handle or DID of the repo (aka, current account).
+/// - `collection`: `nsid` // The NSID of the record collection.
+/// - `rkey`: `string` // The record key. <= 512 characters.
+/// - `validate`: `boolean` // Can be set to 'false' to skip Lexicon schema validation of record data, 'true' to require it, or leave unset to validate only for known Lexicons.
+/// - `record`
+/// - `swap_record`: `boolean` // Compare and swap with the previous record by CID. WARNING: nullable and optional field; may cause problems with golang implementation
+/// - `swap_commit`: `cid` // Compare and swap with the previous commit by CID.
+/// ### Responses
+/// - 200 OK: {"uri": "string","cid": "string","commit": {"cid": "string","rev": "string"},"validationStatus": "valid | unknown"}
+/// - 400 Bad Request: {error:"`InvalidRequest` | `ExpiredToken` | `InvalidToken` | `InvalidSwap`"}
+/// - 401 Unauthorized
 async fn put_record(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -596,14 +649,14 @@ async fn put_record(
         State(fhp),
         Json(
             repo::apply_writes::InputData {
-                repo: input.repo.to_owned(),
+                repo: input.repo.clone(),
                 validate: input.validate,
-                swap_commit: input.swap_commit.to_owned(),
+                swap_commit: input.swap_commit.clone(),
                 writes: vec![repo::apply_writes::InputWritesItem::Update(Box::new(
                     repo::apply_writes::UpdateData {
-                        collection: input.collection.to_owned(),
-                        rkey: input.rkey.to_owned(),
-                        value: input.record.to_owned(),
+                        collection: input.collection.clone(),
+                        rkey: input.rkey.clone(),
+                        value: input.record.clone(),
                     }
                     .into(),
                 ))],
@@ -616,24 +669,24 @@ async fn put_record(
 
     let update_result = write_result
         .results
-        .to_owned()
+        .clone()
         .and_then(|result| result.first().cloned())
         .context("unexpected output from apply_writes")?;
     let (cid, uri) = match update_result {
         repo::apply_writes::OutputResultsItem::CreateResult(create_result) => (
-            Some(create_result.cid.to_owned()),
-            Some(create_result.uri.to_owned()),
+            Some(create_result.cid.clone()),
+            Some(create_result.uri.clone()),
         ),
         repo::apply_writes::OutputResultsItem::UpdateResult(update_result) => (
-            Some(update_result.cid.to_owned()),
-            Some(update_result.uri.to_owned()),
+            Some(update_result.cid.clone()),
+            Some(update_result.uri.clone()),
         ),
-        _ => (None, None),
+        repo::apply_writes::OutputResultsItem::DeleteResult(_) => (None, None),
     };
     Ok(Json(
         repo::put_record::OutputData {
             cid: cid.context("missing cid")?,
-            commit: write_result.commit.to_owned(),
+            commit: write_result.commit.clone(),
             uri: uri.context("missing uri")?,
             validation_status: Some("unknown".to_owned()),
         }
@@ -641,6 +694,18 @@ async fn put_record(
     ))
 }
 
+/// Delete a repository record, or ensure it doesn't exist. Requires auth, implemented by PDS.
+/// - POST /xrpc/com.atproto.repo.deleteRecord
+/// ### Request Body
+/// - `repo`: `at-identifier` // The handle or DID of the repo (aka, current account).
+/// - `collection`: `nsid` // The NSID of the record collection.
+/// - `rkey`: `string` // The record key. <= 512 characters.
+/// - `swap_record`: `boolean` // Compare and swap with the previous record by CID.
+/// - `swap_commit`: `cid` // Compare and swap with the previous commit by CID.
+/// ### Responses
+/// - 200 OK: {"commit": {"cid": "string","rev": "string"}}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `InvalidSwap`]}
+/// - 401 Unauthorized
 async fn delete_record(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -661,13 +726,13 @@ async fn delete_record(
                 State(fhp),
                 Json(
                     repo::apply_writes::InputData {
-                        repo: input.repo.to_owned(),
-                        swap_commit: input.swap_commit.to_owned(),
+                        repo: input.repo.clone(),
+                        swap_commit: input.swap_commit.clone(),
                         validate: None,
                         writes: vec![repo::apply_writes::InputWritesItem::Delete(Box::new(
                             repo::apply_writes::DeleteData {
-                                collection: input.collection.to_owned(),
-                                rkey: input.rkey.to_owned(),
+                                collection: input.collection.clone(),
+                                rkey: input.rkey.clone(),
                             }
                             .into(),
                         ))],
@@ -678,12 +743,21 @@ async fn delete_record(
             .await
             .context("failed to apply writes")?
             .commit
-            .to_owned(),
+            .clone(),
         }
         .into(),
     ))
 }
 
+/// Get information about an account and repository, including the list of collections. Does not require auth.
+/// - GET /xrpc/com.atproto.repo.describeRepo
+/// ### Query Parameters
+/// - `repo`: `at-identifier` // The handle or DID of the repo.
+/// ### Responses
+/// - 200 OK: {"handle": "string","did": "string","didDoc": {},"collections": [string],"handleIsCorrect": true} \
+///   handeIsCorrect - boolean - Indicates if handle is currently valid (resolves bi-directionally)
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn describe_repo(
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -723,6 +797,17 @@ async fn describe_repo(
     ))
 }
 
+/// Get a single record from a repository. Does not require auth.
+/// - GET /xrpc/com.atproto.repo.getRecord
+/// ### Query Parameters
+/// - `repo`: `at-identifier` // The handle or DID of the repo.
+/// - `collection`: `nsid` // The NSID of the record collection.
+/// - `rkey`: `string` // The record key. <= 512 characters.
+/// - `cid`: `cid` // The CID of the version of the record. If not specified, then return the most recent version.
+/// ### Responses
+/// - 200 OK: {"uri": "string","cid": "string","value": {}}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `RecordNotFound`]}
+/// - 401 Unauthorized
 async fn get_record(
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -760,17 +845,14 @@ async fn get_record(
             Err(Error::with_message(
                 StatusCode::BAD_REQUEST,
                 anyhow!("could not find the requested record at {}", uri),
-                ErrorMessage::new(
-                    "RecordNotFound",
-                    format!("Could not locate record: {}", uri),
-                ),
+                ErrorMessage::new("RecordNotFound", format!("Could not locate record: {uri}")),
             ))
         },
         |record_value| {
             Ok(Json(
                 repo::get_record::OutputData {
                     cid: cid.map(atrium_api::types::string::Cid::new),
-                    uri: uri.to_owned(),
+                    uri: uri.clone(),
                     value: record_value
                         .try_into_unknown()
                         .context("should be valid JSON")?,
@@ -781,6 +863,18 @@ async fn get_record(
     )
 }
 
+/// List a range of records in a repository, matching a specific collection. Does not require auth.
+/// - GET /xrpc/com.atproto.repo.listRecords
+/// ### Query Parameters
+/// - `repo`: `at-identifier` // The handle or DID of the repo.
+/// - `collection`: `nsid` // The NSID of the record type.
+/// - `limit`: `integer` // The maximum number of records to return. Default 50, >=1 and <=100.
+/// - `cursor`: `string`
+/// - `reverse`: `boolean` // Flag to reverse the order of the returned records.
+/// ### Responses
+/// - 200 OK: {"cursor": "string","records": [{"uri": "string","cid": "string","value": {}}]}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn list_records(
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -830,7 +924,7 @@ async fn list_records(
                 value: value.try_into_unknown().context("should be valid JSON")?,
             }
             .into(),
-        )
+        );
     }
 
     #[expect(clippy::pattern_type_mismatch)]
@@ -843,6 +937,16 @@ async fn list_records(
     ))
 }
 
+/// Upload a new blob, to be referenced from a repository record. \
+/// The blob will be deleted if it is not referenced within a time window (eg, minutes). \
+/// Blob restrictions (mimetype, size, etc) are enforced when the reference is created. \
+/// Requires auth, implemented by PDS.
+/// - POST /xrpc/com.atproto.repo.uploadBlob
+/// ### Request Body
+/// ### Responses
+/// - 200 OK: {"blob": "binary"}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn upload_blob(
     user: AuthenticatedUser,
     State(config): State<AppConfig>,
@@ -919,12 +1023,9 @@ async fn upload_blob(
 
     let cid_str = cid.to_string();
 
-    tokio::fs::rename(
-        &filename,
-        config.blob.path.join(format!("{}.blob", cid_str)),
-    )
-    .await
-    .context("failed to finalize blob")?;
+    tokio::fs::rename(&filename, config.blob.path.join(format!("{cid_str}.blob")))
+        .await
+        .context("failed to finalize blob")?;
 
     let did_str = user.did();
 
@@ -951,23 +1052,25 @@ async fn upload_blob(
     ))
 }
 
-#[rustfmt::skip]
+/// These endpoints are part of the atproto PDS repository management APIs. \
+/// Requests usually require authentication (unlike the com.atproto.sync.* endpoints), and are made directly to the user's own PDS instance.
+/// ### Routes
+/// - AP /xrpc/com.atproto.repo.applyWrites     -> [`apply_writes`]
+/// - AP /xrpc/com.atproto.repo.createRecord    -> [`create_record`]
+/// - AP /xrpc/com.atproto.repo.putRecord       -> [`put_record`]
+/// - AP /xrpc/com.atproto.repo.deleteRecord    -> [`delete_record`]
+/// - AP /xrpc/com.atproto.repo.uploadBlob      -> [`upload_blob`]
+/// - UG /xrpc/com.atproto.repo.describeRepo    -> [`describe_repo`]
+/// - UG /xrpc/com.atproto.repo.getRecord       -> [`get_record`]
+/// - UG /xrpc/com.atproto.repo.listRecords     -> [`list_records`]
 pub(super) fn routes() -> Router<AppState> {
-    // AP /xrpc/com.atproto.repo.applyWrites
-    // AP /xrpc/com.atproto.repo.createRecord
-    // AP /xrpc/com.atproto.repo.putRecord
-    // AP /xrpc/com.atproto.repo.deleteRecord
-    // AP /xrpc/com.atproto.repo.uploadBlob
-    // UG /xrpc/com.atproto.repo.describeRepo
-    // UG /xrpc/com.atproto.repo.getRecord
-    // UG /xrpc/com.atproto.repo.listRecords
     Router::new()
-        .route(concat!("/", repo::apply_writes::NSID),  post(apply_writes))
+        .route(concat!("/", repo::apply_writes::NSID), post(apply_writes))
         .route(concat!("/", repo::create_record::NSID), post(create_record))
-        .route(concat!("/", repo::put_record::NSID),    post(put_record))
+        .route(concat!("/", repo::put_record::NSID), post(put_record))
         .route(concat!("/", repo::delete_record::NSID), post(delete_record))
-        .route(concat!("/", repo::upload_blob::NSID),   post(upload_blob))
+        .route(concat!("/", repo::upload_blob::NSID), post(upload_blob))
         .route(concat!("/", repo::describe_repo::NSID), get(describe_repo))
-        .route(concat!("/", repo::get_record::NSID),    get(get_record))
-        .route(concat!("/", repo::list_records::NSID),  get(list_records))
+        .route(concat!("/", repo::get_record::NSID), get(get_record))
+        .route(concat!("/", repo::list_records::NSID), get(list_records))
 }

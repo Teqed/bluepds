@@ -145,6 +145,7 @@ impl From<Commit> for sync::subscribe_repos::Commit {
 /// A firehose producer. This is used to transmit messages to the firehose for broadcast.
 #[derive(Clone, Debug)]
 pub(crate) struct FirehoseProducer {
+    /// The channel to send messages to the firehose.
     tx: tokio::sync::mpsc::Sender<FirehoseMessage>,
 }
 
@@ -189,20 +190,24 @@ impl FirehoseProducer {
     }
 }
 
-#[expect(clippy::as_conversions)]
+#[expect(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::arithmetic_side_effects
+)]
+/// Convert a `usize` to a `f64`.
 const fn convert_usize_f64(x: usize) -> Result<f64, &'static str> {
     let result = x as f64;
-    if result as usize != x {
+    if result as usize - x > 0 {
         return Err("cannot convert");
     }
     Ok(result)
 }
 
 /// Serialize a message.
-async fn serialize_message(
-    seq: u64,
-    mut msg: sync::subscribe_repos::Message,
-) -> (&'static str, Vec<u8>) {
+fn serialize_message(seq: u64, mut msg: sync::subscribe_repos::Message) -> (&'static str, Vec<u8>) {
     let mut dummy_seq = 0_i64;
     #[expect(clippy::pattern_type_mismatch)]
     let (ty, nseq) = match &mut msg {
@@ -214,17 +219,8 @@ async fn serialize_message(
         sync::subscribe_repos::Message::Migrate(m) => ("#migrate", &mut m.seq),
         sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
     };
-
-    #[expect(clippy::as_conversions)]
-    const fn convert_u64_i64(x: u64) -> Result<i64, &'static str> {
-        let result = x as i64;
-        if result as u64 != x {
-            return Err("cannot convert");
-        }
-        Ok(result)
-    }
     // Set the sequence number.
-    *nseq = convert_u64_i64(seq).expect("should find seq");
+    *nseq = i64::try_from(seq).expect("should find seq");
 
     let hdr = FrameHeader::Message(ty.to_owned());
 
@@ -261,16 +257,12 @@ async fn handle_connect(
 ) -> Result<WebSocket> {
     if let Some(cursor) = cursor {
         let mut frame = Vec::new();
-        #[expect(clippy::as_conversions)]
-        const fn convert_i64_u64(x: i64) -> Result<u64, &'static str> {
-            let result = x as u64;
-            if result as i64 != x {
-                return Err("cannot convert");
-            }
-            Ok(result)
+        let cursor = u64::try_from(cursor);
+        if cursor.is_err() {
+            tracing::warn!("cursor is not a valid u64");
+            return Ok(ws);
         }
-        let cursor = convert_i64_u64(cursor).expect("should find cursor");
-
+        let cursor = cursor.expect("should be valid u64");
         // Cursor specified; attempt to backfill the consumer.
         if cursor > seq {
             let hdr = FrameHeader::Error;
@@ -286,7 +278,7 @@ async fn handle_connect(
             );
         }
 
-        for &(historical_seq, ty, ref msg) in history.iter() {
+        for &(historical_seq, ty, ref msg) in history {
             if cursor > historical_seq {
                 continue;
             }
@@ -314,12 +306,9 @@ pub(crate) async fn reconnect_relays(client: &Client, config: &AppConfig) {
 
     info!("attempting to reconnect to upstream relays");
     for relay in &config.firehose.relays {
-        let host = match relay.host_str() {
-            Some(host) => host,
-            None => {
-                warn!("relay {} has no host specified", relay);
-                continue;
-            }
+        let Some(host) = relay.host_str() else {
+            warn!("relay {} has no host specified", relay);
+            continue;
         };
 
         let r = client
@@ -356,15 +345,13 @@ pub(crate) async fn reconnect_relays(client: &Client, config: &AppConfig) {
 ///
 /// This will broadcast all updates in this PDS out to anyone who is listening.
 ///
-/// Reference: https://atproto.com/specs/sync
-pub(crate) async fn spawn(
+/// Reference: <https://atproto.com/specs/sync>
+pub(crate) fn spawn(
     client: Client,
     config: AppConfig,
 ) -> (tokio::task::JoinHandle<()>, FirehoseProducer) {
     let (tx, mut rx) = tokio::sync::mpsc::channel(1000);
     let handle = tokio::spawn(async move {
-        let mut clients: Vec<WebSocket> = Vec::new();
-        let mut history = VecDeque::with_capacity(1000);
         fn time_since_inception() -> u64 {
             chrono::Utc::now()
                 .timestamp_micros()
@@ -372,16 +359,18 @@ pub(crate) async fn spawn(
                 .expect("should not wrap")
                 .unsigned_abs()
         }
+        let mut clients: Vec<WebSocket> = Vec::new();
+        let mut history = VecDeque::with_capacity(1000);
         let mut seq = time_since_inception();
 
         // TODO: We should use `com.atproto.sync.notifyOfUpdate` to reach out to relays
         // that may have disconnected from us due to timeout.
 
         loop {
-            match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
-                Ok(msg) => match msg {
+            if let Ok(msg) = tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
+                match msg {
                     Some(FirehoseMessage::Broadcast(msg)) => {
-                        let (ty, by) = serialize_message(seq, msg.clone()).await;
+                        let (ty, by) = serialize_message(seq, msg.clone());
 
                         history.push_back((seq, ty, msg));
                         gauge!(FIREHOSE_HISTORY).set(
@@ -419,23 +408,22 @@ pub(crate) async fn spawn(
                     }
                     // All producers have been destroyed.
                     None => break,
-                },
-                Err(_) => {
-                    if clients.is_empty() {
-                        reconnect_relays(&client, &config).await;
-                    }
-
-                    let contents = rand::thread_rng()
-                        .sample_iter(rand::distributions::Alphanumeric)
-                        .take(15)
-                        .map(char::from)
-                        .collect::<String>();
-
-                    // Send a websocket ping message.
-                    // Reference: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#pings_and_pongs_the_heartbeat_of_websockets
-                    let message = Message::Ping(axum::body::Bytes::from_owner(contents));
-                    drop(broadcast_message(&mut clients, message).await);
                 }
+            } else {
+                if clients.is_empty() {
+                    reconnect_relays(&client, &config).await;
+                }
+
+                let contents = rand::thread_rng()
+                    .sample_iter(rand::distributions::Alphanumeric)
+                    .take(15)
+                    .map(char::from)
+                    .collect::<String>();
+
+                // Send a websocket ping message.
+                // Reference: https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers#pings_and_pongs_the_heartbeat_of_websockets
+                let message = Message::Ping(axum::body::Bytes::from_owner(contents));
+                drop(broadcast_message(&mut clients, message).await);
             }
         }
     });

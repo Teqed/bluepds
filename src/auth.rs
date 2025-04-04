@@ -15,6 +15,7 @@ use crate::{AppState, Error, error::ErrorMessage};
 /// If specified in an API endpoint, this will guarantee that the API can only be called
 /// by an authenticated user.
 pub(crate) struct AuthenticatedUser {
+    /// The DID of the authenticated user.
     did: String,
 }
 
@@ -40,14 +41,11 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                 auth.strip_prefix("Bearer ")
             });
 
-        let token = match token {
-            Some(tok) => tok,
-            None => {
-                return Err(Error::with_status(
-                    StatusCode::UNAUTHORIZED,
-                    anyhow!("no bearer token"),
-                ));
-            }
+        let Some(token) = token else {
+            return Err(Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                anyhow!("no bearer token"),
+            ));
         };
 
         // N.B: We ignore all fields inside of the token up until this point because they can be
@@ -113,7 +111,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
 pub(crate) fn sign(
     key: &Secp256k1Keypair,
     typ: &str,
-    claims: serde_json::Value,
+    claims: &serde_json::Value,
 ) -> anyhow::Result<String> {
     // RFC 9068
     let hdr = serde_json::json!({

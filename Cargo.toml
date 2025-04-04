@@ -82,17 +82,17 @@ suspicious = { level = "warn", priority = -1 }
 complexity = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
-# pedantic = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
 restriction = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 # Temporary Allows
-single_call_fn = "allow"
-multiple_crate_versions = "allow"
+multiple_crate_versions = "allow" # triggered by lib
 expect_used = "allow"
+missing_docs_in_private_items = "allow"
 # # Temporary Allows - Restriction
-min_ident_chars = "allow"
+min_ident_chars = "allow" # 50 instances
 # arbitrary_source_item_ordering = "allow"
-renamed_function_params = "allow"
+renamed_function_params = "allow" # possibly triggered by lib
 # pattern_type_mismatch = "allow"
 # Style Allows
 implicit_return = "allow"
@@ -116,8 +116,8 @@ tests_outside_test_module = "allow"
 ref_patterns = "allow"
 question_mark_used = "allow"
 shadow_reuse = "allow"
+single_call_fn = "allow"
 # Warns
-missing_docs_in_private_items = "warn"
 use_self = "warn"
 str_to_string = "warn"
 print_stdout = "warn"

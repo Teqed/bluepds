@@ -1,3 +1,4 @@
+//! Server endpoints. (/xrpc/com.atproto.server.*)
 use std::{collections::HashMap, str::FromStr as _};
 
 use anyhow::{Context as _, anyhow};
@@ -37,6 +38,15 @@ use crate::{
 /// This is a dummy password that can be used in absence of a real password.
 const DUMMY_PASSWORD: &str = "$argon2id$v=19$m=19456,t=2,p=1$En2LAfHjeO0SZD5IUU1Abg$RpS8nHhhqY4qco2uyd41p9Y/1C+Lvi214MAWukzKQMI";
 
+/// Create an invite code.
+/// - POST /xrpc/com.atproto.server.createInviteCode
+/// ### Request Body
+/// - `useCount`: integer
+/// - `forAccount`: string (optional)
+/// ### Responses
+/// - 200 OK: {code: string}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn create_invite_code(
     _user: AuthenticatedUser,
     State(db): State<Db>,
@@ -70,6 +80,24 @@ async fn create_invite_code(
     ))
 }
 
+#[expect(clippy::too_many_lines, reason = "TODO: refactor")]
+/// Create an account. Implemented by PDS.
+/// - POST /xrpc/com.atproto.server.createAccount
+/// ### Request Body
+/// - `email`: string
+/// - `handle`: string (required)
+/// - `did`: string - Pre-existing atproto DID, being imported to a new account.
+/// - `inviteCode`: string
+/// - `verificationCode`: string
+/// - `verificationPhone`: string
+/// - `password`: string - Initial account password. May need to meet instance-specific password strength requirements.
+/// - `recoveryKey`: string - DID PLC rotation key (aka, recovery key) to be included in PLC creation operation.
+/// - `plcOp`: object
+/// ## Responses
+/// - 200 OK: {"accessJwt": "string","refreshJwt": "string","handle": "string","did": "string","didDoc": {}}
+/// - 400 Bad Request: {error: [`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `InvalidHandle`, `InvalidPassword`, \
+///   `InvalidInviteCode`, `HandleNotAvailable`, `UnsupportedDomain`, `UnresolvableDid`, `IncompatibleDidDoc`)}
+/// - 401 Unauthorized
 async fn create_account(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
@@ -164,7 +192,6 @@ async fn create_account(
             prev: None,
         },
     )
-    .await
     .context("failed to sign genesis op")?;
     let op_bytes = serde_ipld_dagcbor::to_vec(&op).context("failed to encode genesis op")?;
 
@@ -179,9 +206,9 @@ async fn create_account(
         #[expect(clippy::string_slice, reason = "digest length confirmed")]
         digest[..24].to_owned()
     };
-    let did = format!("did:plc:{}", did_hash);
+    let did = format!("did:plc:{did_hash}");
 
-    let doc = tokio::fs::File::create(config.plc.path.join(format!("{}.car", did_hash)))
+    let doc = tokio::fs::File::create(config.plc.path.join(format!("{did_hash}.car")))
         .await
         .context("failed to create did doc")?;
 
@@ -205,7 +232,7 @@ async fn create_account(
     // Write out an initial commit for the user.
     // https://atproto.com/guides/account-lifecycle
     let (cid, rev, store) = async {
-        let file = tokio::fs::File::create_new(config.repo.path.join(format!("{}.car", did_hash)))
+        let file = tokio::fs::File::create_new(config.repo.path.join(format!("{did_hash}.car")))
             .await
             .context("failed to create repo file")?;
         let mut store = CarStore::create(file)
@@ -316,7 +343,7 @@ async fn create_account(
     let token = auth::sign(
         &skey,
         "at+jwt",
-        serde_json::json!({
+        &serde_json::json!({
             "scope": "com.atproto.access",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
@@ -329,7 +356,7 @@ async fn create_account(
     let refresh_token = auth::sign(
         &skey,
         "refresh+jwt",
-        serde_json::json!({
+        &serde_json::json!({
             "scope": "com.atproto.refresh",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
@@ -351,6 +378,17 @@ async fn create_account(
     ))
 }
 
+/// Create an authentication session.
+/// - POST /xrpc/com.atproto.server.createSession
+/// ### Request Body
+/// - `identifier`: string - Handle or other identifier supported by the server for the authenticating user.
+/// - `password`: string - Password for the authenticating user.
+/// - `authFactorToken` - string (optional)
+/// - `allowTakedown` - boolean (optional) - When true, instead of throwing error for takendown accounts, a valid response with a narrow scoped token will be returned
+/// ### Responses
+/// - 200 OK: {"accessJwt": "string","refreshJwt": "string","handle": "string","did": "string","didDoc": {},"email": "string","emailConfirmed": true,"emailAuthFactor": true,"active": true,"status": "takendown"}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `AccountTakedown`, `AuthFactorTokenRequired`]}
+/// - 401 Unauthorized
 async fn create_session(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
@@ -363,30 +401,28 @@ async fn create_session(
     // TODO: `input.allow_takedown`
     // TODO: `input.auth_factor_token`
 
-    let account = if let Some(account) = sqlx::query!(
+    let Some(account) = sqlx::query!(
         r#"
-        WITH LatestHandles AS (
-            SELECT did, handle
-            FROM handles
-            WHERE (did, created_at) IN (
-                SELECT did, MAX(created_at) AS max_created_at
-                FROM handles
-                GROUP BY did
-            )
-        )
-        SELECT a.did, a.password, h.handle
-        FROM accounts a
-        LEFT JOIN LatestHandles h ON a.did = h.did
-        WHERE h.handle = ?
-        "#,
+         WITH LatestHandles AS (
+             SELECT did, handle
+             FROM handles
+             WHERE (did, created_at) IN (
+                 SELECT did, MAX(created_at) AS max_created_at
+                 FROM handles
+                 GROUP BY did
+             )
+         )
+         SELECT a.did, a.password, h.handle
+         FROM accounts a
+         LEFT JOIN LatestHandles h ON a.did = h.did
+         WHERE h.handle = ?
+         "#,
         handle
     )
     .fetch_optional(&db)
     .await
     .context("failed to authenticate")?
-    {
-        account
-    } else {
+    else {
         counter!(AUTH_FAILED).increment(1);
 
         // SEC: Call argon2's `verify_password` to simulate password verification and discard the result.
@@ -407,7 +443,7 @@ async fn create_session(
         password.as_bytes(),
         &PasswordHash::new(account.password.as_str()).context("invalid password hash in db")?,
     ) {
-        Ok(_) => {}
+        Ok(()) => {}
         Err(_e) => {
             counter!(AUTH_FAILED).increment(1);
 
@@ -423,7 +459,7 @@ async fn create_session(
     let token = auth::sign(
         &skey,
         "at+jwt",
-        serde_json::json!({
+        &serde_json::json!({
             "scope": "com.atproto.access",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
@@ -436,7 +472,7 @@ async fn create_session(
     let refresh_token = auth::sign(
         &skey,
         "refresh+jwt",
-        serde_json::json!({
+        &serde_json::json!({
             "scope": "com.atproto.refresh",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
@@ -464,6 +500,12 @@ async fn create_session(
     ))
 }
 
+/// Refresh an authentication session. Requires auth using the 'refreshJwt' (not the 'accessJwt').
+/// - POST /xrpc/com.atproto.server.refreshSession
+/// ### Responses
+/// - 200 OK: {"accessJwt": "string","refreshJwt": "string","handle": "string","did": "string","didDoc": {},"active": true,"status": "takendown"}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `AccountTakedown`]}
+/// - 401 Unauthorized
 async fn refresh_session(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
@@ -490,7 +532,7 @@ async fn refresh_session(
     }
     if claims
         .get("exp")
-        .and_then(|exp| exp.as_i64())
+        .and_then(serde_json::Value::as_i64)
         .context("failed to get `exp`")?
         < chrono::Utc::now().timestamp()
     {
@@ -534,7 +576,7 @@ async fn refresh_session(
     let token = auth::sign(
         &skey,
         "at+jwt",
-        serde_json::json!({
+        &serde_json::json!({
             "scope": "com.atproto.access",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
@@ -547,7 +589,7 @@ async fn refresh_session(
     let refresh_token = auth::sign(
         &skey,
         "refresh+jwt",
-        serde_json::json!({
+        &serde_json::json!({
             "scope": "com.atproto.refresh",
             "sub": did,
             "iat": chrono::Utc::now().timestamp(),
@@ -575,6 +617,16 @@ async fn refresh_session(
     ))
 }
 
+/// Get a signed token on behalf of the requesting DID for the requested service.
+/// - GET /xrpc/com.atproto.server.getServiceAuth
+/// ### Request Query Parameters
+/// - `aud`: string - The DID of the service that the token will be used to authenticate with
+/// - `exp`: integer (optional) - The time in Unix Epoch seconds that the JWT expires. Defaults to 60 seconds in the future. The service may enforce certain time bounds on tokens depending on the requested scope.
+/// - `lxm`: string (optional) - Lexicon (XRPC) method to bind the requested token to
+/// ### Responses
+/// - 200 OK: {token: string}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `BadExpiration`]}
+/// - 401 Unauthorized
 async fn get_service_auth(
     user: AuthenticatedUser,
     State(skey): State<SigningKey>,
@@ -608,11 +660,17 @@ async fn get_service_auth(
     }
 
     // Mint a bearer token by signing a JSON web token.
-    let token = auth::sign(&skey, "JWT", claims).context("failed to sign jwt")?;
+    let token = auth::sign(&skey, "JWT", &claims).context("failed to sign jwt")?;
 
     Ok(Json(server::get_service_auth::OutputData { token }.into()))
 }
 
+/// Get information about the current auth session. Requires auth.
+/// - GET /xrpc/com.atproto.server.getSession
+/// ### Responses
+/// - 200 OK: {"handle": "string","did": "string","email": "string","emailConfirmed": true,"emailAuthFactor": true,"didDoc": {},"active": true,"status": "takendown"}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn get_session(
     user: AuthenticatedUser,
     State(db): State<Db>,
@@ -661,6 +719,12 @@ async fn get_session(
     }
 }
 
+/// Describes the server's account creation requirements and capabilities. Implemented by PDS.
+/// - GET /xrpc/com.atproto.server.describeServer
+/// ### Responses
+/// - 200 OK: {"inviteCodeRequired": true,"phoneVerificationRequired": true,"availableUserDomains": [`string`],"links": {"privacyPolicy": "string","termsOfService": "string"},"contact": {"email": "string"},"did": "string"}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn describe_server(
     State(config): State<AppConfig>,
 ) -> Result<Json<server::describe_server::Output>> {
@@ -679,14 +743,17 @@ async fn describe_server(
 }
 
 #[rustfmt::skip]
+/// These endpoints are part of the atproto PDS server and account management APIs. \
+/// Requests often require authentication and are made directly to the user's own PDS instance.
+/// ### Routes
+/// - `GET /xrpc/com.atproto.server.describeServer` -> [`describe_server`]
+/// - `POST /xrpc/com.atproto.server.createAccount` -> [`create_account`]
+/// - `POST /xrpc/com.atproto.server.createSession` -> [`create_session`]
+/// - `POST /xrpc/com.atproto.server.refreshSession` -> [`refresh_session`]
+/// - `GET /xrpc/com.atproto.server.getServiceAuth` -> [`get_service_auth`]
+/// - `GET /xrpc/com.atproto.server.getSession` -> [`get_session`]
+/// - `POST /xrpc/com.atproto.server.createInviteCode` -> [`create_invite_code`]
 pub(super) fn routes() -> Router<AppState> {
-    // UG /xrpc/com.atproto.server.describeServer
-    // UP /xrpc/com.atproto.server.createAccount
-    // UP /xrpc/com.atproto.server.createSession
-    // AP /xrpc/com.atproto.server.refreshSession
-    // AG /xrpc/com.atproto.server.getServiceAuth
-    // AG /xrpc/com.atproto.server.getSession
-    // AP /xrpc/com.atproto.server.createInviteCode
     Router::new()
         .route(concat!("/", server::describe_server::NSID),     get(describe_server))
         .route(concat!("/", server::create_account::NSID),     post(create_account))

@@ -1,7 +1,7 @@
 //! Configuration structures for the PDS.
 /// The metrics configuration.
 pub(crate) mod metrics {
-    use super::*;
+    use super::{Deserialize, Url};
 
     #[derive(Deserialize, Debug, Clone)]
     /// The Prometheus configuration.

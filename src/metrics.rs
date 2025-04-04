@@ -28,7 +28,7 @@ pub(crate) const REPO_OP_UPDATE: &str = "bluepds.repo.op.update";
 pub(crate) const REPO_OP_DELETE: &str = "bluepds.repo.op.delete";
 
 /// Must be ran exactly once on startup. This will declare all of the instruments for `metrics`.
-pub(crate) fn setup(config: &Option<config::MetricConfig>) -> anyhow::Result<()> {
+pub(crate) fn setup(config: Option<&config::MetricConfig>) -> anyhow::Result<()> {
     describe_counter!(AUTH_FAILED, "The number of failed authentication attempts.");
 
     describe_gauge!(FIREHOSE_HISTORY, "The size of the firehose history buffer.");
@@ -53,7 +53,7 @@ pub(crate) fn setup(config: &Option<config::MetricConfig>) -> anyhow::Result<()>
     describe_counter!(REPO_OP_UPDATE, "The count of updated records.");
     describe_counter!(REPO_OP_DELETE, "The count of deleted records.");
 
-    if let Some(ref config) = *config {
+    if let Some(config) = config {
         match *config {
             config::MetricConfig::PrometheusPush(ref prometheus_config) => {
                 PrometheusBuilder::new()

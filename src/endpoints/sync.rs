@@ -1,3 +1,4 @@
+//! Endpoints for the `ATProto` sync API. (/xrpc/com.atproto.sync.*)
 use std::str::FromStr as _;
 
 use anyhow::{Context as _, anyhow};
@@ -27,32 +28,39 @@ use crate::{
     storage::{open_repo_db, open_store},
 };
 
-// HACK: `limit` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// Parameters for `/xrpc/com.atproto.sync.listBlobs` \
+/// HACK: `limit` may be passed as a string, so we must treat it as one.
 pub(super) struct ListBlobsParameters {
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    /// Optional cursor to paginate through blobs.
     pub cursor: Option<String>,
     ///The DID of the repo.
     pub did: Did,
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    /// Optional limit of blobs to return.
     pub limit: Option<String>,
     ///Optional revision of the repo to list blobs since.
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
     pub since: Option<String>,
 }
-// HACK: `limit` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// Parameters for `/xrpc/com.atproto.sync.listRepos` \
+/// HACK: `limit` may be passed as a string, so we must treat it as one.
 pub(super) struct ListReposParameters {
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    /// Optional cursor to paginate through repos.
     pub cursor: Option<String>,
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
+    /// Optional limit of repos to return.
     pub limit: Option<String>,
 }
-// HACK: `cursor` may be passed as a string, so we must treat it as one.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+/// Parameters for `/xrpc/com.atproto.sync.subscribeRepos` \
+/// HACK: `cursor` may be passed as a string, so we must treat it as one.
 pub(super) struct SubscribeReposParametersData {
     ///The last known event seq number to backfill from.
     #[serde(skip_serializing_if = "core::option::Option::is_none")]
@@ -80,11 +88,20 @@ async fn get_blob(
     let s = ReaderStream::new(f);
 
     Ok(Response::builder()
-        .header(http::header::CONTENT_LENGTH, format!("{}", len))
+        .header(http::header::CONTENT_LENGTH, format!("{len}"))
         .body(Body::from_stream(s))
         .context("failed to construct response")?)
 }
 
+/// Enumerates which accounts the requesting account is currently blocking. Requires auth.
+/// - GET /xrpc/com.atproto.sync.getBlocks
+/// ### Query Parameters
+/// - `limit`: integer, optional, default: 50, >=1 and <=100
+/// - `cursor`: string, optional
+/// ### Responses
+/// - 200 OK: ...
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
+/// - 401 Unauthorized
 async fn get_blocks(
     State(config): State<AppConfig>,
     Query(input): Query<sync::get_blocks::Parameters>,
@@ -120,6 +137,12 @@ async fn get_blocks(
         .context("failed to construct response")?)
 }
 
+/// Get the current commit CID & revision of the specified repo. Does not require auth.
+/// ### Query Parameters
+/// - `did`: The DID of the repo.
+/// ### Responses
+/// - 200 OK: {"cid": "string","rev": "string"}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `RepoTakendown`, `RepoSuspended`, `RepoDeactivated`]}
 async fn get_latest_commit(
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -141,6 +164,15 @@ async fn get_latest_commit(
     ))
 }
 
+/// Get data blocks needed to prove the existence or non-existence of record in the current version of repo. Does not require auth.
+/// ### Query Parameters
+/// - `did`: The DID of the repo.
+/// - `collection`: nsid
+/// - `rkey`: record-key
+/// ### Responses
+/// - 200 OK: ...
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `RecordNotFound`, `RepoNotFound`, `RepoTakendown`,
+///   `RepoSuspended`, `RepoDeactivated`]}
 async fn get_record(
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -168,6 +200,12 @@ async fn get_record(
         .context("failed to construct response")?)
 }
 
+/// Get the hosting status for a repository, on this server. Expected to be implemented by PDS and Relay.
+/// ### Query Parameters
+/// - `did`: The DID of the repo.
+/// ### Responses
+/// - 200 OK: {"did": "string","active": true,"status": "takendown","rev": "string"}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `RepoNotFound`]}
 async fn get_repo_status(
     State(db): State<Db>,
     Query(input): Query<sync::get_repo::Parameters>,
@@ -178,9 +216,7 @@ async fn get_repo_status(
         .await
         .context("failed to execute query")?;
 
-    let r = if let Some(r) = r {
-        r
-    } else {
+    let Some(r) = r else {
         return Err(Error::with_status(
             StatusCode::NOT_FOUND,
             anyhow!("account not found"),
@@ -201,6 +237,15 @@ async fn get_repo_status(
     ))
 }
 
+/// Download a repository export as CAR file. Optionally only a 'diff' since a previous revision.
+/// Does not require auth; implemented by PDS.
+/// ### Query Parameters
+/// - `did`: The DID of the repo.
+/// - `since`: The revision ('rev') of the repo to create a diff from.
+/// ### Responses
+/// - 200 OK: ...
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `RepoNotFound`,
+///   `RepoTakendown`, `RepoSuspended`, `RepoDeactivated`]}
 async fn get_repo(
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -225,6 +270,16 @@ async fn get_repo(
         .context("failed to construct response")?)
 }
 
+/// List blob CIDs for an account, since some repo revision. Does not require auth; implemented by PDS.
+/// ### Query Parameters
+/// - `did`: The DID of the repo. Required.
+/// - `since`: Optional revision of the repo to list blobs since.
+/// - `limit`: >= 1 and <= 1000, default 500
+/// - `cursor`: string
+/// ### Responses
+/// - 200 OK: {"cursor": "string","cids": [string]}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `RepoNotFound`, `RepoTakendown`,
+///   `RepoSuspended`, `RepoDeactivated`]}
 async fn list_blobs(
     State(db): State<Db>,
     Query(input): Query<ListBlobsParameters>,
@@ -255,13 +310,24 @@ async fn list_blobs(
     ))
 }
 
+/// Enumerates all the DID, rev, and commit CID for all repos hosted by this service.
+/// Does not require auth; implemented by PDS and Relay.
+/// ### Query Parameters
+/// - `limit`: >= 1 and <= 1000, default 500
+/// - `cursor`: string
+/// ### Responses
+/// - 200 OK: {"cursor": "string","repos": [{"did": "string","head": "string","rev": "string","active": true,"status": "takendown"}]}
+/// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
 async fn list_repos(
     State(db): State<Db>,
     Query(input): Query<ListReposParameters>,
 ) -> Result<Json<sync::list_repos::Output>> {
     struct Record {
+        /// The DID of the repo.
         did: String,
+        /// The commit CID of the repo.
         rev: String,
+        /// The root CID of the repo.
         root: String,
     }
 
@@ -317,6 +383,13 @@ async fn list_repos(
     Ok(Json(sync::list_repos::OutputData { cursor, repos }.into()))
 }
 
+/// Repository event stream, aka Firehose endpoint. Outputs repo commits with diff data, and identity update events,
+///  for all repositories on the current server. See the atproto specifications for details around stream sequencing,
+///  repo versioning, CAR diff format, and more. Public and does not require auth; implemented by PDS and Relay.
+/// ### Query Parameters
+/// - `cursor`: The last known event seq number to backfill from.
+/// ### Responses
+/// - 200 OK: ...
 async fn subscribe_repos(
     ws_up: WebSocketUpgrade,
     State(fh): State<FirehoseProducer>,
@@ -337,16 +410,19 @@ async fn subscribe_repos(
 }
 
 #[rustfmt::skip]
+/// These endpoints are part of the atproto repository synchronization APIs. Requests usually do not require authentication, 
+///  and can be made to PDS intances or Relay instances.
+/// ### Routes
+/// - `GET /xrpc/com.atproto.sync.getBlob` -> [`get_blob`]
+/// - `GET /xrpc/com.atproto.sync.getBlocks` -> [`get_blocks`]
+/// - `GET /xrpc/com.atproto.sync.getLatestCommit` -> [`get_latest_commit`]
+/// - `GET /xrpc/com.atproto.sync.getRecord` -> [`get_record`]
+/// - `GET /xrpc/com.atproto.sync.getRepoStatus` -> [`get_repo_status`]
+/// - `GET /xrpc/com.atproto.sync.getRepo` -> [`get_repo`]
+/// - `GET /xrpc/com.atproto.sync.listBlobs` -> [`list_blobs`]
+/// - `GET /xrpc/com.atproto.sync.listRepos` -> [`list_repos`]
+/// - `GET /xrpc/com.atproto.sync.subscribeRepos` -> [`subscribe_repos`]
 pub(super) fn routes() -> Router<AppState> {
-    // UG /xrpc/com.atproto.sync.getBlob
-    // UG /xrpc/com.atproto.sync.getBlocks
-    // UG /xrpc/com.atproto.sync.getLatestCommit
-    // UG /xrpc/com.atproto.sync.getRecord
-    // UG /xrpc/com.atproto.sync.getRepoStatus
-    // UG /xrpc/com.atproto.sync.getRepo
-    // UG /xrpc/com.atproto.sync.listBlobs
-    // UG /xrpc/com.atproto.sync.listRepos
-    // UG /xrpc/com.atproto.sync.subscribeRepos
     Router::new()
         .route(concat!("/", sync::get_blob::NSID),          get(get_blob))
         .route(concat!("/", sync::get_blocks::NSID),        get(get_blocks))
