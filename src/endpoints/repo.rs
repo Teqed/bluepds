@@ -1052,6 +1052,10 @@ async fn upload_blob(
     ))
 }
 
+async fn todo() -> Result<()> {
+    Err(Error::unimplemented(anyhow!("not implemented")))
+}
+
 /// These endpoints are part of the atproto PDS repository management APIs. \
 /// Requests usually require authentication (unlike the com.atproto.sync.* endpoints), and are made directly to the user's own PDS instance.
 /// ### Routes
@@ -1063,6 +1067,8 @@ async fn upload_blob(
 /// - UG /xrpc/com.atproto.repo.describeRepo    -> [`describe_repo`]
 /// - UG /xrpc/com.atproto.repo.getRecord       -> [`get_record`]
 /// - UG /xrpc/com.atproto.repo.listRecords     -> [`list_records`]
+///     - [ ] xx /xrpc/com.atproto.repo.importRepo
+// - [ ] xx /xrpc/com.atproto.repo.listMissingBlobs
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route(concat!("/", repo::apply_writes::NSID), post(apply_writes))
@@ -1072,5 +1078,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route(concat!("/", repo::upload_blob::NSID), post(upload_blob))
         .route(concat!("/", repo::describe_repo::NSID), get(describe_repo))
         .route(concat!("/", repo::get_record::NSID), get(get_record))
+        .route(concat!("/", repo::import_repo::NSID), post(todo))
+        .route(concat!("/", repo::list_missing_blobs::NSID), get(todo))
         .route(concat!("/", repo::list_records::NSID), get(list_records))
 }

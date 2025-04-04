@@ -62,7 +62,7 @@ cargo run
   - [X] app.bsky.feed.postgate
   - [X] app.bsky.feed.threadgate
   - [ ] app.bsky... (profile creation?)
-- [ ] Linting
+- [X] Linting
   - [X] Rustfmt
     - [X] warnings
     - [X] deprecated-safe
@@ -74,16 +74,16 @@ cargo run
     - [X] rust-2018-idioms
     - [X] rust-2018/2021/2024-compatibility
     - [X] ungrouped
-  - [ ] Clippy
+  - [X] Clippy
     - [X] nursery
     - [X] correctness
     - [X] suspicious
     - [X] complexity
     - [X] perf
     - [X] style
-    - [ ] pedantic
+    - [X] pedantic
     - [X] cargo
-    - [ ] ungrouped
+    - [X] ungrouped
 ### High-level features
 - [ ] Authentication
   - [ ] OAuth support

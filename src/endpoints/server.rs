@@ -742,24 +742,46 @@ async fn describe_server(
     ))
 }
 
+async fn todo() -> Result<()> {
+    Err(Error::unimplemented(anyhow!("not implemented")))
+}
+
 #[rustfmt::skip]
 /// These endpoints are part of the atproto PDS server and account management APIs. \
 /// Requests often require authentication and are made directly to the user's own PDS instance.
 /// ### Routes
-/// - `GET /xrpc/com.atproto.server.describeServer` -> [`describe_server`]
 /// - `POST /xrpc/com.atproto.server.createAccount` -> [`create_account`]
+/// - `POST /xrpc/com.atproto.server.createInviteCode` -> [`create_invite_code`]
 /// - `POST /xrpc/com.atproto.server.createSession` -> [`create_session`]
-/// - `POST /xrpc/com.atproto.server.refreshSession` -> [`refresh_session`]
+/// - `GET /xrpc/com.atproto.server.describeServer` -> [`describe_server`]
 /// - `GET /xrpc/com.atproto.server.getServiceAuth` -> [`get_service_auth`]
 /// - `GET /xrpc/com.atproto.server.getSession` -> [`get_session`]
-/// - `POST /xrpc/com.atproto.server.createInviteCode` -> [`create_invite_code`]
+/// - `POST /xrpc/com.atproto.server.refreshSession` -> [`refresh_session`]
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
-        .route(concat!("/", server::describe_server::NSID),     get(describe_server))
+        .route(concat!("/", server::activate_account::NSID),     post(todo))
+        .route(concat!("/", server::check_account_status::NSID), post(todo))
+        .route(concat!("/", server::confirm_email::NSID),       post(todo))
         .route(concat!("/", server::create_account::NSID),     post(create_account))
+        .route(concat!("/", server::create_app_password::NSID), post(todo))
+        .route(concat!("/", server::create_invite_code::NSID), post(create_invite_code))
+        .route(concat!("/", server::create_invite_codes::NSID), post(todo))
         .route(concat!("/", server::create_session::NSID),     post(create_session))
-        .route(concat!("/", server::refresh_session::NSID),    post(refresh_session))
+        .route(concat!("/", server::deactivate_account::NSID), post(todo))
+        .route(concat!("/", server::delete_account::NSID),     post(todo))
+        .route(concat!("/", server::delete_session::NSID),     post(todo))
+        .route(concat!("/", server::describe_server::NSID),     get(describe_server))
+        .route(concat!("/", server::get_account_invite_codes::NSID), post(todo))
         .route(concat!("/", server::get_service_auth::NSID),    get(get_service_auth))
         .route(concat!("/", server::get_session::NSID),         get(get_session))
-        .route(concat!("/", server::create_invite_code::NSID), post(create_invite_code))
+        .route(concat!("/", server::list_app_passwords::NSID), post(todo))
+        .route(concat!("/", server::refresh_session::NSID),    post(refresh_session))
+        .route(concat!("/", server::request_account_delete::NSID), post(todo))
+        .route(concat!("/", server::request_email_confirmation::NSID), post(todo))
+        .route(concat!("/", server::request_email_update::NSID), post(todo))
+        .route(concat!("/", server::request_password_reset::NSID), post(todo))
+        .route(concat!("/", server::reserve_signing_key::NSID), post(todo))
+        .route(concat!("/", server::reset_password::NSID),      post(todo))
+        .route(concat!("/", server::revoke_app_password::NSID), post(todo))
+        .route(concat!("/", server::update_email::NSID),       post(todo))
 }

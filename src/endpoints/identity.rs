@@ -223,6 +223,10 @@ async fn update_handle(
     Ok(())
 }
 
+async fn todo() -> Result<()> {
+    Err(Error::unimplemented(anyhow!("not implemented")))
+}
+
 #[rustfmt::skip]
 /// Identity endpoints (/xrpc/com.atproto.identity.*)
 /// ### Routes
@@ -232,8 +236,10 @@ async fn update_handle(
 /// - UG /xrpc/com.atproto.identity.resolveHandle                   -> [`resolve_handle`]
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
-        .route(concat!("/", identity::update_handle::NSID),                   post(update_handle))
+        .route(concat!("/", identity::get_recommended_did_credentials::NSID), get(todo))
         .route(concat!("/", identity::request_plc_operation_signature::NSID), post(request_plc_operation_signature))
-        .route(concat!("/", identity::sign_plc_operation::NSID),              post(sign_plc_operation))
         .route(concat!("/", identity::resolve_handle::NSID),                   get(resolve_handle))
+        .route(concat!("/", identity::sign_plc_operation::NSID),              post(sign_plc_operation))
+        .route(concat!("/", identity::submit_plc_operation::NSID),            post(todo))
+        .route(concat!("/", identity::update_handle::NSID),                   post(update_handle))
 }
