@@ -166,7 +166,7 @@ pub(crate) fn routes() -> Router<AppState> {
             "/.well-known/oauth-authorization-server",
             get(authorization_server),
         )
-        .route("/par", post(par))
+        .route("/oauth/par", post(par))
         .route("/oauth/authorize", get(authorize))
         .route("/oauth/authorize/sign-in", post(authorize_signin))
         .route("/oauth/token", post(token))
