@@ -6,6 +6,7 @@ mod endpoints;
 mod error;
 mod firehose;
 mod metrics;
+mod oauth;
 mod plc;
 mod storage;
 
@@ -455,6 +456,7 @@ async fn run() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", get(index))
+        .merge(oauth::routes())
         .nest(
             "/xrpc",
             endpoints::routes()
