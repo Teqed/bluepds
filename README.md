@@ -43,7 +43,15 @@ cargo run
 ```
 
 ## To-do
-### Teqed's 
+### Teqed's
+- [ ] OAuth
+  - [ ] `/.well-known/oauth-protected-resource` - Authorization Server Metadata
+  - [ ] `/.well-known/oauth-authorization-server`
+  - [ ] `/par` - Pushed Authorization Request
+  - [ ] `/client-metadata.json` - Client metadata discovery
+  - [ ] `/oauth/authorize`
+  - [ ] `/oauth/authorize/sign-in`
+  - [ ] `/oauth/token`
 - [ ] Email verification
 - [ ] 2FA
 - [ ] Admin endpoints
