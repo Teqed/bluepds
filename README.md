@@ -45,7 +45,7 @@ cargo run
 ## To-do
 ### High-level features
 - [ ] Authentication
-  - [ ] OAuth support
+  - [ ] [OAuth support](https://atproto.com/specs/oauth)
 - [ ] Storage backend abstractions
   - [ ] Azure blob storage backend
   - [ ] Backblaze b2(?)
