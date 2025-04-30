@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE oauth_authorization_codes SET used = TRUE WHERE code = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "e4bd80a305f929229b234b79b1e9e90a36af0e630c8c7530b6d935c6e32d381f"
+}

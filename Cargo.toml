@@ -18,27 +18,27 @@ opt-level = 3
 opt-level = 1
 
 [profile.release]
-opt-level = "s" # Slightly slows compile times, great improvements to file size and runtime performance.
-lto = "thin" # Do a second optimization pass over the entire program, including dependencies.
-codegen-units = 1 # Compile the entire crate as one unit.
+opt-level = "s"     # Slightly slows compile times, great improvements to file size and runtime performance.
+lto = "thin"        # Do a second optimization pass over the entire program, including dependencies.
+codegen-units = 1   # Compile the entire crate as one unit.
 strip = "debuginfo" # Strip all debugging information from the binary to slightly reduce file size.
 
 [lints.rust]
 ## Groups
-warnings = { level = "warn", priority = -1 } # All lints that are set to issue warnings
-deprecated-safe = { level = "warn", priority = -1 } # Lints for functions which were erroneously marked as safe in the past
-future-incompatible = { level = "warn", priority = -1 } # Lints that detect code that has future-compatibility problems
-keyword-idents = { level = "warn", priority = -1 } # Lints that detect identifiers which will be come keywords in later editions
-let-underscore = { level = "warn", priority = -1 } # Lints that detect wildcard let bindings that are likely to be invalid
-nonstandard-style = { level = "warn", priority = -1 } # Violation of standard naming conventions
-refining-impl-trait = { level = "warn", priority = -1 } # Detects refinement of impl Trait return types by trait implementations
+warnings = { level = "warn", priority = -1 }                # All lints that are set to issue warnings
+deprecated-safe = { level = "warn", priority = -1 }         # Lints for functions which were erroneously marked as safe in the past
+future-incompatible = { level = "warn", priority = -1 }     # Lints that detect code that has future-compatibility problems
+keyword-idents = { level = "warn", priority = -1 }          # Lints that detect identifiers which will be come keywords in later editions
+let-underscore = { level = "warn", priority = -1 }          # Lints that detect wildcard let bindings that are likely to be invalid
+nonstandard-style = { level = "warn", priority = -1 }       # Violation of standard naming conventions
+refining-impl-trait = { level = "warn", priority = -1 }     # Detects refinement of impl Trait return types by trait implementations
 rust-2018-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2015 edition to 2018
 rust-2021-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2018 edition to 2021
-rust-2018-idioms = { level = "warn", priority = -1 } # Lints to nudge you toward idiomatic features of Rust 2018
+rust-2018-idioms = { level = "warn", priority = -1 }        # Lints to nudge you toward idiomatic features of Rust 2018
 rust-2024-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2021 edition to 2024
-unused = { level = "warn", priority = -1 } # Lints that detect things being declared but not used, or excess syntax
+unused = { level = "warn", priority = -1 }                  # Lints that detect things being declared but not used, or excess syntax
 ## Individual
-ambiguous_negative_literals = "warn" # checks for cases that are confusing between a negative literal and a negation that's not part of the literal.
+ambiguous_negative_literals = "warn"   # checks for cases that are confusing between a negative literal and a negation that's not part of the literal.
 closure_returning_async_block = "warn" # detects cases where users write a closure that returns an async block. # nightly
 ffi_unwind_calls = "warn"
 # fuzzy_provenance_casts = "warn" # unstable
@@ -46,7 +46,7 @@ ffi_unwind_calls = "warn"
 macro_use_extern_crate = "warn"
 meta_variable_misuse = "warn"
 missing_abi = "warn"
-missing_copy_implementations = "allow" # detects potentially-forgotten implementations of Copy for public types.
+missing_copy_implementations = "allow"  # detects potentially-forgotten implementations of Copy for public types.
 missing_debug_implementations = "allow" # detects missing implementations of fmt::Debug for public types.
 missing_docs = "warn"
 # multiple_supertrait_upcastable = "warn" # unstable
@@ -86,7 +86,7 @@ pedantic = { level = "warn", priority = -1 }
 restriction = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 # Temporary Allows
-multiple_crate_versions = "allow" # triggered by lib
+multiple_crate_versions = "allow"       # triggered by lib
 expect_used = "allow"
 missing_docs_in_private_items = "allow"
 # # Temporary Allows - Restriction
@@ -136,7 +136,13 @@ atrium-xrpc-client = "0.5"
 
 anyhow = "1.0.96"
 argon2 = { version = "0.5.3", features = ["std"] }
-axum = { version = "0.8.1", features = ["tower-log", "form", "macros", "ws", "json"] }
+axum = { version = "0.8.1", features = [
+    "tower-log",
+    "form",
+    "macros",
+    "ws",
+    "json",
+] }
 azure_core = "0.22.0"
 azure_identity = "0.22.0"
 base32 = "0.5.1"
@@ -147,14 +153,18 @@ clap-verbosity-flag = "3.0.2"
 constcat = "0.6.0"
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
-http-cache-reqwest = { version = "0.15.1", default-features = false, features = ["manager-moka"] }
+http-cache-reqwest = { version = "0.15.1", default-features = false, features = [
+    "manager-moka",
+] }
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"
 rand = "0.8.5"
 reqwest = { version = "0.12.12", features = ["json"] }
 reqwest-middleware = { version = "0.4.0", features = ["json"] }
 serde = { version = "1.0.218", features = ["derive"] }
-serde_ipld_dagcbor = { version = "0.6.2", default-features = false, features = ["std"] }
+serde_ipld_dagcbor = { version = "0.6.2", default-features = false, features = [
+    "std",
+] }
 serde_json = "1.0.139"
 sha2 = "0.10.8"
 sqlx = { version = "0.8.3", features = ["json", "runtime-tokio", "sqlite"] }
@@ -166,3 +176,4 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 url = "2.5.4"
 uuid = { version = "1.14.0", features = ["v4"] }
+urlencoding = "2.1.3"

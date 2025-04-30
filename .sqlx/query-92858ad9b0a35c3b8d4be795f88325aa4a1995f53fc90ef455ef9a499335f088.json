@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                SELECT * FROM oauth_authorization_codes\n                WHERE code = ? AND client_id = ? AND redirect_uri = ? AND expires_at > ? AND used = FALSE\n                ",
+  "describe": {
+    "columns": [
+      {
+        "name": "code",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "client_id",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "subject",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "code_challenge",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "code_challenge_method",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "redirect_uri",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "scope",
+        "ordinal": 6,
+        "type_info": "Text"
+      },
+      {
+        "name": "created_at",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "expires_at",
+        "ordinal": 8,
+        "type_info": "Integer"
+      },
+      {
+        "name": "used",
+        "ordinal": 9,
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "92858ad9b0a35c3b8d4be795f88325aa4a1995f53fc90ef455ef9a499335f088"
+}
