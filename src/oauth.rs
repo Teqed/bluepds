@@ -1,10 +1,14 @@
 //! OAuth endpoints
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     Json, Router,
+    extract::{Query, State},
+    response::Redirect,
     routing::{get, post},
 };
 use serde_json::json;
+use tokio::sync::Mutex;
 
 use crate::{AppState, Result};
 
@@ -69,22 +73,63 @@ async fn authorization_server() -> Result<Json<serde_json::Value>> {
 /// ## Response
 /// - request_uri - urn:ietf:params:oauth:request_uri:req-76eb3e0feec73938a8965ef0f1167235
 /// - expires_in - 299
-/// TODO: Implement
-async fn par() -> Result<Json<serde_json::Value>> {
-    // For now, we'll just return a dummy response
-    Ok(Json(json!({
-        "request_uri": "urn:ietf:params:oauth:request_uri:req-76eb3e0feec73938a8596ef0f1167235",
-        "expires_in": 299
-    })))
+async fn par(
+    Json(input): Json<ParParameters>,
+    State(par_pending): State<Arc<Mutex<HashMap<String, ParParameters>>>>,
+) -> Result<Json<serde_json::Value>> {
+    let request_uri = format!(
+        "urn:ietf:params:oauth:request_uri:req-{}",
+        uuid::Uuid::new_v4().to_string()
+    );
+    let expires_in = 299;
+    let response = json!({
+        "request_uri": request_uri,
+        "expires_in": expires_in
+    });
+    par_pending.lock().await.insert(request_uri.clone(), input);
+    Ok(Json(response))
 }
-
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ParParameters {
+    redirect_uri: Option<String>,
+    code_challenge: Option<String>,
+    code_challenge_method: Option<String>,
+    state: Option<String>,
+    login_hint: Option<String>,
+    response_mode: Option<String>,
+    response_type: Option<String>,
+    display: Option<String>,
+    scope: Option<String>,
+    client_id: Option<String>,
+    authenticated: bool,
+}
+struct AuthorizeParameters {
+    client_id: Option<String>,
+    request_uri: Option<String>,
+}
 /// - GET `/oauth/authorize`
 /// # Parameters
 /// - client_id - https://pdsls.dev/client-metadata.json
 /// - request_uri - urn:ietf:params:oauth:request_uri:req-76eb3e0feec73938a8596ef0f1167235
-async fn authorize() -> Result<()> {
-    // TODO: Implement
-    Ok(())
+async fn authorize(
+    Query(input): Query<AuthorizeParameters>,
+    State(par_pending): State<Arc<Mutex<HashMap<String, ParParameters>>>>,
+) -> Result<Redirect> {
+    let _client_id = input.client_id.expect("client_id is required");
+    let request_uri = input.request_uri.expect("request_uri is required");
+    let par_pending_guard = par_pending.lock().await;
+    let par = par_pending_guard.get(&request_uri).expect("PAR not found");
+
+    let iss = "https://pds.shatteredsky.net"
+        .replace(":", "%3A")
+        .replace("/", "%2F");
+    let state = par.state.clone().unwrap();
+    let code = "cod-400e667712a4ba7cbdb81633100454cbd7ebb78e1d20425681d7e5e7cd0662a5";
+    let location = format!(
+        "https://pdsls.dev/#iss={}&state={}&code={}",
+        iss, state, code
+    );
+    Ok(Redirect::to(&location))
 }
 
 /// `/oauth/authorize/sign-in`
