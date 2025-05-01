@@ -418,7 +418,7 @@ async fn authorize_signin(
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(client): State<Client>, // Added Client state
-    Json(form_data): Json<HashMap<String, String>>,
+    extract::Form(form_data): extract::Form<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
     // Extract form data
     let username = form_data.get("username").context("username is required")?;
