@@ -169,7 +169,7 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<serde
 async fn par(
     State(db): State<Db>,
     State(client): State<Client>,
-    extract::Form(form_data): extract::Form<HashMap<String, String>>,
+    Json(form_data): Json<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>> {
     // Required parameters
     let client_id = form_data
@@ -418,7 +418,7 @@ async fn authorize_signin(
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(client): State<Client>, // Added Client state
-    extract::Form(form_data): extract::Form<HashMap<String, String>>,
+    Json(form_data): Json<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
     // Extract form data
     let username = form_data.get("username").context("username is required")?;
@@ -606,7 +606,7 @@ async fn token(
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     headers: HeaderMap,
-    extract::Form(form_data): extract::Form<HashMap<String, String>>,
+    Json(form_data): Json<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>> {
     // Extract form parameters
     let grant_type = form_data
