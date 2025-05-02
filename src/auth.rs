@@ -9,9 +9,8 @@ use sha2::{Digest, Sha256};
 
 use crate::{AppState, Error, error::ErrorMessage};
 
-/// This is an axum request extractor that represents an authenticated user.
-///
-/// If specified in an API endpoint, this will guarantee that the API can only be called
+/// Request extractor for authenticated users.
+/// If specified in an API endpoint, this guarantees the API can only be called
 /// by an authenticated user.
 pub(crate) struct AuthenticatedUser {
     /// The DID of the authenticated user.
@@ -265,8 +264,8 @@ async fn validate_dpop_token(
         .get("jwk")
         .context("missing jwk in DPoP header")?;
 
-    // Calculate JWK thumbprint - this is simplified, full JWK thumbprint calculation is more complex
-    // In a production environment, follow RFC7638 for canonical JWK thumbprint calculation
+    // Calculate JWK thumbprint - simplified
+    // TODO: Follow RFC7638 for canonical JWK thumbprint calculation
     let jwk_json = serde_json::to_string(jwk).context("failed to serialize JWK")?;
     let mut hasher = Sha256::new();
     hasher.update(jwk_json.as_bytes());

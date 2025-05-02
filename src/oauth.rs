@@ -19,9 +19,8 @@ use rand::{Rng, thread_rng};
 use serde_json::json;
 use sha2::Digest;
 use std::collections::{HashMap, HashSet};
-use urlencoding;
 
-/// Authorization Server Metadata
+/// Protected Resource Metadata
 /// - GET `/.well-known/oauth-protected-resource`
 async fn protected_resource() -> Result<Json<serde_json::Value>> {
     Ok(Json(json!({
@@ -33,6 +32,7 @@ async fn protected_resource() -> Result<Json<serde_json::Value>> {
     })))
 }
 
+/// Authorization Server Metadata
 /// - GET `/.well-known/oauth-authorization-server`
 async fn authorization_server() -> Result<Json<serde_json::Value>> {
     Ok(Json(serde_json::json!({
@@ -66,7 +66,7 @@ async fn authorization_server() -> Result<Json<serde_json::Value>> {
     })))
 }
 
-/// Fetch and validate client metadata
+/// Fetch and validate client metadata from client_id URL
 async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<serde_json::Value> {
     // Handle localhost development
     if client_id.starts_with("http://localhost") {
@@ -105,7 +105,7 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<serde
         return Ok(metadata);
     }
 
-    // For production clients, fetch metadata
+    // If not in dev environment, fetch metadata
     let response = client
         .get(client_id)
         .send()
@@ -150,22 +150,8 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<serde
     Ok(metadata)
 }
 
-/// Pushed Authorization Request
-/// `/par`
-/// ## Request
-/// - redirect_uri - https://pdsls.dev/
-/// - code_challenge - PDyHrK2ECSnOuV0ZbGm9gkJB2xEfYBOPr2tXcfa6GdU
-/// - code_challenge_method - S256
-/// - state - 3ebWb5RplSf1IXVNbbcLKw
-/// - login_hint - quilling.dev
-/// - response_mode - fragment
-/// - response_type - code
-/// - display - page
-/// - scope - atproto transition:generic
-/// - client_id - https://pdsls.dev/client-metadata.json
-/// ## Response
-/// - request_uri - urn:ietf:params:oauth:request_uri:req-76eb3e0feec73938a8965ef0f1167235
-/// - expires_in - 299
+/// Pushed Authorization Request endpoint
+/// POST `/oauth/par`
 async fn par(
     State(db): State<Db>,
     State(client): State<Client>,
@@ -201,7 +187,7 @@ async fn par(
         ));
     }
 
-    // Optional parameters that we'll store
+    // Optional parameters
     let state = form_data.get("state").cloned();
     let login_hint = form_data.get("login_hint").cloned();
     let scope = form_data.get("scope").cloned();
@@ -236,7 +222,6 @@ async fn par(
         .map_or(0, |uris| uris.len())
         != 1
     {
-        // If redirect_uri is not provided, client must have exactly one registered URI
         return Err(Error::with_status(
             StatusCode::BAD_REQUEST,
             anyhow!("redirect_uri required when client has multiple registered URIs"),
@@ -300,23 +285,20 @@ async fn par(
     .await
     .context("failed to store PAR request")?;
 
-    // Return the PAR response
     Ok(Json(json!({
         "request_uri": request_uri,
-        "expires_in": 299 // 5 minutes - 1 second
+        "expires_in": 300 // 5 minutes
     })))
 }
 
-/// - GET `/oauth/authorize`
-/// # Parameters
-/// - client_id - https://pdsls.dev/client-metadata.json
-/// - request_uri - urn:ietf:params:oauth:request_uri:req-76eb3e0feec73938a8596ef0f1167235
+/// OAuth Authorization endpoint
+/// GET `/oauth/authorize`
 async fn authorize(
     State(db): State<Db>,
     State(client): State<Client>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
-    // Extract and validate required parameters
+    // Required parameters
     let client_id = params
         .get("client_id")
         .context("client_id parameter is required")?;
@@ -344,7 +326,7 @@ async fn authorize(
     // Validate client metadata
     let client_metadata = fetch_client_metadata(&client, client_id).await?;
 
-    // Create an authorization page with login form
+    // Authorization page with login form
     let login_hint = par_request.login_hint.unwrap_or_default();
     let html = format!(
         r#"<!DOCTYPE html>
@@ -407,17 +389,13 @@ async fn authorize(
     ))
 }
 
-/// `/oauth/authorize/sign-in`
-/// # Request body
-/// {"username":"quilling.dev","password":"hunter12","remember":false,"locale":"en"}
-/// # Response
-/// {"account":{"sub":"did:plc:jrtgsidnmxaen4offglr5lsh","aud":"did:web:shimeji.us-east.host.bsky.network","email":"teqed@shatteredsky.net","email_verified":true,"preferred_username":"quilling.dev"},"consentRequired":true}
-/// TODO: Implement
+/// OAuth Authorization Sign-in endpoint
+/// POST `/oauth/authorize/sign-in`
 async fn authorize_signin(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
-    State(client): State<Client>, // Added Client state
+    State(client): State<Client>,
     extract::Form(form_data): extract::Form<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
     // Extract form data
@@ -555,42 +533,10 @@ async fn authorize_signin(
     Ok(Redirect::to(&redirect_url))
 }
 
-// Making a request against client_id will net you:
-// {
-//   "client_id": "https://pdsls.dev/client-metadata.json",
-//   "client_name": "pdsls",
-//   "client_uri": "https://pdsls.dev",
-//   "redirect_uris": ["https://pdsls.dev/"],
-//   "scope": "atproto transition:generic",
-//   "grant_types": ["authorization_code", "refresh_token"],
-//   "response_types": ["code"],
-//   "token_endpoint_auth_method": "none",
-//   "application_type": "web",
-//   "dpop_bound_access_tokens": true
-// }
-
-/// POST https://entryway.example.com/oauth/token
-/// ## Request
-/// Content-Type: application/x-www-form-urlencoded
-/// DPoP: <DPOP_PROOF_JWT>
-/// grant_type=authorization_code
-/// &code=<AUTHORIZATION_CODE>
-/// &code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
-/// &client_id=https%3A%2F%2Fapp.example.com%2Fclient-metadata.json
-/// &redirect_uri=https%3A%2F%2Fapp.example.com%2Fmy-app%2Foauth-callback
-/// # Response
-/// HTTP/1.1 200 OK
-/// Content-Type: application/json
-/// Cache-Control: no-store
-/// {
-///  "access_token": "Kz~8mXK1EalYznwH-LC-1fBAo.4Ljp~zsPE_NeO.gxU",
-///  "token_type": "DPoP",
-///  "expires_in": 2677,
-///  "refresh_token": "Q..Zkm29lexi8VnWg2zPW1x-tgGad0Ibc3s3EwM_Ni4-g",
-///  "scope": "atproto transition:generic",
-///  "sub": "did:plc:jrtgsidnmxaen4offglr5lsh"
-/// }
-/// POST https://entryway.example.com/oauth/token
+/// OAuth token endpoint
+/// - POST `/oauth/token`
+///
+/// Handles both authorization_code and refresh_token grants
 async fn token(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
@@ -837,6 +783,10 @@ async fn token(
 }
 
 /// Verify a DPoP proof and return the JWK thumbprint
+///
+/// TODO: Implement proper RFC7638 JWK thumbprint calculation
+/// TODO: Verify the token signature using the JWK
+/// TODO: Store used jti values to prevent replay attacks
 fn verify_dpop_proof(dpop_token: &str, http_method: &str, http_uri: &str) -> Result<String> {
     // Parse the DPoP token
     let parts: Vec<&str> = dpop_token.split('.').collect();
@@ -907,15 +857,10 @@ fn verify_dpop_proof(dpop_token: &str, http_method: &str, http_uri: &str) -> Res
     hasher.update(&jwk_bytes);
     let thumbprint = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
 
-    // In a production implementation, we would:
-    // 1. Verify the token signature using the JWK
-    // 2. Store used jti values to prevent replay attacks
-    // 3. Calculate the canonical JWK thumbprint per RFC7638
-
     Ok(thumbprint)
 }
 
-/// Register oauth routes
+/// Register OAuth routes
 pub(crate) fn routes() -> Router<AppState> {
     Router::new()
         .route(
@@ -930,4 +875,8 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/oauth/authorize", get(authorize))
         .route("/oauth/authorize/sign-in", post(authorize_signin))
         .route("/oauth/token", post(token))
+    // TODO: Implement additional endpoints:
+    // - /oauth/jwks - Return the server's JWK Set
+    // - /oauth/revoke - Token revocation
+    // - /oauth/introspect - Token introspection
 }
