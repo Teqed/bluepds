@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM oauth_used_jtis WHERE expires_at < ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "bcef1b9aeaf0db7ac4b2e8f4b3ec40b425e48af26cf91496208c04e31239f7c6"
+}

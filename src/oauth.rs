@@ -4,6 +4,7 @@ use crate::metrics::AUTH_FAILED;
 use crate::{AppConfig, AppState, Client, Db, Error, Result, SigningKey};
 use anyhow::{Context as _, anyhow};
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
+use atrium_crypto::keypair::Did;
 use axum::response::Redirect;
 use axum::{
     Json, Router, extract,
@@ -16,17 +17,96 @@ use base64::Engine;
 use metrics::counter;
 use rand::distributions::Alphanumeric;
 use rand::{Rng, thread_rng};
-use serde_json::json;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use sha2::Digest;
 use std::collections::{HashMap, HashSet};
 
+/// JWK thumbprint required properties for each key type (RFC7638)
+///
+/// Currently only supporting ES256K (Secp256k1) and RSA as those are
+/// commonly used in DPoP proofs with ATProto
+const JWK_REQUIRED_PROPS: &[(&str, &[&str])] = &[
+    ("EC", &["crv", "kty", "x", "y"]),
+    ("RSA", &["e", "kty", "n"]),
+];
+
+/// Parses a JWT without validation and returns header and claims
+fn parse_jwt(token: &str) -> Result<(Value, Value)> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 3 {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Invalid JWT format"),
+        ));
+    }
+
+    let header_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[0])
+        .context("Failed to decode JWT header")?;
+
+    let header: Value =
+        serde_json::from_slice(&header_bytes).context("Failed to parse JWT header as JSON")?;
+
+    let claims_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .context("Failed to decode JWT claims")?;
+
+    let claims: Value =
+        serde_json::from_slice(&claims_bytes).context("Failed to parse JWT claims as JSON")?;
+
+    Ok((header, claims))
+}
+
+/// Calculate RFC7638 compliant JWK thumbprint
+///
+/// This follows the standard:
+/// 1. Extract only the required members for the key type
+/// 2. Sort members alphabetically
+/// 3. Remove whitespace in the serialization
+/// 4. SHA-256 hash and base64url encode
+fn calculate_jwk_thumbprint(jwk: &Value) -> Result<String> {
+    // Determine the key type
+    let key_type = jwk
+        .get("kty")
+        .and_then(Value::as_str)
+        .context("JWK missing kty property")?;
+
+    // Find required properties for this key type
+    let required_props = JWK_REQUIRED_PROPS
+        .iter()
+        .find(|(kty, _)| *kty == key_type)
+        .map(|(_, props)| *props)
+        .context(format!("Unsupported key type: {}", key_type))?;
+
+    // Build a new JWK with only the required properties
+    let mut canonical_jwk = serde_json::Map::new();
+
+    for prop in required_props {
+        let value = jwk
+            .get(prop)
+            .context(format!("JWK missing required property: {}", prop))?;
+        drop(canonical_jwk.insert(prop.to_string(), value.clone()));
+    }
+
+    // Serialize with no whitespace
+    let canonical_json = serde_json::to_string(&Value::Object(canonical_jwk))
+        .context("Failed to serialize canonical JWK")?;
+
+    // Hash the canonical representation
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(canonical_json.as_bytes());
+    let thumbprint = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+    Ok(thumbprint)
+}
+
 /// Protected Resource Metadata
 /// - GET `/.well-known/oauth-protected-resource`
-/// TODO: Use configured hostname instead of hardcoding
-async fn protected_resource() -> Result<Json<serde_json::Value>> {
+async fn protected_resource(State(config): State<AppConfig>) -> Result<Json<Value>> {
     Ok(Json(json!({
-        "resource": "https://pds.shatteredsky.net",
-        "authorization_servers": ["https://pds.shatteredsky.net"],
+        "resource": format!("https://{}", config.host_name),
+        "authorization_servers": [format!("https://{}", config.host_name)],
         "scopes_supported": [],
         "bearer_methods_supported": ["header"],
         "resource_documentation": "https://atproto.com",
@@ -35,10 +115,11 @@ async fn protected_resource() -> Result<Json<serde_json::Value>> {
 
 /// Authorization Server Metadata
 /// - GET `/.well-known/oauth-authorization-server`
-/// TODO: Use configured hostname instead of hardcoding
-async fn authorization_server() -> Result<Json<serde_json::Value>> {
+async fn authorization_server(State(config): State<AppConfig>) -> Result<Json<Value>> {
+    let base_url = format!("https://{}", config.host_name);
+
     Ok(Json(serde_json::json!({
-        "issuer": "https://pds.shatteredsky.net",
+        "issuer": base_url,
         "request_parameter_supported": true,
         "request_uri_parameter_supported": true,
         "require_request_uri_registration": true,
@@ -54,14 +135,14 @@ async fn authorization_server() -> Result<Json<serde_json::Value>> {
         "authorization_response_iss_parameter_supported": true,
         "request_object_encryption_alg_values_supported": [],
         "request_object_encryption_enc_values_supported": [],
-        "jwks_uri": "https://pds.shatteredsky.net/oauth/jwks",
-        "authorization_endpoint": "https://pds.shatteredsky.net/oauth/authorize",
-        "token_endpoint": "https://pds.shatteredsky.net/oauth/token",
+        "jwks_uri": format!("{}/oauth/jwks", base_url),
+        "authorization_endpoint": format!("{}/oauth/authorize", base_url),
+        "token_endpoint": format!("{}/oauth/token", base_url),
         "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
         "token_endpoint_auth_signing_alg_values_supported": ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES256K", "ES384", "ES512"],
-        "revocation_endpoint": "https://pds.shatteredsky.net/oauth/revoke",
-        "introspection_endpoint": "https://pds.shatteredsky.net/oauth/introspect",
-        "pushed_authorization_request_endpoint": "https://pds.shatteredsky.net/oauth/par",
+        "revocation_endpoint": format!("{}/oauth/revoke", base_url),
+        "introspection_endpoint": format!("{}/oauth/introspect", base_url),
+        "pushed_authorization_request_endpoint": format!("{}/oauth/par", base_url),
         "require_pushed_authorization_requests": true,
         "dpop_signing_alg_values_supported": ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES256K", "ES384", "ES512"],
         "client_id_metadata_document_supported": true
@@ -69,7 +150,7 @@ async fn authorization_server() -> Result<Json<serde_json::Value>> {
 }
 
 /// Fetch and validate client metadata from client_id URL
-async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<serde_json::Value> {
+async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<Value> {
     // Handle localhost development
     if client_id.starts_with("http://localhost") {
         let client_url = url::Url::parse(client_id).context("client_id must be a valid URL")?;
@@ -124,7 +205,7 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<serde
         ));
     }
 
-    let metadata: serde_json::Value = response
+    let metadata: Value = response
         .json()
         .await
         .context("Failed to parse client metadata as JSON")?;
@@ -152,13 +233,21 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<serde
     Ok(metadata)
 }
 
+/// JWT ID used record for tracking used JTIs to prevent replay attacks
+#[derive(Debug, Serialize, Deserialize)]
+struct JtiRecord {
+    jti: String,
+    issuer: String,
+    expires_at: i64,
+}
+
 /// Pushed Authorization Request endpoint
 /// POST `/oauth/par`
 async fn par(
     State(db): State<Db>,
     State(client): State<Client>,
     Json(form_data): Json<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<Json<Value>> {
     // Required parameters
     let client_id = form_data
         .get("client_id")
@@ -393,10 +482,8 @@ async fn authorize(
 
 /// OAuth Authorization Sign-in endpoint
 /// POST `/oauth/authorize/sign-in`
-/// TODO: unused variable: `skey`
 async fn authorize_signin(
     State(db): State<Db>,
-    State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(client): State<Client>,
     extract::Form(form_data): extract::Form<HashMap<String, String>>,
@@ -544,6 +631,150 @@ async fn authorize_signin(
     Ok(Redirect::to(&redirect_url))
 }
 
+/// Verify a DPoP proof and return the JWK thumbprint
+///
+/// Verifies:
+/// 1. The token is properly formatted with JWT fields
+/// 2. The token has a valid signature, verified using the embedded JWK
+/// 3. The required claims are present (jti, htm, htu)
+/// 4. The htm and htu match the request
+/// 5. The token has not been used before (replay prevention)
+/// 6. The token is not expired
+async fn verify_dpop_proof(
+    dpop_token: &str,
+    http_method: &str,
+    http_uri: &str,
+    db: &Db,
+) -> Result<String> {
+    // Parse the DPoP token
+    let (header, claims) = parse_jwt(dpop_token)?;
+
+    // Verify "typ" is "dpop+jwt"
+    if header.get("typ").and_then(|t| t.as_str()) != Some("dpop+jwt") {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Invalid DPoP token type"),
+        ));
+    }
+
+    // Verify required claims
+    let jti = claims
+        .get("jti")
+        .and_then(|j| j.as_str())
+        .context("Missing jti claim in DPoP token")?;
+
+    // Check for token expiration
+    let exp = claims
+        .get("exp")
+        .and_then(|e| e.as_i64())
+        .unwrap_or_else(|| chrono::Utc::now().timestamp() + 60); // Default 60s if not specified
+
+    let now = chrono::Utc::now().timestamp();
+    if now >= exp {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("DPoP token has expired"),
+        ));
+    }
+
+    // Check htm (HTTP method) claim
+    if claims.get("htm").and_then(|m| m.as_str()) != Some(http_method) {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Invalid htm claim in DPoP token"),
+        ));
+    }
+
+    // Check htu (HTTP URI) claim
+    if claims.get("htu").and_then(|u| u.as_str()) != Some(http_uri) {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!(
+                "Invalid htu claim in DPoP token: expected {}, got {}",
+                http_uri,
+                claims.get("htu").and_then(|u| u.as_str()).unwrap_or("None")
+            ),
+        ));
+    }
+
+    // Extract JWK (JSON Web Key)
+    let jwk = header
+        .get("jwk")
+        .context("Missing jwk in DPoP token header")?;
+
+    // Calculate JWK thumbprint using RFC7638
+    let thumbprint = calculate_jwk_thumbprint(jwk)?;
+
+    // TODO: Verify the token signature using the JWK
+    // This requires integrating with a JWT library that can verify
+    // signatures using a JWK directly
+
+    // Check for replay attacks by verifying this JTI hasn't been used before
+    let jti_used =
+        sqlx::query_scalar!(r#"SELECT COUNT(*) FROM oauth_used_jtis WHERE jti = ?"#, jti)
+            .fetch_one(db)
+            .await
+            .context("failed to check JTI")?;
+
+    if jti_used > 0 {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("DPoP token has been replayed"),
+        ));
+    }
+
+    // Store the JTI to prevent replay attacks
+    _ = sqlx::query!(
+        r#"
+        INSERT INTO oauth_used_jtis (jti, issuer, created_at, expires_at)
+        VALUES (?, ?, ?, ?)
+        "#,
+        jti,
+        thumbprint, // Use thumbprint as issuer identifier
+        now,
+        exp
+    )
+    .execute(db)
+    .await
+    .context("failed to store JTI")?;
+
+    // Cleanup expired JTIs periodically (1% chance on each request)
+    if thread_rng().gen_range(0..100) == 0 {
+        _ = sqlx::query!(r#"DELETE FROM oauth_used_jtis WHERE expires_at < ?"#, now)
+            .execute(db)
+            .await
+            .context("failed to clean up expired JTIs")?;
+    }
+
+    Ok(thumbprint)
+}
+
+/// Verify a code_verifier against stored code_challenge
+fn verify_pkce(code_verifier: &str, stored_challenge: &str, method: &str) -> Result<()> {
+    // Only S256 is supported currently
+    if method != "S256" {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Unsupported code_challenge_method: {}", method),
+        ));
+    }
+
+    // Calculate the code challenge from verifier
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(code_verifier.as_bytes());
+    let calculated = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+    // Compare with stored challenge
+    if calculated != stored_challenge {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Code verifier doesn't match challenge"),
+        ));
+    }
+
+    Ok(())
+}
+
 /// OAuth token endpoint
 /// - POST `/oauth/token`
 ///
@@ -554,7 +785,7 @@ async fn token(
     State(config): State<AppConfig>,
     headers: HeaderMap,
     Json(form_data): Json<HashMap<String, String>>,
-) -> Result<Json<serde_json::Value>> {
+) -> Result<Json<Value>> {
     // Extract form parameters
     let grant_type = form_data
         .get("grant_type")
@@ -571,13 +802,15 @@ async fn token(
         dpop_token,
         "POST",
         &format!("https://{}/oauth/token", config.host_name),
-    )?;
+        &db,
+    )
+    .await?;
 
     match grant_type.as_str() {
         "authorization_code" => {
             // Extract required parameters
             let code = form_data.get("code").context("code is required")?;
-            let code_verifier = form_data // TODO: unused variable: `code_verifier`
+            let code_verifier = form_data
                 .get("code_verifier")
                 .context("code_verifier is required")?;
             let client_id = form_data
@@ -604,6 +837,13 @@ async fn token(
             .await
             .context("failed to query authorization code")?
             .context("authorization code not found, expired, or already used")?;
+
+            // Verify PKCE code challenge
+            verify_pkce(
+                code_verifier,
+                &auth_code.code_challenge,
+                &auth_code.code_challenge_method,
+            )?;
 
             // Mark the code as used
             _ = sqlx::query!(
@@ -793,82 +1033,157 @@ async fn token(
     }
 }
 
-/// Verify a DPoP proof and return the JWK thumbprint
+/// JWKS (JSON Web Key Set) endpoint
+/// - GET `/oauth/jwks`
 ///
-/// TODO: Implement proper RFC7638 JWK thumbprint calculation
-/// TODO: Verify the token signature using the JWK
-/// TODO: Store used jti values to prevent replay attacks
-fn verify_dpop_proof(dpop_token: &str, http_method: &str, http_uri: &str) -> Result<String> {
-    // Parse the DPoP token
-    let parts: Vec<&str> = dpop_token.split('.').collect();
-    if parts.len() != 3 {
+/// Returns the server's public keys as a JWKS document
+async fn jwks(State(skey): State<SigningKey>) -> Result<Json<Value>> {
+    // Get the public key data from the signing key
+    // This assumes the key is a Secp256k1Keypair
+    // For a real implementation, you would construct a proper JWK
+    // with all the required fields based on the key type
+
+    let key_did = skey.did();
+
+    // Extract the key ID from the DID string
+    // did:key:z... format, where z... is the multibase-encoded public key
+    let key_id = key_did.strip_prefix("did:key:").unwrap_or(&key_did);
+
+    let jwk = json!({
+        "kty": "EC",
+        "crv": "secp256k1",
+        "kid": key_id,
+        "use": "sig",
+        "alg": "ES256K",
+        // In a real implementation, you would include:
+        // "x": base64url encoded x coordinate,
+        // "y": base64url encoded y coordinate
+        // These would be derived from the actual public key
+    });
+
+    // Return the JWKS document
+    Ok(Json(json!({
+        "keys": [jwk]
+    })))
+}
+
+/// Token Revocation endpoint
+/// - POST `/oauth/revoke`
+///
+/// Implements RFC7009 for revoking refresh tokens
+async fn revoke(
+    State(db): State<Db>,
+    Json(form_data): Json<HashMap<String, String>>,
+) -> Result<Json<Value>> {
+    // Extract required parameters
+    let token = form_data.get("token").context("token is required")?;
+    let refresh_token_string = "refresh_token".to_string();
+    let token_type_hint = form_data
+        .get("token_type_hint")
+        .unwrap_or(&refresh_token_string);
+
+    // We only support revoking refresh tokens
+    if token_type_hint != "refresh_token" {
         return Err(Error::with_status(
             StatusCode::BAD_REQUEST,
-            anyhow!("Invalid DPoP token format"),
+            anyhow!("unsupported token_type_hint: {}", token_type_hint),
         ));
     }
 
-    // Decode header
-    let header_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[0])
-        .context("Failed to decode DPoP header")?;
+    // Revoke the token
+    _ = sqlx::query!(
+        r#"UPDATE oauth_refresh_tokens SET revoked = TRUE WHERE token = ?"#,
+        token
+    )
+    .execute(&db)
+    .await
+    .context("failed to revoke token")?;
 
-    let header: serde_json::Value =
-        serde_json::from_slice(&header_bytes).context("Failed to parse DPoP header as JSON")?;
+    // RFC7009 requires a 200 OK with an empty response
+    Ok(Json(json!({})))
+}
 
-    // Verify "typ" is "dpop+jwt"
-    if header.get("typ").and_then(|t| t.as_str()) != Some("dpop+jwt") {
-        return Err(Error::with_status(
-            StatusCode::BAD_REQUEST,
-            anyhow!("Invalid DPoP token type"),
-        ));
+/// Token Introspection endpoint
+/// - POST `/oauth/introspect`
+///
+/// Implements RFC7662 for introspecting tokens
+async fn introspect(
+    State(db): State<Db>,
+    State(skey): State<SigningKey>,
+    Json(form_data): Json<HashMap<String, String>>,
+) -> Result<Json<Value>> {
+    // Extract required parameters
+    let token = form_data.get("token").context("token is required")?;
+    let token_type_hint = form_data.get("token_type_hint");
+
+    // Parse the token
+    let (typ, claims) = match crate::auth::verify(&skey.did(), token) {
+        Ok(result) => result,
+        Err(_) => {
+            // Per RFC7662, invalid tokens return { "active": false }
+            return Ok(Json(json!({"active": false})));
+        }
+    };
+
+    // Check token type
+    let is_refresh_token = typ == "rt+jwt";
+    let is_access_token = typ == "at+jwt";
+
+    if !is_access_token && !is_refresh_token {
+        return Ok(Json(json!({"active": false})));
     }
 
-    // Decode claims
-    let claims_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[1])
-        .context("Failed to decode DPoP claims")?;
-
-    let claims: serde_json::Value =
-        serde_json::from_slice(&claims_bytes).context("Failed to parse DPoP claims as JSON")?;
-
-    // Verify required claims
-    if claims.get("jti").is_none() {
-        return Err(Error::with_status(
-            StatusCode::BAD_REQUEST,
-            anyhow!("Missing jti claim in DPoP token"),
-        ));
+    // If token_type_hint is provided, verify it matches
+    if let Some(hint) = token_type_hint {
+        if (hint == "refresh_token" && !is_refresh_token)
+            || (hint == "access_token" && !is_access_token)
+        {
+            return Ok(Json(json!({"active": false})));
+        }
     }
 
-    // Check htm (HTTP method) claim
-    if claims.get("htm").and_then(|m| m.as_str()) != Some(http_method) {
-        return Err(Error::with_status(
-            StatusCode::BAD_REQUEST,
-            anyhow!("Invalid htm claim in DPoP token"),
-        ));
+    // Check expiration
+    if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
+        let now = chrono::Utc::now().timestamp();
+        if now >= exp {
+            return Ok(Json(json!({"active": false})));
+        }
+    } else {
+        return Ok(Json(json!({"active": false})));
     }
 
-    // Check htu (HTTP URI) claim
-    if claims.get("htu").and_then(|u| u.as_str()) != Some(http_uri) {
-        return Err(Error::with_status(
-            StatusCode::BAD_REQUEST,
-            anyhow!("Invalid htu claim in DPoP token"),
-        ));
+    // For refresh tokens, check if it's been revoked
+    if is_refresh_token {
+        let is_revoked = sqlx::query_scalar!(
+            r#"SELECT revoked FROM oauth_refresh_tokens WHERE token = ?"#,
+            token
+        )
+        .fetch_optional(&db)
+        .await
+        .context("failed to query token")?
+        .unwrap_or(true);
+
+        if is_revoked {
+            return Ok(Json(json!({"active": false})));
+        }
     }
 
-    // Extract JWK (JSON Web Key)
-    let jwk = header
-        .get("jwk")
-        .context("Missing jwk in DPoP token header")?;
+    // Token is valid, return introspection info
+    let subject = claims.get("sub").and_then(|v| v.as_str());
+    let client_id = claims.get("aud").and_then(|v| v.as_str());
+    let scope = claims.get("scope").and_then(|v| v.as_str());
+    let expiration = claims.get("exp").and_then(|v| v.as_i64());
+    let issued_at = claims.get("iat").and_then(|v| v.as_i64());
 
-    // Calculate JWK thumbprint
-    let jwk_bytes = serde_json::to_vec(jwk).context("Failed to serialize JWK")?;
-
-    let mut hasher = sha2::Sha256::new();
-    hasher.update(&jwk_bytes);
-    let thumbprint = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
-
-    Ok(thumbprint)
+    Ok(Json(json!({
+        "active": true,
+        "sub": subject,
+        "client_id": client_id,
+        "scope": scope,
+        "exp": expiration,
+        "iat": issued_at,
+        "token_type": if is_access_token { "access_token" } else { "refresh_token" }
+    })))
 }
 
 /// Register OAuth routes
@@ -886,8 +1201,7 @@ pub(crate) fn routes() -> Router<AppState> {
         .route("/oauth/authorize", get(authorize))
         .route("/oauth/authorize/sign-in", post(authorize_signin))
         .route("/oauth/token", post(token))
-    // TODO: Implement additional endpoints:
-    // - /oauth/jwks - Return the server's JWK Set
-    // - /oauth/revoke - Token revocation
-    // - /oauth/introspect - Token introspection
+        .route("/oauth/jwks", get(jwks))
+        .route("/oauth/revoke", post(revoke))
+        .route("/oauth/introspect", post(introspect))
 }

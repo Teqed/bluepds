@@ -165,7 +165,7 @@ async fn validate_dpop_token(
     }
 
     // Check token expiration
-    if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
+    if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
         let now = chrono::Utc::now().timestamp();
         if now >= exp {
             return Err(Error::with_message(
@@ -251,6 +251,49 @@ async fn validate_dpop_token(
         }
     }
 
+    // Extract JWK from DPoP header
+    let jwk = dpop_header
+        .get("jwk")
+        .context("missing jwk in DPoP header")?;
+
+    // Calculate JWK thumbprint - RFC7638 compliant
+    let key_type = jwk
+        .get("kty")
+        .and_then(|v| v.as_str())
+        .context("JWK missing kty property")?;
+
+    // Define required properties for each key type
+    let required_props = match key_type {
+        "EC" => &["crv", "kty", "x", "y"][..],
+        "RSA" => &["e", "kty", "n"][..],
+        _ => {
+            return Err(Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                anyhow!("Unsupported JWK key type: {}", key_type),
+            ));
+        }
+    };
+
+    // Build a new JWK with only the required properties
+    let mut canonical_jwk = serde_json::Map::new();
+
+    for prop in required_props {
+        let value = jwk
+            .get(prop)
+            .context(format!("JWK missing required property: {}", prop))?;
+        drop(canonical_jwk.insert(prop.to_string(), value.clone()));
+    }
+
+    // Serialize with no whitespace
+    let canonical_json = serde_json::to_string(&serde_json::Value::Object(canonical_jwk))
+        .context("Failed to serialize canonical JWK")?;
+
+    // Hash the canonical representation
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_json.as_bytes());
+    let calculated_thumbprint =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
     // Get JWK thumbprint from the access token "cnf" claim
     let jkt = claims
         .get("cnf")
@@ -259,19 +302,6 @@ async fn validate_dpop_token(
         .and_then(|v| v.as_str())
         .context("missing or invalid 'cnf.jkt' in access token")?;
 
-    // Extract JWK from DPoP header
-    let jwk = dpop_header
-        .get("jwk")
-        .context("missing jwk in DPoP header")?;
-
-    // Calculate JWK thumbprint - simplified
-    // TODO: Follow RFC7638 for canonical JWK thumbprint calculation
-    let jwk_json = serde_json::to_string(jwk).context("failed to serialize JWK")?;
-    let mut hasher = Sha256::new();
-    hasher.update(jwk_json.as_bytes());
-    let calculated_thumbprint =
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
-
     // Verify JWK thumbprint
     if calculated_thumbprint != jkt {
         return Err(Error::with_status(
@@ -279,6 +309,49 @@ async fn validate_dpop_token(
             anyhow!("JWK thumbprint mismatch"),
         ));
     }
+
+    // Check JTI replay using the database
+    let jti = dpop_claims
+        .get("jti")
+        .and_then(|j| j.as_str())
+        .context("Missing jti claim in DPoP token")?;
+
+    let timestamp = chrono::Utc::now().timestamp();
+
+    // Check if JTI has been used before
+    let jti_used =
+        sqlx::query_scalar!(r#"SELECT COUNT(*) FROM oauth_used_jtis WHERE jti = ?"#, jti)
+            .fetch_one(&state.db)
+            .await
+            .context("failed to check JTI")?;
+
+    if jti_used > 0 {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("DPoP token has been replayed"),
+        ));
+    }
+
+    // Store the JTI to prevent replay attacks
+    // Get expiry from token or default to 60 seconds
+    let exp = dpop_claims
+        .get("exp")
+        .and_then(|e| e.as_i64())
+        .unwrap_or_else(|| timestamp + 60);
+
+    _ = sqlx::query!(
+        r#"
+        INSERT INTO oauth_used_jtis (jti, issuer, created_at, expires_at)
+        VALUES (?, ?, ?, ?)
+        "#,
+        jti,
+        calculated_thumbprint, // Use thumbprint as issuer identifier
+        timestamp,
+        exp
+    )
+    .execute(&state.db)
+    .await
+    .context("failed to store JTI")?;
 
     // Extract subject (DID) from access token
     if let Some(did) = claims.get("sub").and_then(|v| v.as_str()) {

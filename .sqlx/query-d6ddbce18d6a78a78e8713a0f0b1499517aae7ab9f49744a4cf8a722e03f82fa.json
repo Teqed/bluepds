@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n        INSERT INTO oauth_used_jtis (jti, issuer, created_at, expires_at)\n        VALUES (?, ?, ?, ?)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "d6ddbce18d6a78a78e8713a0f0b1499517aae7ab9f49744a4cf8a722e03f82fa"
+}

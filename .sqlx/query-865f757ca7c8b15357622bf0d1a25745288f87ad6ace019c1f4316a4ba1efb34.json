@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT revoked FROM oauth_refresh_tokens WHERE token = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "revoked",
+        "ordinal": 0,
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "865f757ca7c8b15357622bf0d1a25745288f87ad6ace019c1f4316a4ba1efb34"
+}
