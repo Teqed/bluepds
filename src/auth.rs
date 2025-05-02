@@ -223,7 +223,14 @@ async fn validate_dpop_token(
     if dpop_claims.get("htu").and_then(|v| v.as_str()) != Some(&expected_uri) {
         return Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
-            anyhow!("DPoP token HTTP URI mismatch"),
+            anyhow!(
+                "DPoP token HTTP URI mismatch: expected {}, got {}",
+                expected_uri,
+                dpop_claims
+                    .get("htu")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("None")
+            ),
         ));
     }
 
