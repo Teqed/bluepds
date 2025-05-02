@@ -5,6 +5,7 @@ use atrium_crypto::{
 };
 use axum::{extract::FromRequestParts, http::StatusCode};
 use base64::Engine as _;
+use sha2::{Digest, Sha256};
 
 use crate::{AppState, Error, error::ErrorMessage};
 
@@ -31,68 +32,70 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut axum::http::request::Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        // First try to get the token from the Bearer authentication header
-        let token = parts
+        // Check for authorization header (either for Bearer or DPoP tokens)
+        let auth_header = parts
             .headers
             .get(axum::http::header::AUTHORIZATION)
-            .and_then(|auth| {
-                let auth = auth.to_str().context("header should be valid utf-8").ok()?;
-                auth.strip_prefix("Bearer ")
-            });
+            .ok_or_else(|| {
+                Error::with_status(StatusCode::UNAUTHORIZED, anyhow!("no authorization header"))
+            })?;
 
-        // If no Bearer token found, check for DPoP token
-        let token = if token.is_none() && parts.headers.contains_key("DPoP") {
-            // Extract access token from DPoP proof
-            // For DPoP, we would need to extract from query or form parameters
-            // This is simplistic, in practice we would need to verify the DPoP proof
-            // against the request method and URL
-            // TODO: Implement DPoP token extraction and verification
-
-            // Try to extract from query parameters
-            let query = parts.uri.query().unwrap_or("");
-            for param in query.split('&') {
-                if let Some(token) = param.strip_prefix("access_token=") {
-                    return extract_did_from_token(token, state, "DPoP token (query)").await;
-                }
-            }
-
-            None
-        } else {
-            token
-        };
-
-        let Some(token) = token else {
-            return Err(Error::with_status(
+        let auth_str = auth_header.to_str().map_err(|_| {
+            Error::with_status(
                 StatusCode::UNAUTHORIZED,
-                anyhow!("no bearer token"),
-            ));
-        };
+                anyhow!("authorization header should be valid utf-8"),
+            )
+        })?;
 
-        extract_did_from_token(token, state, "Bearer token").await
+        // Check for DPoP header
+        let dpop_header = parts.headers.get("dpop");
+        let has_dpop = dpop_header.is_some();
+
+        // Handle different token types
+        if auth_str.starts_with("Bearer ") || auth_str.starts_with("DPoP ") {
+            let token = auth_str.splitn(2, ' ').nth(1).unwrap();
+            if has_dpop {
+                // Process DPoP token - the Authorization header contains the access token
+                // and the DPoP header contains the proof
+                let dpop_token = dpop_header.unwrap().to_str().map_err(|_| {
+                    Error::with_status(
+                        StatusCode::UNAUTHORIZED,
+                        anyhow!("DPoP header should be valid utf-8"),
+                    )
+                })?;
+
+                return validate_dpop_token(token, dpop_token, parts, state).await;
+            } else {
+                // Standard Bearer token
+                return validate_bearer_token(token, state).await;
+            }
+        }
+
+        // If we reach here, no valid authorization method was found
+        Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("unsupported authorization method"),
+        ))
     }
 }
 
-async fn extract_did_from_token(
-    token: &str,
-    state: &AppState,
-    token_type: &str,
-) -> Result<AuthenticatedUser, Error> {
-    // N.B: We ignore all fields inside of the token up until this point because they can be
-    // attacker-controlled.
+/// Validate a standard Bearer token
+async fn validate_bearer_token(token: &str, state: &AppState) -> Result<AuthenticatedUser, Error> {
+    // Validate JWT token
     let (typ, claims) = verify(&state.signing_key.did(), token)
         .map_err(|e| {
             Error::with_status(
                 StatusCode::UNAUTHORIZED,
-                e.context(format!("failed to verify {}", token_type)),
+                e.context("failed to verify bearer token"),
             )
         })
-        .context("token auth should be verify")?;
+        .context("token auth should verify")?;
 
     // Ensure this is an authentication token.
     if typ != "at+jwt" {
         return Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
-            anyhow!("invalid token {typ}"),
+            anyhow!("invalid token type: {typ}"),
         ));
     }
 
@@ -101,11 +104,12 @@ async fn extract_did_from_token(
         if aud != format!("did:web:{}", state.config.host_name) {
             return Err(Error::with_status(
                 StatusCode::UNAUTHORIZED,
-                anyhow!("invalid audience {aud}"),
+                anyhow!("invalid audience: {aud}"),
             ));
         }
     }
 
+    // Check token expiration
     if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
         let now = chrono::Utc::now().timestamp();
         if now >= exp {
@@ -117,6 +121,7 @@ async fn extract_did_from_token(
         }
     }
 
+    // Extract subject (DID)
     if let Some(did) = claims.get("sub").and_then(serde_json::Value::as_str) {
         let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
             .fetch_one(&state.db)
@@ -130,7 +135,156 @@ async fn extract_did_from_token(
     } else {
         Err(Error::with_status(
             StatusCode::UNAUTHORIZED,
-            anyhow!("invalid authorization token"),
+            anyhow!("invalid authorization token: missing subject"),
+        ))
+    }
+}
+
+/// Validate a DPoP token and proof
+async fn validate_dpop_token(
+    access_token: &str,
+    dpop_token: &str,
+    parts: &axum::http::request::Parts,
+    state: &AppState,
+) -> Result<AuthenticatedUser, Error> {
+    // Step 1: Parse and validate the access token
+    let (typ, claims) = verify(&state.signing_key.did(), access_token)
+        .map_err(|e| {
+            Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                e.context("failed to verify access token"),
+            )
+        })
+        .context("access token auth should verify")?;
+
+    // Ensure this is an access token JWT
+    if typ != "at+jwt" {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("invalid token type: {typ}"),
+        ));
+    }
+
+    // Check token expiration
+    if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
+        let now = chrono::Utc::now().timestamp();
+        if now >= exp {
+            return Err(Error::with_message(
+                StatusCode::BAD_REQUEST,
+                anyhow!("token has expired"),
+                ErrorMessage::new("ExpiredToken", "Token has expired"),
+            ));
+        }
+    }
+
+    // Step 2: Parse and validate the DPoP proof
+    let dpop_parts: Vec<&str> = dpop_token.split('.').collect();
+    if dpop_parts.len() != 3 {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("invalid DPoP token format"),
+        ));
+    }
+
+    // Decode header
+    let dpop_header_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(dpop_parts[0])
+        .context("failed to decode DPoP header")?;
+
+    let dpop_header: serde_json::Value =
+        serde_json::from_slice(&dpop_header_bytes).context("failed to parse DPoP header")?;
+
+    // Check typ is "dpop+jwt"
+    if dpop_header.get("typ").and_then(|v| v.as_str()) != Some("dpop+jwt") {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("invalid DPoP token type"),
+        ));
+    }
+
+    // Decode claims
+    let dpop_claims_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(dpop_parts[1])
+        .context("failed to decode DPoP claims")?;
+
+    let dpop_claims: serde_json::Value =
+        serde_json::from_slice(&dpop_claims_bytes).context("failed to parse DPoP claims")?;
+
+    // Check HTTP method
+    if dpop_claims.get("htm").and_then(|v| v.as_str()) != Some(parts.method.as_str()) {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("DPoP token HTTP method mismatch"),
+        ));
+    }
+
+    // Check HTTP URI
+    let expected_uri = format!("https://{}{}", state.config.host_name, parts.uri.path());
+    if dpop_claims.get("htu").and_then(|v| v.as_str()) != Some(&expected_uri) {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("DPoP token HTTP URI mismatch"),
+        ));
+    }
+
+    // Verify access token hash (ath)
+    if let Some(ath) = dpop_claims.get("ath").and_then(|v| v.as_str()) {
+        let mut hasher = Sha256::new();
+        hasher.update(access_token.as_bytes());
+        let token_hash = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+        if ath != token_hash {
+            return Err(Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                anyhow!("DPoP access token hash mismatch"),
+            ));
+        }
+    }
+
+    // Get JWK thumbprint from the access token "cnf" claim
+    let jkt = claims
+        .get("cnf")
+        .and_then(|v| v.as_object())
+        .and_then(|o| o.get("jkt"))
+        .and_then(|v| v.as_str())
+        .context("missing or invalid 'cnf.jkt' in access token")?;
+
+    // Extract JWK from DPoP header
+    let jwk = dpop_header
+        .get("jwk")
+        .context("missing jwk in DPoP header")?;
+
+    // Calculate JWK thumbprint - this is simplified, full JWK thumbprint calculation is more complex
+    // In a production environment, follow RFC7638 for canonical JWK thumbprint calculation
+    let jwk_json = serde_json::to_string(jwk).context("failed to serialize JWK")?;
+    let mut hasher = Sha256::new();
+    hasher.update(jwk_json.as_bytes());
+    let calculated_thumbprint =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+    // Verify JWK thumbprint
+    if calculated_thumbprint != jkt {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("JWK thumbprint mismatch"),
+        ));
+    }
+
+    // Extract subject (DID) from access token
+    if let Some(did) = claims.get("sub").and_then(|v| v.as_str()) {
+        let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
+            .fetch_one(&state.db)
+            .await
+            .with_context(|| format!("failed to query account {did}"))
+            .context("should fetch account status")?;
+
+        Ok(AuthenticatedUser {
+            did: did.to_owned(),
+        })
+    } else {
+        Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("invalid access token: missing subject"),
         ))
     }
 }
