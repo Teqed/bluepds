@@ -525,7 +525,15 @@ async fn authorize_signin(
     });
 
     // Build redirect URL
-    let mut redirect_url = format!("{}#", redirect_uri);
+    let mut redirect_url = redirect_uri;
+    match par_request.response_mode {
+        None => redirect_url.push_str("?"), // Default to query
+        Some(response_mode) => match response_mode.as_str() {
+            "query" => redirect_url.push_str("?"),
+            "fragment" => redirect_url.push_str("#"),
+            _ => redirect_url.push_str("?"), // Default to query
+        },
+    };
     redirect_url.push_str(&format!("state={}", urlencoding::encode(&state)));
     let host_name = format!("https://{}", &config.host_name);
     redirect_url.push_str(&format!("&iss={}", urlencoding::encode(&host_name)));
