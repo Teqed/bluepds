@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Protected Resource Metadata
 /// - GET `/.well-known/oauth-protected-resource`
+/// TODO: Use configured hostname instead of hardcoding
 async fn protected_resource() -> Result<Json<serde_json::Value>> {
     Ok(Json(json!({
         "resource": "https://pds.shatteredsky.net",
@@ -34,6 +35,7 @@ async fn protected_resource() -> Result<Json<serde_json::Value>> {
 
 /// Authorization Server Metadata
 /// - GET `/.well-known/oauth-authorization-server`
+/// TODO: Use configured hostname instead of hardcoding
 async fn authorization_server() -> Result<Json<serde_json::Value>> {
     Ok(Json(serde_json::json!({
         "issuer": "https://pds.shatteredsky.net",
@@ -391,6 +393,7 @@ async fn authorize(
 
 /// OAuth Authorization Sign-in endpoint
 /// POST `/oauth/authorize/sign-in`
+/// TODO: unused variable: `skey`
 async fn authorize_signin(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
@@ -574,7 +577,7 @@ async fn token(
         "authorization_code" => {
             // Extract required parameters
             let code = form_data.get("code").context("code is required")?;
-            let code_verifier = form_data
+            let code_verifier = form_data // TODO: unused variable: `code_verifier`
                 .get("code_verifier")
                 .context("code_verifier is required")?;
             let client_id = form_data
