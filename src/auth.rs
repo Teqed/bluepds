@@ -221,7 +221,7 @@ async fn validate_dpop_token(
     let expected_uri = format!(
         "https://{}/xrpc{}",
         state.config.host_name,
-        parts.uri.path()
+        parts.uri.path_and_query().expect("path and query to exist")
     );
     if dpop_claims.get("htu").and_then(|v| v.as_str()) != Some(&expected_uri) {
         return Err(Error::with_status(
