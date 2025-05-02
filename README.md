@@ -38,6 +38,7 @@ cargo run
   * firehose.rs - ATProto firehose producer
   * main.rs     - Main entrypoint
   * metrics.rs  - Definitions for telemetry instruments
+  * oauth.rs    - OAuth routes
   * plc.rs      - Functionality to access the Public Ledger of Credentials
   * storage.rs  - Helpers to access user repository storage
 ```
