@@ -1,5 +1,3 @@
-//! Authentication primitives.
-
 use anyhow::{Context as _, anyhow};
 use atrium_crypto::{
     keypair::{Did as _, Secp256k1Keypair},
@@ -33,6 +31,7 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
         parts: &mut axum::http::request::Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        // First try to get the token from the Bearer authentication header
         let token = parts
             .headers
             .get(axum::http::header::AUTHORIZATION)
@@ -41,6 +40,27 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                 auth.strip_prefix("Bearer ")
             });
 
+        // If no Bearer token found, check for DPoP token
+        let token = if token.is_none() && parts.headers.contains_key("DPoP") {
+            // Extract access token from DPoP proof
+            // For DPoP, we would need to extract from query or form parameters
+            // This is simplistic, in practice we would need to verify the DPoP proof
+            // against the request method and URL
+            // TODO: Implement DPoP token extraction and verification
+
+            // Try to extract from query parameters
+            let query = parts.uri.query().unwrap_or("");
+            for param in query.split('&') {
+                if let Some(token) = param.strip_prefix("access_token=") {
+                    return extract_did_from_token(token, state, "DPoP token (query)").await;
+                }
+            }
+
+            None
+        } else {
+            token
+        };
+
         let Some(token) = token else {
             return Err(Error::with_status(
                 StatusCode::UNAUTHORIZED,
@@ -48,62 +68,70 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
             ));
         };
 
-        // N.B: We ignore all fields inside of the token up until this point because they can be
-        // attacker-controlled.
-        let (typ, claims) = verify(&state.signing_key.did(), token)
-            .map_err(|e| {
-                Error::with_status(
-                    StatusCode::UNAUTHORIZED,
-                    e.context("failed to verify auth token"),
-                )
-            })
-            .context("token auth should be verify")?;
+        extract_did_from_token(token, state, "Bearer token").await
+    }
+}
 
-        // Ensure this is an authentication token.
-        if typ != "at+jwt" {
+async fn extract_did_from_token(
+    token: &str,
+    state: &AppState,
+    token_type: &str,
+) -> Result<AuthenticatedUser, Error> {
+    // N.B: We ignore all fields inside of the token up until this point because they can be
+    // attacker-controlled.
+    let (typ, claims) = verify(&state.signing_key.did(), token)
+        .map_err(|e| {
+            Error::with_status(
+                StatusCode::UNAUTHORIZED,
+                e.context(format!("failed to verify {}", token_type)),
+            )
+        })
+        .context("token auth should be verify")?;
+
+    // Ensure this is an authentication token.
+    if typ != "at+jwt" {
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("invalid token {typ}"),
+        ));
+    }
+
+    // Ensure we are in the audience field.
+    if let Some(aud) = claims.get("aud").and_then(serde_json::Value::as_str) {
+        if aud != format!("did:web:{}", state.config.host_name) {
             return Err(Error::with_status(
                 StatusCode::UNAUTHORIZED,
-                anyhow!("invalid token {typ}"),
+                anyhow!("invalid audience {aud}"),
             ));
         }
+    }
 
-        // Ensure we are in the audience field.
-        if let Some(aud) = claims.get("aud").and_then(serde_json::Value::as_str) {
-            if aud != format!("did:web:{}", state.config.host_name) {
-                return Err(Error::with_status(
-                    StatusCode::UNAUTHORIZED,
-                    anyhow!("invalid audience {aud}"),
-                ));
-            }
+    if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
+        let now = chrono::Utc::now().timestamp();
+        if now >= exp {
+            return Err(Error::with_message(
+                StatusCode::BAD_REQUEST,
+                anyhow!("token has expired"),
+                ErrorMessage::new("ExpiredToken", "Token has expired"),
+            ));
         }
+    }
 
-        if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
-            let now = chrono::Utc::now().timestamp();
-            if now >= exp {
-                return Err(Error::with_message(
-                    StatusCode::BAD_REQUEST,
-                    anyhow!("token has expired"),
-                    ErrorMessage::new("ExpiredToken", "Token has expired"),
-                ));
-            }
-        }
+    if let Some(did) = claims.get("sub").and_then(serde_json::Value::as_str) {
+        let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
+            .fetch_one(&state.db)
+            .await
+            .with_context(|| format!("failed to query account {did}"))
+            .context("should fetch account status")?;
 
-        if let Some(did) = claims.get("sub").and_then(serde_json::Value::as_str) {
-            let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
-                .fetch_one(&state.db)
-                .await
-                .with_context(|| format!("failed to query account {did}"))
-                .context("should fetch account status")?;
-
-            Ok(Self {
-                did: did.to_owned(),
-            })
-        } else {
-            Err(Error::with_status(
-                StatusCode::UNAUTHORIZED,
-                anyhow!("invalid authorization token"),
-            ))
-        }
+        Ok(AuthenticatedUser {
+            did: did.to_owned(),
+        })
+    } else {
+        Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("invalid authorization token"),
+        ))
     }
 }
 
