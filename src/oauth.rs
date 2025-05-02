@@ -547,21 +547,11 @@ async fn authorize_signin(
     });
 
     // Build redirect URL
-    let mut params = Vec::new();
-    params.push(format!("code={}", urlencoding::encode(&code)));
-    params.push(format!("state={}", urlencoding::encode(&state)));
-    params.push(format!(
-        "iss={}",
-        urlencoding::encode("https://pds.shatteredsky.net")
-    ));
-
-    let query = params.join("&");
-    let redirect_url = if redirect_uri.contains('?') {
-        format!("{}&{}", redirect_uri, query)
-    } else {
-        format!("{}?{}", redirect_uri, query)
-    };
-
+    let mut redirect_url = format!("{}#", redirect_uri);
+    redirect_url.push_str(&format!("state={}", urlencoding::encode(&state)));
+    let host_name = format!("https://{}", &config.host_name);
+    redirect_url.push_str(&format!("&iss={}", urlencoding::encode(&host_name)));
+    redirect_url.push_str(&format!("&code={}", urlencoding::encode(&code)));
     Ok(Redirect::to(&redirect_url))
 }
 
