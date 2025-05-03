@@ -292,6 +292,7 @@ async fn create_account(
         cid: cid,
         rev: rev.to_string(),
         did: did.clone(),
+        pcid: None,
         blobs: Vec::new(),
     })
     .await;

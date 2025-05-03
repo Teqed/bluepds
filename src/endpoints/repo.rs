@@ -198,6 +198,7 @@ async fn apply_writes(
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
         .await
         .context("failed to open user repo")?;
+    let orig_cid = repo.root();
     let orig_rev = repo.commit().rev();
 
     let mut blobs = vec![];
@@ -243,7 +244,7 @@ async fn apply_writes(
                 (b, key)
             }
             InputWritesItem::Update(object) => {
-                let key = format!("{}/{}", object.collection.as_str(), object.rkey);
+                let key = format!("{}/{}", object.collection.as_str(), object.rkey.as_str());
                 let uri = format!("at://{}/{}", user.did(), key);
 
                 let prev = repo
@@ -280,7 +281,7 @@ async fn apply_writes(
                 (b, key)
             }
             InputWritesItem::Delete(object) => {
-                let key = format!("{}/{}", object.collection.as_str(), object.rkey);
+                let key = format!("{}/{}", object.collection.as_str(), object.rkey.as_str());
 
                 let prev = repo
                     .tree()
@@ -354,7 +355,7 @@ async fn apply_writes(
                 commit: Some(
                     CommitMetaData {
                         cid: old.clone(),
-                        rev: orig_rev.to_string(),
+                        rev: orig_rev,
                     }
                     .into(),
                 ),
@@ -432,6 +433,7 @@ async fn apply_writes(
         cid: repo.root(),
         rev: repo.commit().rev().to_string(),
         did: atrium_api::types::string::Did::new(user.did()).unwrap(),
+        pcid: Some(orig_cid),
         blobs: blobs.into_iter().map(|(_, c)| c).collect::<Vec<_>>(),
     })
     .await;
@@ -442,7 +444,7 @@ async fn apply_writes(
             commit: Some(
                 CommitMetaData {
                     cid: atrium_api::types::string::Cid::new(repo.root()),
-                    rev: repo.commit().rev().to_string(),
+                    rev: repo.commit().rev(),
                 }
                 .into(),
             ),
@@ -670,7 +672,7 @@ async fn get_record(
         .await
         .context("failed to open user repo")?;
 
-    let key = format!("{}/{}", input.collection.as_str(), input.rkey);
+    let key = format!("{}/{}", input.collection.as_str(), input.rkey.as_str());
     let uri = format!("at://{}/{}", did.as_str(), &key);
 
     let cid = repo

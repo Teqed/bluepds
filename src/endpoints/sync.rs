@@ -104,7 +104,7 @@ async fn get_latest_commit(
     Ok(Json(
         sync::get_latest_commit::OutputData {
             cid: atrium_api::types::string::Cid::new(cid),
-            rev: commit.rev().to_string(),
+            rev: commit.rev(),
         }
         .into(),
     ))
@@ -119,7 +119,7 @@ async fn get_record(
         .await
         .context("failed to open repo")?;
 
-    let key = format!("{}/{}", input.collection.as_str(), input.rkey);
+    let key = format!("{}/{}", input.collection.as_str(), input.rkey.as_str());
 
     let mut contents = Vec::new();
     let mut ret_store =
@@ -164,7 +164,7 @@ async fn get_repo_status(
             active,
             status,
             did: input.did.clone(),
-            rev: Some(r.rev),
+            rev: Some(atrium_api::types::string::Tid::new(r.rev).unwrap()),
         }
         .into(),
     ))
@@ -269,7 +269,7 @@ async fn list_repos(
                 active: Some(true),
                 did: Did::new(r.did).unwrap(),
                 head: atrium_api::types::string::Cid::new(Cid::from_str(&r.root).unwrap()),
-                rev: r.rev,
+                rev: atrium_api::types::string::Tid::new(r.rev).unwrap(),
                 status: None,
             }
             .into()
