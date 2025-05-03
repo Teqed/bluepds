@@ -13,6 +13,7 @@
 
 This is an implementation of an ATProto PDS, built with [Axum](https://github.com/tokio-rs/axum) and [Atrium](https://github.com/sugyan/atrium).
 Heavily inspired by David Buchanan's [millipds](https://github.com/DavidBuchanan314/millipds).
+This implementation forked from the [azure-rust-app](https://github.com/DrChat/azure-rust-app) starter template.
 
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
