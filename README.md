@@ -27,6 +27,16 @@ If you want to see this PDS in action, there is a live account hosted by this PD
 cargo run
 ```
 
+## Cost breakdown (on Azure)
+This is how much it costs to host the @test.justinm.one account:
+
+- $20/mo
+  - $13/mo: Azure Application Service
+  - $5/mo: Azure Container Registry
+  - $1/mo: Azure Storage Account
+
+This is _without_ optimizing for costs. The PDS can likely be made much cheaper.
+
 ## Code map
 ```
 * migrations/   - SQLite database migrations
