@@ -13,6 +13,7 @@
 
 This is an implementation of an ATProto PDS, built with [Axum](https://github.com/tokio-rs/axum) and [Atrium](https://github.com/sugyan/atrium).
 Heavily inspired by David Buchanan's [millipds](https://github.com/DavidBuchanan314/millipds).
+This implementation forked from the [azure-rust-app](https://github.com/DrChat/azure-rust-app) starter template.
 
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
@@ -25,6 +26,16 @@ If you want to see this PDS in action, there is a live account hosted by this PD
 ```
 cargo run
 ```
+
+## Cost breakdown (on Azure)
+This is how much it costs to host the @test.justinm.one account:
+
+- $20/mo
+  - $13/mo: Azure Application Service
+  - $5/mo: Azure Container Registry
+  - $1/mo: Azure Storage Account
+
+This is _without_ optimizing for costs. The PDS can likely be made much cheaper.
 
 ## Code map
 ```
@@ -95,7 +106,7 @@ cargo run
     - [X] ungrouped
 ### High-level features
 - [ ] Authentication
-  - [ ] OAuth support
+  - [ ] [OAuth support](https://atproto.com/specs/oauth)
 - [ ] Storage backend abstractions
   - [ ] Azure blob storage backend
   - [ ] Backblaze b2(?)

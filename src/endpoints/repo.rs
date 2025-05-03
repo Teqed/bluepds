@@ -258,6 +258,7 @@ async fn apply_writes(
     let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
         .await
         .context("failed to open user repo")?;
+    let orig_cid = repo.root();
     let orig_rev = repo.commit().rev();
 
     let mut blobs = vec![];
@@ -306,7 +307,7 @@ async fn apply_writes(
             }
             InputWritesItem::Update(ref object) => {
                 let builder: atrium_repo::repo::CommitBuilder<_>;
-                let key = format!("{}/{}", &object.collection.as_str(), &object.rkey);
+                let key = format!("{}/{}", &object.collection.as_str(), &object.rkey.as_str());
                 let uri = format!("at://{}/{}", user.did(), key);
 
                 let prev = repo
@@ -370,7 +371,7 @@ async fn apply_writes(
                 (builder, key)
             }
             InputWritesItem::Delete(ref object) => {
-                let key = format!("{}/{}", &object.collection.as_str(), &object.rkey);
+                let key = format!("{}/{}", &object.collection.as_str(), &object.rkey.as_str());
 
                 let prev = repo
                     .tree()
@@ -447,7 +448,7 @@ async fn apply_writes(
                 commit: Some(
                     CommitMetaData {
                         cid: old,
-                        rev: orig_rev.to_string(),
+                        rev: orig_rev,
                     }
                     .into(),
                 ),
@@ -527,6 +528,7 @@ async fn apply_writes(
         cid: repo.root(),
         rev: repo.commit().rev().to_string(),
         did: atrium_api::types::string::Did::new(user.did()).expect("should be valid DID"),
+        pcid: Some(orig_cid),
         blobs: blobs.into_iter().map(|(_, cid)| cid).collect::<Vec<_>>(),
     })
     .await;
@@ -537,7 +539,7 @@ async fn apply_writes(
             commit: Some(
                 CommitMetaData {
                     cid: atrium_api::types::string::Cid::new(repo.root()),
-                    rev: repo.commit().rev().to_string(),
+                    rev: repo.commit().rev(),
                 }
                 .into(),
             ),
@@ -761,7 +763,7 @@ async fn delete_record(
 async fn describe_repo(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<repo::describe_repo::Parameters>,
+    Query(input): Query<repo::describe_repo::ParametersData>,
 ) -> Result<Json<repo::describe_repo::Output>> {
     // Lookup the DID by the provided handle.
     let (did, handle) = resolve_did(&db, &input.repo)
@@ -811,7 +813,7 @@ async fn describe_repo(
 async fn get_record(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<repo::get_record::Parameters>,
+    Query(input): Query<repo::get_record::ParametersData>,
 ) -> Result<Json<repo::get_record::Output>> {
     if input.cid.is_some() {
         return Err(Error::unimplemented(anyhow!(
@@ -828,7 +830,7 @@ async fn get_record(
         .await
         .context("failed to open user repo")?;
 
-    let key = format!("{}/{}", input.collection.as_str(), input.rkey);
+    let key = format!("{}/{}", input.collection.as_str(), input.rkey.as_str());
     let uri = format!("at://{}/{}", did.as_str(), &key);
 
     let cid = repo
@@ -878,7 +880,7 @@ async fn get_record(
 async fn list_records(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<Object<ListRecordsParameters>>,
+    Query(input): Query<Object<repo::list_records::ParametersData>>,
 ) -> Result<Json<repo::list_records::Output>> {
     // TODO: `input.reverse`
 

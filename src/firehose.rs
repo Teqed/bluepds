@@ -4,7 +4,7 @@ use std::{collections::VecDeque, time::Duration};
 use anyhow::{Result, bail};
 use atrium_api::{
     com::atproto::sync::{self},
-    types::string::{Datetime, Did},
+    types::string::{Datetime, Did, Tid},
 };
 use atrium_repo::Cid;
 use axum::extract::ws::{Message, WebSocket};
@@ -81,21 +81,18 @@ pub(crate) enum RepoOp {
     },
 }
 
-impl From<RepoOp> for sync::subscribe_repos::RepoOp {
-    fn from(val: RepoOp) -> Self {
-        let (action, cid, path) = match val {
-            RepoOp::Create { cid, path } => ("create", Some(cid), path),
-            RepoOp::Update {
-                cid,
-                path,
-                prev: _prev,
-            } => ("update", Some(cid), path),
-            RepoOp::Delete { path, prev: _prev } => ("delete", None, path),
+impl Into<sync::subscribe_repos::RepoOp> for RepoOp {
+    fn into(self) -> sync::subscribe_repos::RepoOp {
+        let (action, cid, prev, path) = match self {
+            RepoOp::Create { cid, path } => ("create", Some(cid), None, path),
+            RepoOp::Update { cid, path, prev } => ("update", Some(cid), Some(prev), path),
+            RepoOp::Delete { path, prev } => ("delete", None, Some(prev), path),
         };
 
         sync::subscribe_repos::RepoOpData {
             action: action.to_owned(),
             cid: cid.map(atrium_api::types::CidLink),
+            prev: prev.map(atrium_api::types::CidLink),
             path,
         }
         .into()
@@ -114,6 +111,8 @@ pub(crate) struct Commit {
     pub did: Did,
     /// The operations performed in this commit.
     pub ops: Vec<RepoOp>,
+    /// The previous commit's CID (if applicable).
+    pub pcid: Option<Cid>,
     /// The revision of the commit.
     pub rev: String,
 }
@@ -129,10 +128,10 @@ impl From<Commit> for sync::subscribe_repos::Commit {
             blocks: val.car,
             commit: atrium_api::types::CidLink(val.cid),
             ops: val.ops.into_iter().map(Into::into).collect::<Vec<_>>(),
-            prev: None,
+            prev_data: val.pcid.map(atrium_api::types::CidLink),
             rebase: false,
             repo: val.did,
-            rev: val.rev,
+            rev: Tid::new(val.rev).unwrap(),
             seq: 0,
             since: None,
             time: Datetime::now(),
@@ -213,11 +212,9 @@ fn serialize_message(seq: u64, mut msg: sync::subscribe_repos::Message) -> (&'st
     let (ty, nseq) = match &mut msg {
         sync::subscribe_repos::Message::Account(m) => ("#account", &mut m.seq),
         sync::subscribe_repos::Message::Commit(m) => ("#commit", &mut m.seq),
-        sync::subscribe_repos::Message::Handle(m) => ("#handle", &mut m.seq),
         sync::subscribe_repos::Message::Identity(m) => ("#identity", &mut m.seq),
+        sync::subscribe_repos::Message::Sync(m) => ("#sync", &mut m.seq),
         sync::subscribe_repos::Message::Info(_m) => ("#info", &mut dummy_seq),
-        sync::subscribe_repos::Message::Migrate(m) => ("#migrate", &mut m.seq),
-        sync::subscribe_repos::Message::Tombstone(m) => ("#tombstone", &mut m.seq),
     };
     // Set the sequence number.
     *nseq = i64::try_from(seq).expect("should find seq");
@@ -362,9 +359,6 @@ pub(crate) fn spawn(
         let mut clients: Vec<WebSocket> = Vec::new();
         let mut history = VecDeque::with_capacity(1000);
         let mut seq = time_since_inception();
-
-        // TODO: We should use `com.atproto.sync.notifyOfUpdate` to reach out to relays
-        // that may have disconnected from us due to timeout.
 
         loop {
             if let Ok(msg) = tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {

@@ -10,6 +10,9 @@ listen_address = "0.0.0.0:8000"
 key = "data/default.key"
 
 # Test mode. This instructs BluePDS not to federate with the rest of the AT network.
+#
+# Specifically, this means that we will not broadcast account changes to the PLC directory,
+# and we will not connect to upstream relays.
 test = true
 
 # Optional. Configuration for exporting metrics to a cloud monitoring dashboard.

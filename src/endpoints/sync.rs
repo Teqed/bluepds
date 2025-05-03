@@ -2,7 +2,10 @@
 use std::str::FromStr as _;
 
 use anyhow::{Context as _, anyhow};
-use atrium_api::{com::atproto::sync, types::string::Did};
+use atrium_api::{
+    com::atproto::sync,
+    types::{LimitedNonZeroU16, string::Did},
+};
 use atrium_repo::{
     Cid,
     blockstore::{
@@ -69,7 +72,7 @@ pub(super) struct SubscribeReposParametersData {
 
 async fn get_blob(
     State(config): State<AppConfig>,
-    Query(input): Query<sync::get_blob::Parameters>,
+    Query(input): Query<sync::get_blob::ParametersData>,
 ) -> Result<Response<Body>> {
     let blob = config
         .blob
@@ -104,7 +107,7 @@ async fn get_blob(
 /// - 401 Unauthorized
 async fn get_blocks(
     State(config): State<AppConfig>,
-    Query(input): Query<sync::get_blocks::Parameters>,
+    Query(input): Query<sync::get_blocks::ParametersData>,
 ) -> Result<Response<Body>> {
     let mut repo = open_store(&config.repo, input.did.as_str())
         .await
@@ -146,7 +149,7 @@ async fn get_blocks(
 async fn get_latest_commit(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<sync::get_latest_commit::Parameters>,
+    Query(input): Query<sync::get_latest_commit::ParametersData>,
 ) -> Result<Json<sync::get_latest_commit::Output>> {
     let repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
@@ -158,7 +161,7 @@ async fn get_latest_commit(
     Ok(Json(
         sync::get_latest_commit::OutputData {
             cid: atrium_api::types::string::Cid::new(cid),
-            rev: commit.rev().to_string(),
+            rev: commit.rev(),
         }
         .into(),
     ))
@@ -176,13 +179,13 @@ async fn get_latest_commit(
 async fn get_record(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<sync::get_record::Parameters>,
+    Query(input): Query<sync::get_record::ParametersData>,
 ) -> Result<Response<Body>> {
     let mut repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
         .context("failed to open repo")?;
 
-    let key = format!("{}/{}", input.collection.as_str(), input.rkey);
+    let key = format!("{}/{}", input.collection.as_str(), input.rkey.as_str());
 
     let mut contents = Vec::new();
     let mut ret_store =
@@ -208,7 +211,7 @@ async fn get_record(
 /// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `RepoNotFound`]}
 async fn get_repo_status(
     State(db): State<Db>,
-    Query(input): Query<sync::get_repo::Parameters>,
+    Query(input): Query<sync::get_repo::ParametersData>,
 ) -> Result<Json<sync::get_repo_status::Output>> {
     let did = input.did.as_str();
     let r = sqlx::query!(r#"SELECT rev, status FROM accounts WHERE did = ?"#, did)
@@ -231,7 +234,7 @@ async fn get_repo_status(
             active,
             status,
             did: input.did.clone(),
-            rev: Some(r.rev),
+            rev: Some(atrium_api::types::string::Tid::new(r.rev).unwrap()),
         }
         .into(),
     ))
@@ -249,7 +252,7 @@ async fn get_repo_status(
 async fn get_repo(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<sync::get_repo::Parameters>,
+    Query(input): Query<sync::get_repo::ParametersData>,
 ) -> Result<Response<Body>> {
     let mut repo = open_repo_db(&config.repo, &db, input.did.as_str())
         .await
@@ -282,7 +285,7 @@ async fn get_repo(
 ///   `RepoSuspended`, `RepoDeactivated`]}
 async fn list_blobs(
     State(db): State<Db>,
-    Query(input): Query<ListBlobsParameters>,
+    Query(input): Query<sync::list_blobs::ParametersData>,
 ) -> Result<Json<sync::list_blobs::Output>> {
     let did_str = input.did.as_str();
 
@@ -320,7 +323,7 @@ async fn list_blobs(
 /// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
 async fn list_repos(
     State(db): State<Db>,
-    Query(input): Query<ListReposParameters>,
+    Query(input): Query<sync::list_repos::ParametersData>,
 ) -> Result<Json<sync::list_repos::Output>> {
     struct Record {
         /// The DID of the repo.
@@ -331,12 +334,7 @@ async fn list_repos(
         root: String,
     }
 
-    let limit = input
-        .limit
-        .as_deref()
-        .unwrap_or("1000")
-        .parse::<u32>()
-        .context("invalid limit parameter")?;
+    let limit: u16 = input.limit.unwrap_or(LimitedNonZeroU16::MAX).into();
 
     let r = if let Some(ref cursor) = input.cursor {
         let r = sqlx::query_as!(
@@ -373,7 +371,7 @@ async fn list_repos(
                 head: atrium_api::types::string::Cid::new(
                     Cid::from_str(&r.root).expect("should be a valid CID"),
                 ),
-                rev: r.rev,
+                rev: atrium_api::types::string::Tid::new(r.rev).unwrap(),
                 status: None,
             }
             .into()
@@ -393,24 +391,15 @@ async fn list_repos(
 async fn subscribe_repos(
     ws_up: WebSocketUpgrade,
     State(fh): State<FirehoseProducer>,
-    Query(input): Query<SubscribeReposParametersData>,
+    Query(input): Query<sync::subscribe_repos::ParametersData>,
 ) -> impl IntoResponse {
-    let cursor = match input.cursor.map(|c| i64::from_str(&c)).transpose() {
-        Ok(c) => c,
-        Err(_e) => {
-            return Response::builder()
-                .status(StatusCode::BAD_REQUEST)
-                .body(Body::empty())
-                .expect("should be a valid response");
-        }
-    };
     ws_up.on_upgrade(async move |ws| {
-        fh.client_connection(ws, cursor).await;
+        fh.client_connection(ws, input.cursor).await;
     })
 }
 
 #[rustfmt::skip]
-/// These endpoints are part of the atproto repository synchronization APIs. Requests usually do not require authentication, 
+/// These endpoints are part of the atproto repository synchronization APIs. Requests usually do not require authentication,
 ///  and can be made to PDS intances or Relay instances.
 /// ### Routes
 /// - `GET /xrpc/com.atproto.sync.getBlob` -> [`get_blob`]
