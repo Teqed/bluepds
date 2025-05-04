@@ -1,28 +1,23 @@
 //! Testing utilities for the PDS.
-
+#![expect(clippy::arbitrary_source_item_ordering)]
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     path::PathBuf,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use atrium_api::{
     com::atproto::server,
-    types::{
-        Unknown,
-        string::{AtIdentifier, Did, Handle, Nsid, RecordKey},
-    },
+    types::string::{AtIdentifier, Did, Handle, Nsid, RecordKey},
 };
 use figment::{Figment, providers::Format as _};
 use futures::future::join_all;
-use rand::{Rng, thread_rng};
 use serde::{Deserialize, Serialize};
 use tokio::sync::OnceCell;
 use uuid::Uuid;
 
-use crate::{AppState, auth::AuthenticatedUser, config::AppConfig};
+use crate::config::AppConfig;
 
 /// Global test state, created once for all tests.
 pub(crate) static TEST_STATE: OnceCell<TestState> = OnceCell::const_new();
@@ -49,25 +44,75 @@ impl TempDir {
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        drop(std::fs::remove_dir_all(&self.path));
     }
 }
 
 /// Test state for the application.
 pub(crate) struct TestState {
-    /// The temporary directory for test data.
-    temp_dir: TempDir,
     /// The address the test server is listening on.
     address: SocketAddr,
-    /// The application configuration.
-    config: AppConfig,
     /// The HTTP client.
     client: reqwest::Client,
+    /// The application configuration.
+    config: AppConfig,
+    /// The temporary directory for test data.
+    #[expect(dead_code)]
+    temp_dir: TempDir,
 }
 
 impl TestState {
+    /// Get a base URL for the test server.
+    pub(crate) fn base_url(&self) -> String {
+        format!("http://{}", self.address)
+    }
+
+    /// Create a test account.
+    pub(crate) async fn create_test_account(&self) -> Result<TestAccount> {
+        // Create the account
+        let handle = "test.handle";
+        let response = self
+            .client
+            .post(format!(
+                "http://{}/xrpc/com.atproto.server.createAccount",
+                self.address
+            ))
+            .json(&server::create_account::InputData {
+                did: None,
+                verification_code: None,
+                verification_phone: None,
+                email: Some(format!("{}@example.com", &handle)),
+                handle: Handle::new(handle.to_owned()).expect("should be able to create handle"),
+                password: Some("password123".to_owned()),
+                invite_code: None,
+                recovery_key: None,
+                plc_op: None,
+            })
+            .send()
+            .await?;
+
+        let account: server::create_account::Output = response.json().await?;
+
+        Ok(TestAccount {
+            handle: handle.to_owned(),
+            did: account.did.to_string(),
+            access_token: account.access_jwt.clone(),
+            refresh_token: account.refresh_jwt.clone(),
+        })
+    }
+
     /// Create a new test state.
+    #[expect(clippy::unused_async)]
     async fn new() -> Result<Self> {
+        // Configure the test app
+        #[derive(Serialize, Deserialize)]
+        struct TestConfigInput {
+            db: Option<String>,
+            host_name: Option<String>,
+            key: Option<PathBuf>,
+            listen_address: Option<SocketAddr>,
+            test: Option<bool>,
+        }
         // Create a temporary directory for test data
         let temp_dir = TempDir::new()?;
 
@@ -76,21 +121,11 @@ impl TestState {
         let address = listener.local_addr()?;
         drop(listener);
 
-        // Configure the test app
-        #[derive(Serialize, Deserialize)]
-        struct TestConfigInput {
-            host_name: Option<String>,
-            db: Option<String>,
-            listen_address: Option<SocketAddr>,
-            key: Option<PathBuf>,
-            test: Option<bool>,
-        }
-
         let test_config = TestConfigInput {
-            host_name: Some(format!("localhost:{}", address.port())),
             db: Some(format!("sqlite://{}/test.db", temp_dir.path().display())),
-            listen_address: Some(address),
+            host_name: Some(format!("localhost:{}", address.port())),
             key: Some(temp_dir.path().join("test.key")),
+            listen_address: Some(address),
             test: Some(true),
         };
 
@@ -130,10 +165,10 @@ impl TestState {
             .build()?;
 
         Ok(Self {
-            temp_dir,
             address,
-            config,
             client,
+            config,
+            temp_dir,
         })
     }
 
@@ -144,12 +179,12 @@ impl TestState {
         let address = self.address;
 
         // Start the application in a background task
-        tokio::spawn(async move {
+        let _handle = tokio::spawn(async move {
             // Set up the application
             use crate::*;
 
             // Initialize metrics (noop in test mode)
-            let _ = metrics::setup(None);
+            drop(metrics::setup(None));
 
             // Create client
             let simple_client = reqwest::Client::builder()
@@ -158,19 +193,17 @@ impl TestState {
                 .context("failed to build requester client")?;
             let client = reqwest_middleware::ClientBuilder::new(simple_client.clone())
                 .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
-                    mode: http_cache_reqwest::CacheMode::Default,
-                    manager: http_cache_reqwest::MokaManager::default(),
-                    options: http_cache_reqwest::HttpCacheOptions::default(),
+                    mode: CacheMode::Default,
+                    manager: MokaManager::default(),
+                    options: HttpCacheOptions::default(),
                 }))
                 .build();
 
             // Create a test keypair
-            std::fs::create_dir_all(&config.key.parent().context("should have parent")?)?;
+            std::fs::create_dir_all(config.key.parent().context("should have parent")?)?;
             let (skey, rkey) = {
-                let skey =
-                    atrium_crypto::keypair::Secp256k1Keypair::create(&mut rand::thread_rng());
-                let rkey =
-                    atrium_crypto::keypair::Secp256k1Keypair::create(&mut rand::thread_rng());
+                let skey = Secp256k1Keypair::create(&mut rand::thread_rng());
+                let rkey = Secp256k1Keypair::create(&mut rand::thread_rng());
 
                 let keys = KeyData {
                     skey: skey.export(),
@@ -186,10 +219,10 @@ impl TestState {
             };
 
             // Set up database
-            let opts = sqlx::sqlite::SqliteConnectOptions::from_str(&config.db)
+            let opts = SqliteConnectOptions::from_str(&config.db)
                 .context("failed to parse database options")?
                 .create_if_missing(true);
-            let db = sqlx::SqlitePool::connect_with(opts).await?;
+            let db = SqlitePool::connect_with(opts).await?;
 
             sqlx::migrate!()
                 .run(&db)
@@ -212,23 +245,21 @@ impl TestState {
             };
 
             // Create the router
-            let app = axum::Router::new()
-                .route("/", axum::routing::get(crate::index))
-                .merge(crate::oauth::routes())
+            let app = Router::new()
+                .route("/", get(index))
+                .merge(oauth::routes())
                 .nest(
                     "/xrpc",
-                    crate::endpoints::routes()
-                        .merge(crate::actor_endpoints::routes())
-                        .fallback(crate::service_proxy),
+                    endpoints::routes()
+                        .merge(actor_endpoints::routes())
+                        .fallback(service_proxy),
                 )
-                .layer(tower_http::cors::CorsLayer::permissive())
-                .layer(tower_http::trace::TraceLayer::new_for_http())
+                .layer(CorsLayer::permissive())
+                .layer(TraceLayer::new_for_http())
                 .with_state(app_state);
 
-            println!("Test server listening on {address}");
-
             // Listen for connections
-            let listener = tokio::net::TcpListener::bind(&address)
+            let listener = TcpListener::bind(&address)
                 .await
                 .context("failed to bind address")?;
 
@@ -242,74 +273,40 @@ impl TestState {
 
         Ok(())
     }
-
-    /// Create a test account.
-    pub async fn create_test_account(&self) -> Result<TestAccount> {
-        let handle = "test.handle";
-        println!("Creating test account with handle: {}", handle);
-
-        // Create the account
-        let response = self
-            .client
-            .post(&format!(
-                "http://{}/xrpc/com.atproto.server.createAccount",
-                self.address
-            ))
-            .json(&server::create_account::InputData {
-                did: None,
-                verification_code: None,
-                verification_phone: None,
-                email: Some(format!("{}@example.com", &handle)),
-                handle: Handle::new(handle.to_owned()).expect("should be able to create handle"),
-                password: Some("password123".to_string()),
-                invite_code: None,
-                recovery_key: None,
-                plc_op: None,
-            })
-            .send()
-            .await?;
-
-        let account: server::create_account::Output = response.json().await?;
-
-        Ok(TestAccount {
-            handle: handle.to_owned(),
-            did: account.did.to_string(),
-            access_token: account.access_jwt.clone(),
-            refresh_token: account.refresh_jwt.clone(),
-        })
-    }
-
-    /// Get a base URL for the test server.
-    pub fn base_url(&self) -> String {
-        format!("http://{}", self.address)
-    }
 }
 
 /// A test account that can be used for testing.
-pub struct TestAccount {
-    /// The account handle.
-    pub handle: String,
-    /// The account DID.
-    pub did: String,
+pub(crate) struct TestAccount {
     /// The access token for the account.
-    pub access_token: String,
+    pub(crate) access_token: String,
+    /// The account DID.
+    pub(crate) did: String,
+    /// The account handle.
+    pub(crate) handle: String,
     /// The refresh token for the account.
-    pub refresh_token: String,
+    #[expect(dead_code)]
+    pub(crate) refresh_token: String,
 }
 
 /// Initialize the test state.
-pub async fn init_test_state() -> Result<&'static TestState> {
-    TEST_STATE
-        .get_or_try_init(|| async {
-            let state = TestState::new().await?;
-            state.start_app().await?;
-            Ok(state)
-        })
-        .await
+pub(crate) async fn init_test_state() -> Result<&'static TestState> {
+    async fn init_test_state() -> std::result::Result<TestState, anyhow::Error> {
+        let state = TestState::new().await?;
+        state.start_app().await?;
+        Ok(state)
+    }
+    TEST_STATE.get_or_try_init(init_test_state).await
 }
 
 /// Create a record benchmark that creates records and measures the time it takes.
-pub async fn create_record_benchmark(count: usize, concurrent: usize) -> Result<Duration> {
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::integer_division,
+    clippy::integer_division_remainder_used,
+    clippy::use_debug,
+    clippy::print_stdout
+)]
+pub(crate) async fn create_record_benchmark(count: usize, concurrent: usize) -> Result<Duration> {
     // Initialize the test state
     let state = init_test_state().await?;
 
@@ -341,22 +338,24 @@ pub async fn create_record_benchmark(count: usize, concurrent: usize) -> Result<
                 let record_idx = batch_idx * batch_size + i;
 
                 let result = client
-                    .post(&format!("{}/xrpc/com.atproto.repo.createRecord", base_url))
-                    .header("Authorization", format!("Bearer {}", access_token))
+                    .post(format!("{base_url}/xrpc/com.atproto.repo.createRecord"))
+                    .header("Authorization", format!("Bearer {access_token}"))
                     .json(&atrium_api::com::atproto::repo::create_record::InputData {
-                        repo: AtIdentifier::Did(Did::new(account_did.clone()).unwrap()),
-                        collection: Nsid::new("app.bsky.feed.post".to_string()).unwrap(),
-                        rkey: Some(RecordKey::new(format!("test-{}", record_idx)).unwrap()),
+                        repo: AtIdentifier::Did(Did::new(account_did.clone()).expect("valid DID")),
+                        collection: Nsid::new("app.bsky.feed.post".to_owned()).expect("valid NSID"),
+                        rkey: Some(
+                            RecordKey::new(format!("test-{record_idx}")).expect("valid record key"),
+                        ),
                         validate: None,
                         record: serde_json::from_str(
                             &serde_json::json!({
                                 "$type": "app.bsky.feed.post",
-                                "text": format!("Test post {} from {}", record_idx, account_handle),
+                                "text": format!("Test post {record_idx} from {account_handle}"),
                                 "createdAt": chrono::Utc::now().to_rfc3339(),
                             })
                             .to_string(),
                         )
-                        .unwrap(),
+                        .expect("valid JSON record"),
                         swap_commit: None,
                     })
                     .send()
@@ -364,7 +363,7 @@ pub async fn create_record_benchmark(count: usize, concurrent: usize) -> Result<
 
                 let request_duration = request_start.elapsed();
                 if record_idx % 10 == 0 {
-                    println!("Created record {} in {:?}", record_idx, request_duration);
+                    println!("Created record {record_idx} in {request_duration:?}");
                 }
                 results.push(result);
             }
@@ -379,10 +378,10 @@ pub async fn create_record_benchmark(count: usize, concurrent: usize) -> Result<
     let results = join_all(handles).await;
 
     // Check for errors
-    for result in results {
-        let batch_results = result?;
-        for result in batch_results {
-            match result {
+    for batch_result in results {
+        let batch_responses = batch_result?;
+        for response_result in batch_responses {
+            match response_result {
                 Ok(response) => {
                     if !response.status().is_success() {
                         return Err(anyhow::anyhow!(
@@ -403,8 +402,10 @@ pub async fn create_record_benchmark(count: usize, concurrent: usize) -> Result<
 }
 
 #[cfg(test)]
+#[expect(clippy::module_inception, clippy::use_debug, clippy::print_stdout)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
 
     #[tokio::test]
     async fn test_create_account() -> Result<()> {
@@ -412,9 +413,15 @@ mod tests {
         let account = state.create_test_account().await?;
 
         println!("Created test account: {}", account.handle);
-        assert!(!account.handle.is_empty());
-        assert!(!account.did.is_empty());
-        assert!(!account.access_token.is_empty());
+        if account.handle.is_empty() {
+            return Err(anyhow::anyhow!("Account handle is empty"));
+        }
+        if account.did.is_empty() {
+            return Err(anyhow::anyhow!("Account DID is empty"));
+        }
+        if account.access_token.is_empty() {
+            return Err(anyhow::anyhow!("Account access token is empty"));
+        }
 
         Ok(())
     }
@@ -423,8 +430,11 @@ mod tests {
     async fn test_create_record_benchmark() -> Result<()> {
         let duration = create_record_benchmark(100, 1).await?;
 
-        println!("Created 100 records in {:?}", duration);
-        assert!(duration.as_secs() < 100, "Benchmark took too long");
+        println!("Created 100 records in {duration:?}");
+
+        if duration.as_secs() >= 100 {
+            return Err(anyhow!("Benchmark took too long"));
+        }
 
         Ok(())
     }

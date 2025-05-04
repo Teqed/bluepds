@@ -5,7 +5,7 @@ use atrium_crypto::{
 };
 use axum::{extract::FromRequestParts, http::StatusCode};
 use base64::Engine as _;
-use sha2::{Digest, Sha256};
+use sha2::{Digest as _, Sha256};
 
 use crate::{AppState, Error, error::ErrorMessage};
 
@@ -39,10 +39,10 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
                 Error::with_status(StatusCode::UNAUTHORIZED, anyhow!("no authorization header"))
             })?;
 
-        let auth_str = auth_header.to_str().map_err(|_| {
+        let auth_str = auth_header.to_str().map_err(|e| {
             Error::with_status(
                 StatusCode::UNAUTHORIZED,
-                anyhow!("authorization header should be valid utf-8"),
+                anyhow!("authorization header should be valid utf-8").context(e),
             )
         })?;
 
@@ -52,22 +52,29 @@ impl FromRequestParts<AppState> for AuthenticatedUser {
 
         // Handle different token types
         if auth_str.starts_with("Bearer ") || auth_str.starts_with("DPoP ") {
-            let token = auth_str.splitn(2, ' ').nth(1).unwrap();
+            let token = auth_str
+                .split_once(' ')
+                .expect("Auth string should have a space")
+                .1;
+
             if has_dpop {
                 // Process DPoP token - the Authorization header contains the access token
                 // and the DPoP header contains the proof
-                let dpop_token = dpop_header.unwrap().to_str().map_err(|_| {
-                    Error::with_status(
-                        StatusCode::UNAUTHORIZED,
-                        anyhow!("DPoP header should be valid utf-8"),
-                    )
-                })?;
+                let dpop_token = dpop_header
+                    .expect("DPoP header should exist")
+                    .to_str()
+                    .map_err(|e| {
+                        Error::with_status(
+                            StatusCode::UNAUTHORIZED,
+                            anyhow!("DPoP header should be valid utf-8").context(e),
+                        )
+                    })?;
 
                 return validate_dpop_token(token, dpop_token, parts, state).await;
-            } else {
-                // Standard Bearer token
-                return validate_bearer_token(token, state).await;
             }
+
+            // Standard Bearer token
+            return validate_bearer_token(token, state).await;
         }
 
         // If we reach here, no valid authorization method was found
@@ -139,6 +146,7 @@ async fn validate_bearer_token(token: &str, state: &AppState) -> Result<Authenti
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "validating dpop has many loc")]
 /// Validate a DPoP token and proof
 async fn validate_dpop_token(
     access_token: &str,
@@ -165,7 +173,7 @@ async fn validate_dpop_token(
     }
 
     // Check token expiration
-    if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
+    if let Some(exp) = claims.get("exp").and_then(serde_json::Value::as_i64) {
         let now = chrono::Utc::now().timestamp();
         if now >= exp {
             return Err(Error::with_message(
@@ -187,7 +195,7 @@ async fn validate_dpop_token(
 
     // Decode header
     let dpop_header_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(dpop_parts[0])
+        .decode(dpop_parts.first().context("header part missing")?)
         .context("failed to decode DPoP header")?;
 
     let dpop_header: serde_json::Value =
@@ -203,7 +211,7 @@ async fn validate_dpop_token(
 
     // Decode claims
     let dpop_claims_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(dpop_parts[1])
+        .decode(dpop_parts.get(1).context("claims part missing")?)
         .context("failed to decode DPoP claims")?;
 
     let dpop_claims: serde_json::Value =
@@ -280,8 +288,8 @@ async fn validate_dpop_token(
     for prop in required_props {
         let value = jwk
             .get(prop)
-            .context(format!("JWK missing required property: {}", prop))?;
-        drop(canonical_jwk.insert(prop.to_string(), value.clone()));
+            .context(format!("JWK missing required property: {prop}"))?;
+        drop(canonical_jwk.insert((*prop).to_owned(), value.clone()));
     }
 
     // Serialize with no whitespace
@@ -336,8 +344,8 @@ async fn validate_dpop_token(
     // Get expiry from token or default to 60 seconds
     let exp = dpop_claims
         .get("exp")
-        .and_then(|e| e.as_i64())
-        .unwrap_or_else(|| timestamp + 60);
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_else(|| timestamp.checked_add(60).unwrap_or(timestamp));
 
     _ = sqlx::query!(
         r#"

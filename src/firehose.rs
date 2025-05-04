@@ -81,9 +81,9 @@ pub(crate) enum RepoOp {
     },
 }
 
-impl Into<sync::subscribe_repos::RepoOp> for RepoOp {
-    fn into(self) -> sync::subscribe_repos::RepoOp {
-        let (action, cid, prev, path) = match self {
+impl From<RepoOp> for sync::subscribe_repos::RepoOp {
+    fn from(val: RepoOp) -> Self {
+        let (action, cid, prev, path) = match val {
             RepoOp::Create { cid, path } => ("create", Some(cid), None, path),
             RepoOp::Update { cid, path, prev } => ("update", Some(cid), Some(prev), path),
             RepoOp::Delete { path, prev } => ("delete", None, Some(prev), path),
@@ -131,7 +131,7 @@ impl From<Commit> for sync::subscribe_repos::Commit {
             prev_data: val.pcid.map(atrium_api::types::CidLink),
             rebase: false,
             repo: val.did,
-            rev: Tid::new(val.rev).unwrap(),
+            rev: Tid::new(val.rev).expect("should be valid revision"),
             seq: 0,
             since: None,
             time: Datetime::now(),

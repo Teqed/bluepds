@@ -3,8 +3,8 @@
 use crate::metrics::AUTH_FAILED;
 use crate::{AppConfig, AppState, Client, Db, Error, Result, SigningKey};
 use anyhow::{Context as _, anyhow};
-use argon2::{Argon2, PasswordHash, PasswordVerifier};
-use atrium_crypto::keypair::Did;
+use argon2::{Argon2, PasswordHash, PasswordVerifier as _};
+use atrium_crypto::keypair::Did as _;
 use axum::response::Redirect;
 use axum::{
     Json, Router, extract,
@@ -13,13 +13,13 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-use base64::Engine;
+use base64::Engine as _;
 use metrics::counter;
 use rand::distributions::Alphanumeric;
-use rand::{Rng, thread_rng};
+use rand::{Rng as _, thread_rng};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::Digest;
+use sha2::Digest as _;
 use std::collections::{HashMap, HashSet};
 
 /// JWK thumbprint required properties for each key type (RFC7638)
@@ -30,6 +30,14 @@ const JWK_REQUIRED_PROPS: &[(&str, &[&str])] = &[
     ("EC", &["crv", "kty", "x", "y"]),
     ("RSA", &["e", "kty", "n"]),
 ];
+
+/// JWT ID used record for tracking used JTIs to prevent replay attacks
+#[derive(Debug, Serialize, Deserialize)]
+struct JtiRecord {
+    expires_at: i64,
+    issuer: String,
+    jti: String,
+}
 
 /// Parses a JWT without validation and returns header and claims
 fn parse_jwt(token: &str) -> Result<(Value, Value)> {
@@ -42,14 +50,14 @@ fn parse_jwt(token: &str) -> Result<(Value, Value)> {
     }
 
     let header_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[0])
+        .decode(parts.first().expect("should have JWT header"))
         .context("Failed to decode JWT header")?;
 
     let header: Value =
         serde_json::from_slice(&header_bytes).context("Failed to parse JWT header as JSON")?;
 
     let claims_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(parts[1])
+        .decode(parts.get(1).expect("should have JWT claims"))
         .context("Failed to decode JWT claims")?;
 
     let claims: Value =
@@ -75,18 +83,18 @@ fn calculate_jwk_thumbprint(jwk: &Value) -> Result<String> {
     // Find required properties for this key type
     let required_props = JWK_REQUIRED_PROPS
         .iter()
-        .find(|(kty, _)| *kty == key_type)
-        .map(|(_, props)| *props)
-        .context(format!("Unsupported key type: {}", key_type))?;
+        .find(|&&(kty, _)| kty == key_type)
+        .map(|&(_, props)| props)
+        .context(anyhow!("Unsupported key type: {key_type}"))?;
 
     // Build a new JWK with only the required properties
     let mut canonical_jwk = serde_json::Map::new();
 
-    for prop in required_props {
+    for &prop in required_props {
         let value = jwk
             .get(prop)
-            .context(format!("JWK missing required property: {}", prop))?;
-        drop(canonical_jwk.insert(prop.to_string(), value.clone()));
+            .context(anyhow!("JWK missing required property: {prop}"))?;
+        drop(canonical_jwk.insert((*prop).to_string(), value.clone()));
     }
 
     // Serialize with no whitespace
@@ -149,7 +157,7 @@ async fn authorization_server(State(config): State<AppConfig>) -> Result<Json<Va
     })))
 }
 
-/// Fetch and validate client metadata from client_id URL
+/// Fetch and validate client metadata from `client_id` URL
 async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<Value> {
     // Handle localhost development
     if client_id.starts_with("http://localhost") {
@@ -167,24 +175,31 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<Value
         });
 
         // Extract redirect_uri from query params if available
-        let redirect_uris = if let Some(query) = client_url.query() {
-            let pairs: HashMap<_, _> = url::form_urlencoded::parse(query.as_bytes()).collect();
-            if let Some(uri) = pairs.get("redirect_uri") {
-                vec![json!(uri)]
-            } else {
+        let redirect_uris = client_url.query().map_or_else(
+            || {
                 vec![
                     json!("http://127.0.0.1/callback"),
                     json!("http://[::1]/callback"),
                 ]
-            }
-        } else {
-            vec![
-                json!("http://127.0.0.1/callback"),
-                json!("http://[::1]/callback"),
-            ]
-        };
+            },
+            |query| {
+                let pairs: HashMap<_, _> = url::form_urlencoded::parse(query.as_bytes()).collect();
+                pairs.get("redirect_uri").map_or_else(
+                    || {
+                        vec![
+                            json!("http://127.0.0.1/callback"),
+                            json!("http://[::1]/callback"),
+                        ]
+                    },
+                    |uri| vec![json!(uri)],
+                )
+            },
+        );
 
-        metadata["redirect_uris"] = json!(redirect_uris);
+        if let Some(redirect_uris_value) = metadata.as_object_mut() {
+            drop(redirect_uris_value.insert("redirect_uris".to_owned(), json!(redirect_uris)));
+        }
+
         return Ok(metadata);
     }
 
@@ -221,7 +236,7 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<Value
     // Validate DPoP tokens requirement
     if !metadata
         .get("dpop_bound_access_tokens")
-        .and_then(|v| v.as_bool())
+        .and_then(Value::as_bool)
         .unwrap_or(false)
     {
         return Err(Error::with_status(
@@ -233,16 +248,9 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<Value
     Ok(metadata)
 }
 
-/// JWT ID used record for tracking used JTIs to prevent replay attacks
-#[derive(Debug, Serialize, Deserialize)]
-struct JtiRecord {
-    jti: String,
-    issuer: String,
-    expires_at: i64,
-}
-
 /// Pushed Authorization Request endpoint
 /// POST `/oauth/par`
+#[expect(clippy::too_many_lines)]
 async fn par(
     State(db): State<Db>,
     State(client): State<Client>,
@@ -296,10 +304,9 @@ async fn par(
             .and_then(|uris| uris.as_array())
             .context("client metadata missing redirect_uris")?;
 
-        let uri_valid = allowed_uris.iter().any(|uri| {
-            uri.as_str()
-                .map_or(false, |uri_str| uri_str == provided_uri)
-        });
+        let uri_valid = allowed_uris
+            .iter()
+            .any(|uri| uri.as_str().is_some_and(|uri_str| uri_str == provided_uri));
 
         if !uri_valid {
             return Err(Error::with_status(
@@ -310,7 +317,7 @@ async fn par(
     } else if client_metadata
         .get("redirect_uris")
         .and_then(|uris| uris.as_array())
-        .map_or(0, |uris| uris.len())
+        .map_or(0, Vec::len)
         != 1
     {
         return Err(Error::with_status(
@@ -340,7 +347,7 @@ async fn par(
         .take(32)
         .map(char::from)
         .collect::<String>();
-    let request_uri = format!("urn:ietf:params:oauth:request_uri:req-{}", request_id);
+    let request_uri = format!("urn:ietf:params:oauth:request_uri:req-{request_id}");
 
     // Store request data in the database
     let now = chrono::Utc::now();
@@ -378,7 +385,7 @@ async fn par(
 
     Ok(Json(json!({
         "request_uri": request_uri,
-        "expires_in": 300 // 5 minutes
+        "expires_in": 300_i32 // 5 minutes
     })))
 }
 
@@ -482,12 +489,15 @@ async fn authorize(
 
 /// OAuth Authorization Sign-in endpoint
 /// POST `/oauth/authorize/sign-in`
+#[expect(clippy::too_many_lines)]
 async fn authorize_signin(
     State(db): State<Db>,
     State(config): State<AppConfig>,
     State(client): State<Client>,
     extract::Form(form_data): extract::Form<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
+    use std::fmt::Write as _;
+
     // Extract form data
     let username = form_data.get("username").context("username is required")?;
     let password = form_data.get("password").context("password is required")?;
@@ -539,19 +549,18 @@ async fn authorize_signin(
     .context("failed to query database")?
     .context("user not found")?;
 
-    // Verify password
-    match Argon2::default().verify_password(
+    // Verify password - fixed to use equality check instead of pattern matching
+    if Argon2::default().verify_password(
         password.as_bytes(),
         &PasswordHash::new(account.password.as_str()).context("invalid password hash in db")?,
-    ) {
-        Ok(()) => {}
-        Err(_) => {
-            counter!(AUTH_FAILED).increment(1);
-            return Err(Error::with_status(
-                StatusCode::UNAUTHORIZED,
-                anyhow!("invalid credentials"),
-            ));
-        }
+    ) == Ok(())
+    {
+    } else {
+        counter!(AUTH_FAILED).increment(1);
+        return Err(Error::with_status(
+            StatusCode::UNAUTHORIZED,
+            anyhow!("invalid credentials"),
+        ));
     }
 
     // Generate authorization code
@@ -562,7 +571,7 @@ async fn authorize_signin(
         .collect::<String>();
 
     // Determine redirect URI to use
-    let redirect_uri = if let Some(uri) = &par_request.redirect_uri {
+    let redirect_uri = if let Some(uri) = par_request.redirect_uri.as_ref() {
         uri.clone()
     } else {
         let client_metadata = fetch_client_metadata(&client, client_id).await?;
@@ -572,7 +581,7 @@ async fn authorize_signin(
             .and_then(|uris| uris.first())
             .and_then(|uri| uri.as_str())
             .context("No redirect_uri available")?
-            .to_string()
+            .to_owned()
     };
 
     // Store the authorization code
@@ -615,20 +624,17 @@ async fn authorize_signin(
     });
 
     // Build redirect URL
-    let mut redirect_url = redirect_uri;
-    match par_request.response_mode {
-        None => redirect_url.push_str("?"), // Default to query
-        Some(response_mode) => match response_mode.as_str() {
-            "query" => redirect_url.push_str("?"),
-            "fragment" => redirect_url.push_str("#"),
-            _ => redirect_url.push_str("?"), // Default to query
-        },
-    };
-    redirect_url.push_str(&format!("state={}", urlencoding::encode(&state)));
+    let mut redirect_target = redirect_uri;
+    match par_request.response_mode.as_deref() {
+        Some("fragment") => redirect_target.push('#'),
+        _ => redirect_target.push('?'),
+    }
+
+    write!(redirect_target, "state={}", urlencoding::encode(&state)).unwrap();
     let host_name = format!("https://{}", &config.host_name);
-    redirect_url.push_str(&format!("&iss={}", urlencoding::encode(&host_name)));
-    redirect_url.push_str(&format!("&code={}", urlencoding::encode(&code)));
-    Ok(Redirect::to(&redirect_url))
+    write!(redirect_target, "&iss={}", urlencoding::encode(&host_name)).unwrap();
+    write!(redirect_target, "&code={}", urlencoding::encode(&code)).unwrap();
+    Ok(Redirect::to(&redirect_target))
 }
 
 /// Verify a DPoP proof and return the JWK thumbprint
@@ -650,7 +656,7 @@ async fn verify_dpop_proof(
     let (header, claims) = parse_jwt(dpop_token)?;
 
     // Verify "typ" is "dpop+jwt"
-    if header.get("typ").and_then(|t| t.as_str()) != Some("dpop+jwt") {
+    if header.get("typ").and_then(Value::as_str) != Some("dpop+jwt") {
         return Err(Error::with_status(
             StatusCode::BAD_REQUEST,
             anyhow!("Invalid DPoP token type"),
@@ -660,13 +666,14 @@ async fn verify_dpop_proof(
     // Verify required claims
     let jti = claims
         .get("jti")
-        .and_then(|j| j.as_str())
+        .and_then(Value::as_str)
         .context("Missing jti claim in DPoP token")?;
 
     // Check for token expiration
+    #[expect(clippy::arithmetic_side_effects)]
     let exp = claims
         .get("exp")
-        .and_then(|e| e.as_i64())
+        .and_then(Value::as_i64)
         .unwrap_or_else(|| chrono::Utc::now().timestamp() + 60); // Default 60s if not specified
 
     let now = chrono::Utc::now().timestamp();
@@ -678,7 +685,7 @@ async fn verify_dpop_proof(
     }
 
     // Check htm (HTTP method) claim
-    if claims.get("htm").and_then(|m| m.as_str()) != Some(http_method) {
+    if claims.get("htm").and_then(Value::as_str) != Some(http_method) {
         return Err(Error::with_status(
             StatusCode::BAD_REQUEST,
             anyhow!("Invalid htm claim in DPoP token"),
@@ -686,13 +693,13 @@ async fn verify_dpop_proof(
     }
 
     // Check htu (HTTP URI) claim
-    if claims.get("htu").and_then(|u| u.as_str()) != Some(http_uri) {
+    if claims.get("htu").and_then(Value::as_str) != Some(http_uri) {
         return Err(Error::with_status(
             StatusCode::BAD_REQUEST,
             anyhow!(
                 "Invalid htu claim in DPoP token: expected {}, got {}",
                 http_uri,
-                claims.get("htu").and_then(|u| u.as_str()).unwrap_or("None")
+                claims.get("htu").and_then(Value::as_str).unwrap_or("None")
             ),
         ));
     }
@@ -739,7 +746,7 @@ async fn verify_dpop_proof(
     .context("failed to store JTI")?;
 
     // Cleanup expired JTIs periodically (1% chance on each request)
-    if thread_rng().gen_range(0..100) == 0 {
+    if thread_rng().gen_range(0_i32..100_i32) == 0_i32 {
         _ = sqlx::query!(r#"DELETE FROM oauth_used_jtis WHERE expires_at < ?"#, now)
             .execute(db)
             .await
@@ -749,7 +756,7 @@ async fn verify_dpop_proof(
     Ok(thumbprint)
 }
 
-/// Verify a code_verifier against stored code_challenge
+/// Verify a `code_verifier` against stored `code_challenge`
 fn verify_pkce(code_verifier: &str, stored_challenge: &str, method: &str) -> Result<()> {
     // Only S256 is supported currently
     if method != "S256" {
@@ -778,7 +785,8 @@ fn verify_pkce(code_verifier: &str, stored_challenge: &str, method: &str) -> Res
 /// OAuth token endpoint
 /// - POST `/oauth/token`
 ///
-/// Handles both authorization_code and refresh_token grants
+/// Handles both `authorization_code` and `refresh_token` grants
+#[expect(clippy::too_many_lines)]
 async fn token(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
@@ -857,8 +865,10 @@ async fn token(
             // Generate tokens
             let now = chrono::Utc::now().timestamp();
             let access_token_expires_in = 3600; // 1 hour
+            #[expect(clippy::arithmetic_side_effects)]
             let access_token_expires_at = now + access_token_expires_in;
-            let refresh_token_expires_at = now + 2592000; // 30 days
+            #[expect(clippy::arithmetic_side_effects)]
+            let refresh_token_expires_at = now + 2_592_000; // 30 days
 
             // Create access token
             let access_token_claims = json!({
@@ -961,8 +971,10 @@ async fn token(
             // Generate new tokens
             let now = chrono::Utc::now().timestamp();
             let access_token_expires_in = 3600; // 1 hour
+            #[expect(clippy::arithmetic_side_effects)]
             let access_token_expires_at = now + access_token_expires_in;
-            let refresh_token_expires_at = now + 2592000; // 30 days
+            #[expect(clippy::arithmetic_side_effects)]
+            let refresh_token_expires_at = now + 2_592_000; // 30 days
 
             // Create access token
             let access_token_claims = json!({
@@ -1043,11 +1055,11 @@ async fn jwks(State(skey): State<SigningKey>) -> Result<Json<Value>> {
     // For a real implementation, you would construct a proper JWK
     // with all the required fields based on the key type
 
-    let key_did = skey.did();
+    let did_string = skey.did();
 
     // Extract the key ID from the DID string
     // did:key:z... format, where z... is the multibase-encoded public key
-    let key_id = key_did.strip_prefix("did:key:").unwrap_or(&key_did);
+    let key_id = did_string.strip_prefix("did:key:").unwrap_or(&did_string);
 
     let jwk = json!({
         "kty": "EC",
@@ -1077,7 +1089,7 @@ async fn revoke(
 ) -> Result<Json<Value>> {
     // Extract required parameters
     let token = form_data.get("token").context("token is required")?;
-    let refresh_token_string = "refresh_token".to_string();
+    let refresh_token_string = "refresh_token".to_owned();
     let token_type_hint = form_data
         .get("token_type_hint")
         .unwrap_or(&refresh_token_string);
@@ -1117,12 +1129,9 @@ async fn introspect(
     let token_type_hint = form_data.get("token_type_hint");
 
     // Parse the token
-    let (typ, claims) = match crate::auth::verify(&skey.did(), token) {
-        Ok(result) => result,
-        Err(_) => {
-            // Per RFC7662, invalid tokens return { "active": false }
-            return Ok(Json(json!({"active": false})));
-        }
+    let Ok((typ, claims)) = crate::auth::verify(&skey.did(), token) else {
+        // Per RFC7662, invalid tokens return { "active": false }
+        return Ok(Json(json!({"active": false})));
     };
 
     // Check token type
@@ -1143,7 +1152,7 @@ async fn introspect(
     }
 
     // Check expiration
-    if let Some(exp) = claims.get("exp").and_then(|v| v.as_i64()) {
+    if let Some(exp) = claims.get("exp").and_then(Value::as_i64) {
         let now = chrono::Utc::now().timestamp();
         if now >= exp {
             return Ok(Json(json!({"active": false})));
@@ -1169,11 +1178,11 @@ async fn introspect(
     }
 
     // Token is valid, return introspection info
-    let subject = claims.get("sub").and_then(|v| v.as_str());
-    let client_id = claims.get("aud").and_then(|v| v.as_str());
-    let scope = claims.get("scope").and_then(|v| v.as_str());
-    let expiration = claims.get("exp").and_then(|v| v.as_i64());
-    let issued_at = claims.get("iat").and_then(|v| v.as_i64());
+    let subject = claims.get("sub").and_then(Value::as_str);
+    let client_id = claims.get("aud").and_then(Value::as_str);
+    let scope = claims.get("scope").and_then(Value::as_str);
+    let expiration = claims.get("exp").and_then(Value::as_i64);
+    let issued_at = claims.get("iat").and_then(Value::as_i64);
 
     Ok(Json(json!({
         "active": true,

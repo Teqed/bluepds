@@ -234,7 +234,9 @@ async fn get_repo_status(
             active,
             status,
             did: input.did.clone(),
-            rev: Some(atrium_api::types::string::Tid::new(r.rev).unwrap()),
+            rev: Some(
+                atrium_api::types::string::Tid::new(r.rev).expect("should be able to convert Tid"),
+            ),
         }
         .into(),
     ))
@@ -371,7 +373,8 @@ async fn list_repos(
                 head: atrium_api::types::string::Cid::new(
                     Cid::from_str(&r.root).expect("should be a valid CID"),
                 ),
-                rev: atrium_api::types::string::Tid::new(r.rev).unwrap(),
+                rev: atrium_api::types::string::Tid::new(r.rev)
+                    .expect("should be able to convert Tid"),
                 status: None,
             }
             .into()
