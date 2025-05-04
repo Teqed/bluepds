@@ -8,7 +8,7 @@ use atrium_repo::{
     Cid, Repository,
 };
 
-use crate::{config::RepoConfig, Db};
+use crate::{config::RepoConfig, mmap::MappedFile, Db};
 
 pub async fn open_store(
     config: &RepoConfig,
@@ -21,12 +21,12 @@ pub async fn open_store(
 
     let p = config.path.join(id).with_extension("car");
 
-    let f = tokio::fs::File::options()
+    let f = std::fs::File::options()
         .read(true)
         .write(true)
         .open(p)
-        .await
         .context("failed to open repository file")?;
+    let f = MappedFile::new(f).context("failed to map repo")?;
 
     Ok(CarStore::open(f)
         .await

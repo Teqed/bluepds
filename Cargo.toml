@@ -26,6 +26,7 @@ constcat = "0.6.0"
 figment = { version = "0.10.19", features = ["toml", "env"] }
 futures = "0.3.31"
 http-cache-reqwest = { version = "0.15.1", default-features = false, features = ["manager-moka"] }
+memmap2 = "0.9.5"
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"
 rand = "0.8.5"

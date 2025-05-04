@@ -521,6 +521,8 @@ async fn put_record(
 ) -> Result<Json<repo::put_record::Output>> {
     // TODO: `input.swap_record`
 
+    // FIXME: "put" implies that we will create the record if it does not exist.
+    // We currently only update existing records and/or throw an error if one doesn't exist.
     let input = (*input).clone();
     let input = repo::apply_writes::InputData {
         repo: input.repo,

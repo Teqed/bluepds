@@ -39,6 +39,7 @@ mod endpoints;
 mod error;
 mod firehose;
 mod metrics;
+mod mmap;
 mod plc;
 mod storage;
 
