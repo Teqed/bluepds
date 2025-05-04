@@ -151,28 +151,31 @@ async fn create_account(
     // Unless committed, the transaction will be automatically rolled back.
     let mut tx = db.begin().await.context("failed to begin transaction")?;
 
-    let _invite = match input.invite_code {
-        Some(ref code) => {
-            let invite: Option<String> = sqlx::query_scalar!(
-                r#"
-                UPDATE invites
-                    SET count = count - 1
-                    WHERE id = ?
-                    AND count > 0
-                    RETURNING id
-                "#,
-                code
-            )
-            .fetch_optional(&mut *tx)
-            .await
-            .context("failed to check invite code")?;
+    // TODO: Make this its own toggle instead of tied to test mode
+    if !config.test {
+        let _invite = match input.invite_code {
+            Some(ref code) => {
+                let invite: Option<String> = sqlx::query_scalar!(
+                    r#"
+                    UPDATE invites
+                        SET count = count - 1
+                        WHERE id = ?
+                        AND count > 0
+                        RETURNING id
+                    "#,
+                    code
+                )
+                .fetch_optional(&mut *tx)
+                .await
+                .context("failed to check invite code")?;
 
-            invite.context("invalid invite code")?
-        }
-        None => {
-            return Err(anyhow!("invite code required").into());
-        }
-    };
+                invite.context("invalid invite code")?
+            }
+            None => {
+                return Err(anyhow!("invite code required").into());
+            }
+        };
+    }
 
     // Account can be created. Synthesize a new DID for the user.
     // https://github.com/did-method-plc/did-method-plc?tab=readme-ov-file#did-creation

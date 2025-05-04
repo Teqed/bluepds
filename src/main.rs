@@ -9,6 +9,8 @@ mod metrics;
 mod oauth;
 mod plc;
 mod storage;
+#[cfg(test)]
+mod tests;
 
 /// HACK: store private user preferences in the PDS.
 ///
