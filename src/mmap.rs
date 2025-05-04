@@ -13,9 +13,9 @@ pub struct MappedFile {
     /// The mapped memory region.
     map: MmapMut,
     /// The length of the file.
-    len: usize,
+    len: u64,
     /// Our current offset into the file.
-    off: usize,
+    off: u64,
 }
 
 impl MappedFile {
@@ -30,9 +30,25 @@ impl MappedFile {
         Ok(Self {
             map: unsafe { MmapOptions::new().map_mut(raw)? },
             file: f,
-            len: len as usize,
+            len: len,
             off: 0,
         })
+    }
+
+    /// Resize the memory-mapped file. This will reallocate the memory mapping.
+    fn resize(&mut self, len: u64) -> std::io::Result<()> {
+        // Resize the file.
+        self.file.set_len(len)?;
+
+        #[cfg(windows)]
+        let raw = self.file.as_raw_handle();
+        #[cfg(unix)]
+        let raw = self.file.as_raw_fd();
+
+        self.map = unsafe { MmapOptions::new().map_mut(raw)? };
+        self.len = len;
+
+        Ok(())
     }
 }
 
@@ -44,10 +60,11 @@ impl std::io::Read for MappedFile {
         }
 
         // Calculate the number of bytes we're going to read.
-        let len = std::cmp::min(self.len - self.off, buf.len());
+        let len = std::cmp::min(self.len - self.off, buf.len() as u64) as usize;
+        let off = self.off as usize;
 
-        buf[..len].copy_from_slice(&self.map[self.off..self.off + len]);
-        self.off += len;
+        buf[..len].copy_from_slice(&self.map[off..off + len]);
+        self.off += len as u64;
         Ok(len)
     }
 }
@@ -55,23 +72,15 @@ impl std::io::Read for MappedFile {
 impl std::io::Write for MappedFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         // Determine if we need to resize the file.
-        if self.off + buf.len() >= self.len {
-            let nlen = self.off + buf.len();
-
-            // Resize the file.
-            self.file.set_len(nlen as u64)?;
-
-            #[cfg(windows)]
-            let raw = self.file.as_raw_handle();
-            #[cfg(unix)]
-            let raw = self.file.as_raw_fd();
-
-            self.map = unsafe { MmapOptions::new().map_mut(raw)? };
-            self.len = nlen;
+        if self.off + buf.len() as u64 >= self.len {
+            self.resize(self.off + buf.len() as u64)?;
         }
 
-        self.map[self.off..self.off + buf.len()].copy_from_slice(buf);
-        self.off += buf.len();
+        let off = self.off as usize;
+        let len = buf.len();
+
+        self.map[off..off + len].copy_from_slice(buf);
+        self.off += len as u64;
 
         Ok(buf.len())
     }
@@ -90,7 +99,12 @@ impl std::io::Seek for MappedFile {
             std::io::SeekFrom::Current(i) => (self.off as i64 + i) as u64,
         };
 
-        self.off = off as usize;
+        // If the offset is beyond EOF, extend the file to the new size.
+        if off > self.len {
+            self.resize(off)?;
+        }
+
+        self.off = off;
         Ok(off)
     }
 }
