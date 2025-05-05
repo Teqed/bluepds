@@ -7,6 +7,7 @@ mod error;
 mod firehose;
 mod metrics;
 mod oauth;
+mod mmap;
 mod plc;
 mod storage;
 #[cfg(test)]

@@ -8,7 +8,7 @@ use atrium_repo::{
     blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore},
 };
 
-use crate::{Db, config::RepoConfig};
+use crate::{config::RepoConfig, mmap::MappedFile, Db};
 
 /// Open a block store for a given DID.
 pub(crate) async fn open_store(
@@ -22,12 +22,12 @@ pub(crate) async fn open_store(
 
     let p = config.path.join(id).with_extension("car");
 
-    let f = tokio::fs::File::options()
+    let f = std::fs::File::options()
         .read(true)
         .write(true)
         .open(p)
-        .await
         .context("failed to open repository file")?;
+    let f = MappedFile::new(f).context("failed to map repo")?;
 
     CarStore::open(f).await.context("failed to open car store")
 }

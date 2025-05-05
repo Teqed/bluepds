@@ -63,7 +63,7 @@ unit_bindings = "warn"
 unnameable_types = "warn"
 # unqualified_local_imports = "warn" # unstable
 unreachable_pub = "warn"
-unsafe_code = "forbid"
+unsafe_code = "warn"
 unstable_features = "warn"
 # unused_crate_dependencies = "warn"
 unused_import_braces = "warn"
@@ -156,6 +156,7 @@ futures = "0.3.31"
 http-cache-reqwest = { version = "0.15.1", default-features = false, features = [
     "manager-moka",
 ] }
+memmap2 = "0.9.5"
 metrics = "0.24.1"
 metrics-exporter-prometheus = "0.16.2"
 rand = "0.8.5"

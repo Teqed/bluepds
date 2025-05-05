@@ -642,6 +642,23 @@ async fn put_record(
     Json(input): Json<repo::put_record::Input>,
 ) -> Result<Json<repo::put_record::Output>> {
     // TODO: `input.swap_record`
+    // FIXME: "put" implies that we will create the record if it does not exist.
+    // We currently only update existing records and/or throw an error if one doesn't exist.
+    let input = (*input).clone();
+    let input = repo::apply_writes::InputData {
+        repo: input.repo,
+        validate: input.validate,
+        swap_commit: input.swap_commit,
+        writes: vec![repo::apply_writes::InputWritesItem::Update(Box::new(
+            repo::apply_writes::UpdateData {
+                collection: input.collection,
+                rkey: input.rkey,
+                value: input.record,
+            }
+            .into(),
+        ))],
+    }
+    .into();
 
     let write_result = apply_writes(
         user,
@@ -649,22 +666,7 @@ async fn put_record(
         State(config),
         State(db),
         State(fhp),
-        Json(
-            repo::apply_writes::InputData {
-                repo: input.repo.clone(),
-                validate: input.validate,
-                swap_commit: input.swap_commit.clone(),
-                writes: vec![repo::apply_writes::InputWritesItem::Update(Box::new(
-                    repo::apply_writes::UpdateData {
-                        collection: input.collection.clone(),
-                        rkey: input.rkey.clone(),
-                        value: input.record.clone(),
-                    }
-                    .into(),
-                ))],
-            }
-            .into(),
-        ),
+        Json(input),
     )
     .await
     .context("failed to apply writes")?;
