@@ -19,7 +19,7 @@ use rand::distributions::Alphanumeric;
 use rand::{Rng as _, thread_rng};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::Digest as _;
+use sha2::{Digest as _, Sha256};
 use std::collections::{HashMap, HashSet};
 
 /// JWK thumbprint required properties for each key type (RFC7638)
@@ -102,7 +102,7 @@ fn calculate_jwk_thumbprint(jwk: &Value) -> Result<String> {
         .context("Failed to serialize canonical JWK")?;
 
     // Hash the canonical representation
-    let mut hasher = sha2::Sha256::new();
+    let mut hasher = Sha256::new();
     hasher.update(canonical_json.as_bytes());
     let thumbprint = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
 
@@ -638,24 +638,49 @@ async fn authorize_signin(
 }
 
 /// Verify a DPoP proof and return the JWK thumbprint
-///
-/// Verifies:
-/// 1. The token is properly formatted with JWT fields
-/// 2. The token has a valid signature, verified using the embedded JWK
-/// 3. The required claims are present (jti, htm, htu)
-/// 4. The htm and htu match the request
-/// 5. The token has not been used before (replay prevention)
-/// 6. The token is not expired
+/// RFC 7519 JSON Web Token (JWT) - 4.3.  Checking DPoP Proofs
+/// To validate a DPoP proof, the receiving server MUST ensure the
+/// following:
+/// 1.   There is not more than one DPoP HTTP request header field.
+/// 2.   The DPoP HTTP request header field value is a single and well-
+///      formed JWT.
+/// 3.   All required claims per Section 4.2 are contained in the JWT.
+/// 4.   The typ JOSE Header Parameter has the value dpop+jwt.
+/// 5.   The alg JOSE Header Parameter indicates a registered asymmetric
+///      digital signature algorithm [IANA.JOSE.ALGS], is not none, is
+///      supported by the application, and is acceptable per local
+///      policy.
+/// 6.   The JWT signature verifies with the public key contained in the
+///      jwk JOSE Header Parameter.
+/// 7.   The jwk JOSE Header Parameter does not contain a private key.
+/// 8.   The htm claim matches the HTTP method of the current request.
+/// 9.   The htu claim matches the HTTP URI value for the HTTP request in
+///      which the JWT was received, ignoring any query and fragment
+///      parts.
+/// 10.  If the server provided a nonce value to the client, the nonce
+///      claim matches the server-provided nonce value.
+/// 11.  The creation time of the JWT, as determined by either the iat
+///      claim or a server managed timestamp via the nonce claim, is
+///      within an acceptable window (see Section 11.1).
+/// 12.  If presented to a protected resource in conjunction with an
+///      access token,
+///      *  ensure that the value of the ath claim equals the hash of
+///         that access token, and
+///      *  confirm that the public key to which the access token is
+///         bound matches the public key from the DPoP proof.
+#[expect(clippy::too_many_lines)]
 async fn verify_dpop_proof(
     dpop_token: &str,
     http_method: &str,
     http_uri: &str,
     db: &Db,
+    access_token: Option<&str>,
+    bound_key_thumbprint: Option<&str>,
 ) -> Result<String> {
     // Parse the DPoP token
     let (header, claims) = parse_jwt(dpop_token)?;
 
-    // Verify "typ" is "dpop+jwt"
+    // 1. Verify "typ" is "dpop+jwt" (requirement #4)
     if header.get("typ").and_then(Value::as_str) != Some("dpop+jwt") {
         return Err(Error::with_status(
             StatusCode::BAD_REQUEST,
@@ -663,20 +688,88 @@ async fn verify_dpop_proof(
         ));
     }
 
-    // Verify required claims
+    // 2. Check alg header (requirement #5)
+    let alg = header
+        .get("alg")
+        .and_then(Value::as_str)
+        .context("Missing alg in DPoP header")?;
+    if alg == "none" || !["RS256", "ES256", "ES256K", "PS256"].contains(&alg) {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Unsupported or insecure signature algorithm"),
+        ));
+    }
+
+    // 3. Extract JWK and verify no private key components (requirement #7)
+    let jwk = header.get("jwk").context("missing jwk in DPoP header")?;
+    if jwk.get("d").is_some() || jwk.get("p").is_some() || jwk.get("q").is_some() {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("JWK contains private key components"),
+        ));
+    }
+
+    // 4. Calculate JWK thumbprint
+    let thumbprint = calculate_jwk_thumbprint(jwk)?;
+
+    // 5. Verify JWT signature (requirement #6)
+    // TODO: Implement signature verification with the JWK
+
+    // 6. Verify required claims (requirement #3)
     let jti = claims
         .get("jti")
         .and_then(Value::as_str)
         .context("Missing jti claim in DPoP token")?;
 
-    // Check for token expiration
-    #[expect(clippy::arithmetic_side_effects)]
+    // 7. Check HTTP method matches htm claim (requirement #8)
+    if claims.get("htm").and_then(Value::as_str) != Some(http_method) {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!("DPoP token HTTP method mismatch"),
+        ));
+    }
+
+    // 8. Check HTTP URI matches htu claim (requirement #9)
+    // Should perform proper URI normalization for production use
+    if claims.get("htu").and_then(Value::as_str) != Some(http_uri) {
+        return Err(Error::with_status(
+            StatusCode::BAD_REQUEST,
+            anyhow!(
+                "DPoP token HTTP URI mismatch: expected {}, got {}",
+                http_uri,
+                claims.get("htu").and_then(Value::as_str).unwrap_or("None")
+            ),
+        ));
+    }
+
+    // 9. Verify token timestamps (requirement #11)
+    let now = chrono::Utc::now().timestamp();
+
+    // Check creation time (iat)
+    if let Some(iat) = claims.get("iat").and_then(Value::as_i64) {
+        // Token not too old (5 minute max age)
+        if iat < now.saturating_sub(300) {
+            return Err(Error::with_status(
+                StatusCode::BAD_REQUEST,
+                anyhow!("DPoP token too old"),
+            ));
+        }
+
+        // Token not in the future (with clock skew allowance)
+        if iat > now.saturating_add(60) {
+            return Err(Error::with_status(
+                StatusCode::BAD_REQUEST,
+                anyhow!("DPoP token creation time is in the future"),
+            ));
+        }
+    }
+
+    // Check expiration (exp) if present
     let exp = claims
         .get("exp")
         .and_then(Value::as_i64)
-        .unwrap_or_else(|| chrono::Utc::now().timestamp() + 60); // Default 60s if not specified
+        .unwrap_or_else(|| now.saturating_add(60)); // Default 60s if not present
 
-    let now = chrono::Utc::now().timestamp();
     if now >= exp {
         return Err(Error::with_status(
             StatusCode::BAD_REQUEST,
@@ -684,39 +777,40 @@ async fn verify_dpop_proof(
         ));
     }
 
-    // Check htm (HTTP method) claim
-    if claims.get("htm").and_then(Value::as_str) != Some(http_method) {
-        return Err(Error::with_status(
-            StatusCode::BAD_REQUEST,
-            anyhow!("Invalid htm claim in DPoP token"),
-        ));
+    // 10. Verify access token binding (requirement #12)
+    if let Some(token) = access_token {
+        // Verify ath claim matches token hash
+        if let Some(ath) = claims.get("ath").and_then(Value::as_str) {
+            let mut hasher = Sha256::new();
+            hasher.update(token.as_bytes());
+            let token_hash =
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+
+            if ath != token_hash {
+                return Err(Error::with_status(
+                    StatusCode::BAD_REQUEST,
+                    anyhow!("DPoP access token hash mismatch"),
+                ));
+            }
+        } else {
+            return Err(Error::with_status(
+                StatusCode::BAD_REQUEST,
+                anyhow!("Missing ath claim for DPoP with access token"),
+            ));
+        }
+
+        // Verify key binding matches
+        if let Some(expected_thumbprint) = bound_key_thumbprint {
+            if thumbprint != expected_thumbprint {
+                return Err(Error::with_status(
+                    StatusCode::BAD_REQUEST,
+                    anyhow!("DPoP key doesn't match token-bound key"),
+                ));
+            }
+        }
     }
 
-    // Check htu (HTTP URI) claim
-    if claims.get("htu").and_then(Value::as_str) != Some(http_uri) {
-        return Err(Error::with_status(
-            StatusCode::BAD_REQUEST,
-            anyhow!(
-                "Invalid htu claim in DPoP token: expected {}, got {}",
-                http_uri,
-                claims.get("htu").and_then(Value::as_str).unwrap_or("None")
-            ),
-        ));
-    }
-
-    // Extract JWK (JSON Web Key)
-    let jwk = header
-        .get("jwk")
-        .context("Missing jwk in DPoP token header")?;
-
-    // Calculate JWK thumbprint using RFC7638
-    let thumbprint = calculate_jwk_thumbprint(jwk)?;
-
-    // TODO: Verify the token signature using the JWK
-    // This requires integrating with a JWT library that can verify
-    // signatures using a JWK directly
-
-    // Check for replay attacks by verifying this JTI hasn't been used before
+    // 11. Check for replay attacks via JTI tracking
     let jti_used =
         sqlx::query_scalar!(r#"SELECT COUNT(*) FROM oauth_used_jtis WHERE jti = ?"#, jti)
             .fetch_one(db)
@@ -730,7 +824,7 @@ async fn verify_dpop_proof(
         ));
     }
 
-    // Store the JTI to prevent replay attacks
+    // 12. Store the JTI to prevent replay attacks
     _ = sqlx::query!(
         r#"
         INSERT INTO oauth_used_jtis (jti, issuer, created_at, expires_at)
@@ -745,7 +839,7 @@ async fn verify_dpop_proof(
     .await
     .context("failed to store JTI")?;
 
-    // Cleanup expired JTIs periodically (1% chance on each request)
+    // 13. Cleanup expired JTIs periodically (1% chance on each request)
     if thread_rng().gen_range(0_i32..100_i32) == 0_i32 {
         _ = sqlx::query!(r#"DELETE FROM oauth_used_jtis WHERE expires_at < ?"#, now)
             .execute(db)
@@ -767,7 +861,7 @@ fn verify_pkce(code_verifier: &str, stored_challenge: &str, method: &str) -> Res
     }
 
     // Calculate the code challenge from verifier
-    let mut hasher = sha2::Sha256::new();
+    let mut hasher = Sha256::new();
     hasher.update(code_verifier.as_bytes());
     let calculated = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
 
@@ -791,6 +885,7 @@ async fn token(
     State(db): State<Db>,
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
+    State(client): State<Client>,
     headers: HeaderMap,
     Json(form_data): Json<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
@@ -798,39 +893,103 @@ async fn token(
     let grant_type = form_data
         .get("grant_type")
         .context("grant_type is required")?;
+    let client_id = form_data
+        .get("client_id")
+        .context("client_id is required")?;
 
-    // Validate DPoP header
+    // Validate DPoP header (Rule 1: Ensure DPoP is used)
     let dpop_token = headers
         .get("DPoP")
         .context("DPoP header is required")?
         .to_str()
         .context("Invalid DPoP header")?;
 
+    // Get client metadata to determine client type (public vs confidential)
+    let client_metadata = fetch_client_metadata(&client, client_id).await?;
+    let is_confidential_client = client_metadata
+        .get("token_endpoint_auth_method")
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        == "private_key_jwt";
+
+    // Verify DPoP proof
     let dpop_thumbprint = verify_dpop_proof(
         dpop_token,
         "POST",
         &format!("https://{}/oauth/token", config.host_name),
         &db,
+        None,
+        None,
     )
     .await?;
 
+    if is_confidential_client {
+        // Rule 3: Check client authentication consistency
+        // For confidential clients, verify client_assertion
+        let client_assertion_type = form_data
+            .get("client_assertion_type")
+            .context("client_assertion_type required for private_key_jwt auth")?;
+        let _client_assertion = form_data
+            .get("client_assertion")
+            .context("client_assertion required for private_key_jwt auth")?;
+
+        if client_assertion_type != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+            return Err(Error::with_status(
+                StatusCode::BAD_REQUEST,
+                anyhow!("Invalid client_assertion_type"),
+            ));
+        }
+
+        // Verify client assertion JWT
+        // This would involve similar logic to verify_dpop_proof but for client auth
+        //
+        // WIP: Practically unimplemented
+        //
+        // TODO: Figure out how this actually works
+
+        // verify_client_assertion(&client, client_id, client_assertion).await?;
+
+        // Rule 4: Ensure DPoP and client_assertion use different keys
+        // let client_assertion_thumbprint = calculate_client_assertion_thumbprint(client_assertion)?;
+        // if client_assertion_thumbprint == dpop_thumbprint {
+        //     return Err(Error::with_status(
+        //         StatusCode::BAD_REQUEST,
+        //         anyhow!("DPoP proof and client assertion must use different keypairs"),
+        //     ));
+        // }
+    } else {
+        // Rule 2: For public clients, check if this DPoP key has been used before
+        let is_key_reused = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) FROM oauth_refresh_tokens WHERE dpop_thumbprint = ? AND client_id = ?"#,
+            dpop_thumbprint,
+            client_id
+        )
+        .fetch_one(&db)
+        .await
+        .context("failed to check key usage history")? > 0;
+
+        if is_key_reused && grant_type == "authorization_code" {
+            return Err(Error::with_status(
+                StatusCode::BAD_REQUEST,
+                anyhow!("Public clients must use a new key for each token request"),
+            ));
+        }
+    }
+
     match grant_type.as_str() {
         "authorization_code" => {
-            // Extract required parameters
+            // Process authorization code grant
             let code = form_data.get("code").context("code is required")?;
             let code_verifier = form_data
                 .get("code_verifier")
                 .context("code_verifier is required")?;
-            let client_id = form_data
-                .get("client_id")
-                .context("client_id is required")?;
             let redirect_uri = form_data
                 .get("redirect_uri")
                 .context("redirect_uri is required")?;
 
             let timestamp = chrono::Utc::now().timestamp();
 
-            // Retrieve the authorization code
+            // Retrieve and validate the authorization code
             let auth_code = sqlx::query!(
                 r#"
                 SELECT * FROM oauth_authorization_codes
@@ -862,23 +1021,29 @@ async fn token(
             .await
             .context("failed to mark code as used")?;
 
-            // Generate tokens
+            // Generate tokens with appropriate lifetimes
             let now = chrono::Utc::now().timestamp();
-            let access_token_expires_in = 3600; // 1 hour
-            #[expect(clippy::arithmetic_side_effects)]
-            let access_token_expires_at = now + access_token_expires_in;
-            #[expect(clippy::arithmetic_side_effects)]
-            let refresh_token_expires_at = now + 2_592_000; // 30 days
 
-            // Create access token
+            // Rule 5: Access token valid for short period
+            let access_token_expires_in = 3600_i64; // 1 hour (maximum allowed)
+            let access_token_expires_at = now.saturating_add(access_token_expires_in);
+
+            // Rule 11 & 12: Different refresh token lifetimes based on client type
+            let refresh_token_expires_at = if is_confidential_client {
+                now.saturating_add(15_552_000_i64) // 6 months for confidential clients
+            } else {
+                now.saturating_add(604_800_i64) // 1 week maximum for public clients
+            };
+
+            // Rule 5: Include subject claim with user DID
             let access_token_claims = json!({
                 "iss": format!("https://{}", config.host_name),
-                "sub": auth_code.subject,
+                "sub": auth_code.subject, // User's DID
                 "aud": client_id,
                 "exp": access_token_expires_at,
                 "iat": now,
                 "cnf": {
-                    "jkt": dpop_thumbprint
+                    "jkt": dpop_thumbprint // Rule 1: Bind to DPoP key
                 },
                 "scope": auth_code.scope
             });
@@ -886,7 +1051,7 @@ async fn token(
             let access_token = crate::auth::sign(&skey, "at+jwt", &access_token_claims)
                 .context("failed to sign access token")?;
 
-            // Create refresh token
+            // Create refresh token with similar binding
             let refresh_token_claims = json!({
                 "iss": format!("https://{}", config.host_name),
                 "sub": auth_code.subject,
@@ -894,7 +1059,7 @@ async fn token(
                 "exp": refresh_token_expires_at,
                 "iat": now,
                 "cnf": {
-                    "jkt": dpop_thumbprint
+                    "jkt": dpop_thumbprint // Rule 1: Bind to DPoP key
                 },
                 "scope": auth_code.scope
             });
@@ -902,7 +1067,7 @@ async fn token(
             let refresh_token = crate::auth::sign(&skey, "rt+jwt", &refresh_token_claims)
                 .context("failed to sign refresh token")?;
 
-            // Store the refresh token
+            // Store the refresh token with DPoP binding
             _ = sqlx::query!(
                 r#"
                 INSERT INTO oauth_refresh_tokens (
@@ -922,27 +1087,25 @@ async fn token(
             .await
             .context("failed to store refresh token")?;
 
-            // Return token response
+            // Return token response with the subject claim
             Ok(Json(json!({
                 "access_token": access_token,
                 "token_type": "DPoP",
                 "expires_in": access_token_expires_in,
                 "refresh_token": refresh_token,
                 "scope": auth_code.scope,
-                "sub": auth_code.subject
+                "sub": auth_code.subject // Rule 5: Include subject claim
             })))
         }
         "refresh_token" => {
-            // Extract required parameters
+            // Process refresh token grant
             let refresh_token = form_data
                 .get("refresh_token")
                 .context("refresh_token is required")?;
-            let client_id = form_data
-                .get("client_id")
-                .context("client_id is required")?;
 
             let timestamp = chrono::Utc::now().timestamp();
 
+            // Rules 7 & 8: Verify refresh token and DPoP consistency
             // Retrieve the refresh token
             let token_data = sqlx::query!(
                 r#"
@@ -952,14 +1115,36 @@ async fn token(
                 refresh_token,
                 client_id,
                 timestamp,
-                dpop_thumbprint
+                dpop_thumbprint // Rule 8: Must use same DPoP key
             )
             .fetch_optional(&db)
             .await
             .context("failed to query refresh token")?
             .context("refresh token not found, expired, revoked, or invalid for this DPoP key")?;
 
-            // Rotate the refresh token by revoking the current one
+            // Rule 10: For confidential clients, verify key is still advertised in their jwks
+            if is_confidential_client {
+                let client_still_advertises_key = true; // Implement actual check against client jwks
+                if !client_still_advertises_key {
+                    // Revoke all tokens bound to this key
+                    _ = sqlx::query!(
+                        r#"UPDATE oauth_refresh_tokens SET revoked = TRUE
+                        WHERE client_id = ? AND dpop_thumbprint = ?"#,
+                        client_id,
+                        dpop_thumbprint
+                    )
+                    .execute(&db)
+                    .await
+                    .context("failed to revoke tokens")?;
+
+                    return Err(Error::with_status(
+                        StatusCode::BAD_REQUEST,
+                        anyhow!("Key no longer advertised by client"),
+                    ));
+                }
+            }
+
+            // Rotate the refresh token
             _ = sqlx::query!(
                 r#"UPDATE oauth_refresh_tokens SET revoked = TRUE WHERE token = ?"#,
                 refresh_token
@@ -970,11 +1155,12 @@ async fn token(
 
             // Generate new tokens
             let now = chrono::Utc::now().timestamp();
-            let access_token_expires_in = 3600; // 1 hour
-            #[expect(clippy::arithmetic_side_effects)]
-            let access_token_expires_at = now + access_token_expires_in;
-            #[expect(clippy::arithmetic_side_effects)]
-            let refresh_token_expires_at = now + 2_592_000; // 30 days
+            let access_token_expires_in = 3600_i64;
+            let access_token_expires_at = now.saturating_add(access_token_expires_in);
+
+            // Maintain the original expiry policy for refresh tokens
+            let original_duration = token_data.expires_at.saturating_sub(token_data.created_at);
+            let refresh_token_expires_at = now.saturating_add(original_duration);
 
             // Create access token
             let access_token_claims = json!({
@@ -1049,16 +1235,37 @@ async fn token(
 /// - GET `/oauth/jwks`
 ///
 /// Returns the server's public keys as a JWKS document
+///
+/// WIP: Practically unimplemented
+///
+/// TODO: Figure out if/how this actually works
 async fn jwks(State(skey): State<SigningKey>) -> Result<Json<Value>> {
-    // Get the public key data from the signing key
-    // This assumes the key is a Secp256k1Keypair
-    // For a real implementation, you would construct a proper JWK
-    // with all the required fields based on the key type
-
     let did_string = skey.did();
 
-    // Extract the key ID from the DID string
-    // did:key:z... format, where z... is the multibase-encoded public key
+    // Extract the public key data from the DID string
+    let (_, public_key_bytes) =
+        atrium_crypto::did::parse_did_key(&did_string).context("failed to parse did key")?;
+
+    // Secp256k1 uncompressed public keys should be 65 bytes: 0x04 + x(32 bytes) + y(32 bytes)
+    if public_key_bytes.len() != 65 || public_key_bytes.first().copied() != Some(0x04) {
+        return Err(Error::with_status(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            anyhow!("unexpected public key format"),
+        ));
+    }
+
+    // Extract and encode the X and Y coordinates
+    let x_coord = public_key_bytes
+        .get(1..33)
+        .map(|slice| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(slice))
+        .context("failed to extract X coordinate")?;
+
+    let y_coord = public_key_bytes
+        .get(33..65)
+        .map(|slice| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(slice))
+        .context("failed to extract Y coordinate")?;
+
+    // Create a stable key ID based on the DID
     let key_id = did_string.strip_prefix("did:key:").unwrap_or(&did_string);
 
     let jwk = json!({
@@ -1067,10 +1274,8 @@ async fn jwks(State(skey): State<SigningKey>) -> Result<Json<Value>> {
         "kid": key_id,
         "use": "sig",
         "alg": "ES256K",
-        // In a real implementation, you would include:
-        // "x": base64url encoded x coordinate,
-        // "y": base64url encoded y coordinate
-        // These would be derived from the actual public key
+        "x": x_coord,
+        "y": y_coord
     });
 
     // Return the JWKS document
