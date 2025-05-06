@@ -882,7 +882,7 @@ async fn get_record(
 async fn list_records(
     State(config): State<AppConfig>,
     State(db): State<Db>,
-    Query(input): Query<Object<repo::list_records::ParametersData>>,
+    Query(input): Query<Object<ListRecordsParameters>>,
 ) -> Result<Json<repo::list_records::Output>> {
     // TODO: `input.reverse`
 
