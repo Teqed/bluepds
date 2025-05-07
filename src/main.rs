@@ -6,8 +6,8 @@ mod endpoints;
 mod error;
 mod firehose;
 mod metrics;
-mod oauth;
 mod mmap;
+mod oauth;
 mod plc;
 mod storage;
 #[cfg(test)]

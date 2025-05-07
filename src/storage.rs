@@ -8,7 +8,7 @@ use atrium_repo::{
     blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore},
 };
 
-use crate::{config::RepoConfig, mmap::MappedFile, Db};
+use crate::{Db, config::RepoConfig, mmap::MappedFile};
 
 /// Open a block store for a given DID.
 pub(crate) async fn open_store(
