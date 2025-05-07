@@ -33,6 +33,7 @@ use crate::{
     firehose::{Commit, FirehoseProducer},
     metrics::AUTH_FAILED,
     plc::{self, PlcOperation, PlcService},
+    storage,
 };
 
 /// This is a dummy password that can be used in absence of a real password.
@@ -235,15 +236,13 @@ async fn create_account(
     // Write out an initial commit for the user.
     // https://atproto.com/guides/account-lifecycle
     let (cid, rev, store) = async {
-        let file = tokio::fs::File::create_new(config.repo.path.join(format!("{did_hash}.car")))
+        let store = storage::create_storage_for_did(&config.repo, &did_hash)
             .await
-            .context("failed to create repo file")?;
-        let mut store = CarStore::create(file)
-            .await
-            .context("failed to create carstore")?;
+            .context("failed to create storage")?;
 
+        // Initialize the repository with the storage
         let repo_builder = Repository::create(
-            &mut store,
+            store,
             Did::from_str(&did).expect("should be valid DID format"),
         )
         .await
@@ -261,6 +260,7 @@ async fn create_account(
         let root = repo.root();
         let rev = repo.commit().rev();
 
+        // Create a temporary CAR store for firehose events
         let mut mem = Vec::new();
         let mut firehose_store =
             CarStore::create_with_roots(std::io::Cursor::new(&mut mem), [repo.root()])
