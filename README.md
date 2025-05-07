@@ -15,7 +15,7 @@ This is an implementation of an ATProto PDS, built with [Axum](https://github.co
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
 Heavily inspired by David Buchanan's [millipds](https://github.com/DavidBuchanan314/millipds).
-This implementation forked from the [azure-rust-app](https://github.com/DrChat/azure-rust-app) starter template and the upstream [DrChat/bluepds](https://github.com/DrChat/).
+This implementation forked from the [azure-rust-app](https://github.com/DrChat/azure-rust-app) starter template and the upstream [DrChat/bluepds](https://github.com/DrChat/bluepds).
 See TODO below for this fork's changes from upstream.
 
 If you want to see this fork in action, there is a live account hosted by this PDS at [@teq.shatteredsky.net](https://bsky.app/profile/teq.shatteredsky.net)!
