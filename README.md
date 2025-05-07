@@ -1,4 +1,4 @@
-# Bluesky PDS
+# ATProto PDS
 ```
          __                         __
         /\ \__                     /\ \__
@@ -12,12 +12,13 @@
 ```
 
 This is an implementation of an ATProto PDS, built with [Axum](https://github.com/tokio-rs/axum) and [Atrium](https://github.com/sugyan/atrium).
-Heavily inspired by David Buchanan's [millipds](https://github.com/DavidBuchanan314/millipds).
-This implementation forked from the [azure-rust-app](https://github.com/DrChat/azure-rust-app) starter template.
-
 This PDS implementation uses a SQLite database to store private account information and file storage to store canonical user data.
 
-If you want to see this PDS in action, there is a live account hosted by this PDS at [@test.justinm.one](https://bsky.app/profile/test.justinm.one)!
+Heavily inspired by David Buchanan's [millipds](https://github.com/DavidBuchanan314/millipds).
+This implementation forked from the [azure-rust-app](https://github.com/DrChat/azure-rust-app) starter template and the upstream [DrChat/bluepds](https://github.com/DrChat/).
+See TODO below for this fork's changes from upstream.
+
+If you want to see this fork in action, there is a live account hosted by this PDS at [@teq.shatteredsky.net](https://bsky.app/profile/teq.shatteredsky.net)!
 
 > [!WARNING]
 > This PDS is undergoing heavy development. Do _NOT_ use this to host your primary account or any important data!
@@ -27,15 +28,22 @@ If you want to see this PDS in action, there is a live account hosted by this PD
 cargo run
 ```
 
-## Cost breakdown (on Azure)
-This is how much it costs to host the @test.justinm.one account:
+## Cost breakdown (on Oracle Cloud Infrastructure)
+This is how much it costs to host the @teq.shatteredsky.net account:
 
-- $20/mo
-  - $13/mo: Azure Application Service
-  - $5/mo: Azure Container Registry
-  - $1/mo: Azure Storage Account
+- $0/mo [Always Free Resources](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+  - $0/mo: VM.Standard.A1.Flex
+    - OCPU count: 2
+    - Network bandwidth: 2 Gbps
+    - Memory: 12 GB
+  - $0/mo: Virtual Cloud Network
+    - IPv4 address
+    - IPv6 address
+  - $0/mo: Boot volume
+    - Size: 47 GB
+    - VPUs/GB: 10
 
-This is _without_ optimizing for costs. The PDS can likely be made much cheaper.
+This is about half of the 3,000 OCPU hours and 18,000 GB hours available per month for free on the VM.Standard.A1.Flex shape. This is _without_ optimizing for costs. The PDS can likely be made much cheaper.
 
 ## Code map
 ```
@@ -55,15 +63,19 @@ This is _without_ optimizing for costs. The PDS can likely be made much cheaper.
 ```
 
 ## To-do
-### Teqed's
+### Teq's fork
 - [ ] OAuth
-  - [ ] `/.well-known/oauth-protected-resource` - Authorization Server Metadata
-  - [ ] `/.well-known/oauth-authorization-server`
-  - [ ] `/par` - Pushed Authorization Request
-  - [ ] `/client-metadata.json` - Client metadata discovery
-  - [ ] `/oauth/authorize`
-  - [ ] `/oauth/authorize/sign-in`
-  - [ ] `/oauth/token`
+  - [X] `/.well-known/oauth-protected-resource` - Authorization Server Metadata
+  - [X] `/.well-known/oauth-authorization-server`
+  - [X] `/par` - Pushed Authorization Request
+  - [X] `/client-metadata.json` - Client metadata discovery
+  - [X] `/oauth/authorize`
+  - [X] `/oauth/authorize/sign-in`
+  - [X] `/oauth/token`
+  - [ ] Authorization flow - Backend client
+  - [X] Authorization flow - Serverless browser app
+  - [ ] DPoP-Nonce
+  - [ ] Verify JWT signature with JWK
 - [ ] Email verification
 - [ ] 2FA
 - [ ] Admin endpoints
@@ -104,9 +116,8 @@ This is _without_ optimizing for costs. The PDS can likely be made much cheaper.
     - [X] pedantic
     - [X] cargo
     - [X] ungrouped
+
 ### High-level features
-- [ ] Authentication
-  - [ ] [OAuth support](https://atproto.com/specs/oauth)
 - [ ] Storage backend abstractions
   - [ ] Azure blob storage backend
   - [ ] Backblaze b2(?)
