@@ -1,194 +1,251 @@
-// src/actor_store/mod.rs
-pub mod blob;
-pub mod db;
-pub mod preference;
-pub mod record;
-pub mod repo;
+//! Actor store implementation for ATProto PDS.
 
-use anyhow::{Context as _, Result};
-use atrium_crypto::keypair::{Export as _, Keypair};
-use k256::Secp256k1;
-use sqlx::sqlite::SqliteConnectOptions;
+mod blob;
+mod db;
+mod preference;
+mod record;
+mod repo;
+
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::config::AppConfig;
-use blob::{BlobReader, BlobTransactor};
-use db::ActorDb;
-use preference::{PreferenceReader, PreferenceTransactor};
-use record::{RecordReader, RecordTransactor};
-use repo::{RepoReader, RepoTransactor};
+use anyhow::{Context as _, Result};
+use atrium_crypto::keypair::{Did as _, Export as _, Secp256k1Keypair};
+use sqlx::SqlitePool;
 
+use crate::config::RepoConfig;
+
+/// Resources required by the actor store.
+pub struct ActorStoreResources {
+    /// Configuration for the repo.
+    pub config: RepoConfig,
+    /// Background task queue (we'll need to implement this later).
+    pub background_queue: Arc<()>, // Placeholder until we implement a proper queue
+}
+
+/// The location of an actor's data.
+pub struct ActorLocation {
+    /// The directory for the actor's data.
+    pub directory: PathBuf,
+    /// The database location for the actor.
+    pub db_location: PathBuf,
+    /// The keypair location for the actor.
+    pub key_location: PathBuf,
+}
+
+/// The actor store for repository data.
 pub struct ActorStore {
-    pub config: Arc<AppConfig>,
+    /// The directory for actor data.
+    pub directory: PathBuf,
+    /// The directory for reserved keys.
+    reserved_key_dir: PathBuf,
+    /// Resources used by the actor store.
+    resources: ActorStoreResources,
+}
+
+/// Reader for actor data.
+pub struct ActorStoreReader {
+    /// The DID of the actor.
+    did: String,
+    /// The database connection.
+    db: SqlitePool,
+    /// The actor's keypair.
+    keypair: Arc<Secp256k1Keypair>,
+    /// Resources for the actor store.
+    resources: Arc<ActorStoreResources>,
+}
+
+/// Writer for actor data with transaction support.
+pub struct ActorStoreWriter {
+    /// The DID of the actor.
+    did: String,
+    /// The database connection.
+    db: SqlitePool,
+    /// The actor's keypair.
+    keypair: Arc<Secp256k1Keypair>,
+    /// Resources for the actor store.
+    resources: Arc<ActorStoreResources>,
+}
+
+/// Transactor for actor data.
+pub struct ActorStoreTransactor {
+    /// The DID of the actor.
+    did: String,
+    /// The database connection.
+    db: SqlitePool,
+    /// The actor's keypair.
+    keypair: Arc<Secp256k1Keypair>,
+    /// Resources for the actor store.
+    resources: Arc<ActorStoreResources>,
 }
 
 impl ActorStore {
-    pub fn new(config: Arc<AppConfig>) -> Self {
-        Self { config }
+    /// Create a new actor store.
+    pub fn new(directory: impl Into<PathBuf>, resources: ActorStoreResources) -> Self {
+        let directory = directory.into();
+        let reserved_key_dir = directory.join("reserved_keys");
+        Self {
+            directory,
+            reserved_key_dir,
+            resources,
+        }
     }
 
+    /// Get the location of a DID's data.
+    pub async fn get_location(&self, did: &str) -> Result<ActorLocation> {
+        let did_hash = sha256_hex(did).await?;
+        let directory = self.directory.join(&did_hash[0..2]).join(did);
+        let db_location = directory.join("store.sqlite");
+        let key_location = directory.join("key");
+
+        Ok(ActorLocation {
+            directory,
+            db_location,
+            key_location,
+        })
+    }
+
+    /// Check if an actor exists.
     pub async fn exists(&self, did: &str) -> Result<bool> {
-        let path = self.get_db_path(did)?;
-        Ok(tokio::fs::try_exists(&path).await.unwrap_or(false))
+        let location = self.get_location(did).await?;
+        Ok(tokio::fs::try_exists(&location.db_location).await?)
     }
 
-    pub async fn keypair(&self, did: &str) -> Result<Keypair<Secp256k1>> {
-        let path = self.get_keypair_path(did)?;
-        let key_data = tokio::fs::read(&path)
+    /// Get the keypair for an actor.
+    pub async fn keypair(&self, did: &str) -> Result<Arc<Secp256k1Keypair>> {
+        let location = self.get_location(did).await?;
+        let priv_key = tokio::fs::read(&location.key_location).await?;
+        let keypair = Secp256k1Keypair::import(&priv_key)?;
+        Ok(Arc::new(keypair))
+    }
+
+    /// Open the database for an actor.
+    pub async fn open_db(&self, did: &str) -> Result<SqlitePool> {
+        let location = self.get_location(did).await?;
+
+        if !tokio::fs::try_exists(&location.db_location).await? {
+            return Err(anyhow::anyhow!("Repo not found"));
+        }
+
+        let db = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(&location.db_location)
+                    .create_if_missing(false),
+            )
             .await
-            .context("failed to read keypair")?;
-        Ok(Keypair::<Secp256k1>::import(&key_data)?)
+            .context("failed to connect to SQLite database")?;
+
+        Ok(db)
     }
 
-    async fn get_db(&self, did: &str) -> Result<ActorDb> {
-        let path = self.get_db_path(did)?;
-        let options = SqliteConnectOptions::from_str(&format!("sqlite:{}", path.display()))?
-            .create_if_missing(true);
-        let pool = sqlx::SqlitePool::connect_with(options).await?;
-
-        Ok(ActorDb::new(pool))
-    }
-
-    pub async fn read<F, T>(&self, did: &str, f: F) -> Result<T>
+    /// Read from an actor store.
+    pub async fn read<T, F>(&self, did: &str, f: F) -> Result<T>
     where
         F: FnOnce(ActorStoreReader) -> Result<T>,
     {
-        let db = self.get_db(did).await?;
-        let keypair = Arc::new(self.keypair(did).await?);
-        let reader = ActorStoreReader::new(did.to_string(), db, self.config.clone(), keypair);
+        let db = self.open_db(did).await?;
+        let keypair = self.keypair(did).await?;
+        let resources = Arc::new(self.resources.clone());
+
+        let reader = ActorStoreReader {
+            did: did.to_string(),
+            db,
+            keypair,
+            resources,
+        };
+
         f(reader)
     }
 
-    pub async fn transact<F, T>(&self, did: &str, f: F) -> Result<T>
+    /// Transact against an actor store with full transaction support.
+    pub async fn transact<T, F>(&self, did: &str, f: F) -> Result<T>
     where
-        F: FnOnce(ActorStoreTransactor) -> Result<T> + Send + 'static,
-        T: Send + 'static,
+        F: FnOnce(ActorStoreTransactor) -> Result<T>,
     {
-        let db = self.get_db(did).await?;
-        let keypair = Arc::new(self.keypair(did).await?);
+        let db = self.open_db(did).await?;
+        let keypair = self.keypair(did).await?;
+        let resources = Arc::new(self.resources.clone());
 
-        db.transaction(|_| {
-            let transactor = ActorStoreTransactor::new(
-                did.to_string(),
-                db.clone(),
-                self.config.clone(),
-                keypair.clone(),
-            );
-            f(transactor)
-        })
-        .await
+        let transactor = ActorStoreTransactor {
+            did: did.to_string(),
+            db,
+            keypair,
+            resources,
+        };
+
+        f(transactor)
     }
 
-    pub async fn create(&self, did: &str, keypair: &Keypair<Secp256k1>) -> Result<()> {
-        // Create directory structure
-        let db_path = self.get_db_path(did)?;
-        if let Some(parent) = db_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+    /// Write to an actor store without transaction support.
+    pub async fn write_no_transaction<T, F>(&self, did: &str, f: F) -> Result<T>
+    where
+        F: FnOnce(ActorStoreWriter) -> Result<T>,
+    {
+        let db = self.open_db(did).await?;
+        let keypair = self.keypair(did).await?;
+        let resources = Arc::new(self.resources.clone());
+
+        let writer = ActorStoreWriter {
+            did: did.to_string(),
+            db,
+            keypair,
+            resources,
+        };
+
+        f(writer)
+    }
+
+    /// Create a new actor repository.
+    pub async fn create(&self, did: &str, keypair: Secp256k1Keypair) -> Result<()> {
+        let location = self.get_location(did).await?;
+
+        // Create directory if it doesn't exist
+        tokio::fs::create_dir_all(&location.directory).await?;
+
+        // Check if repo already exists
+        if tokio::fs::try_exists(&location.db_location).await? {
+            return Err(anyhow::anyhow!("Repo already exists"));
         }
 
-        // Export keypair
-        let key_path = self.get_keypair_path(did)?;
-        let key_data = keypair.export();
-        tokio::fs::write(key_path, key_data).await?;
+        // Export and save keypair
+        let priv_key = keypair.export();
+        tokio::fs::write(&location.key_location, priv_key).await?;
 
-        // Create and initialize DB
-        let db = self.get_db(did).await?;
-        db.migrate().await?;
+        // Create database
+        let db = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(&location.db_location)
+                    .create_if_missing(true),
+            )
+            .await
+            .context("failed to create SQLite database")?;
+
+        // Create database schema
+        db::create_tables(&db).await?;
 
         Ok(())
     }
 
-    fn get_db_path(&self, did: &str) -> Result<PathBuf> {
-        let did_hash = did
-            .strip_prefix("did:plc:")
-            .context("DID must be a PLC identifier")?;
-        Ok(self.config.repo.path.join(format!("{}.db", did_hash)))
-    }
-
-    fn get_keypair_path(&self, did: &str) -> Result<PathBuf> {
-        let did_hash = did
-            .strip_prefix("did:plc:")
-            .context("DID must be a PLC identifier")?;
-        Ok(self.config.repo.path.join(format!("{}.key", did_hash)))
-    }
+    // To be implemented: destroy, reserve_keypair, etc.
 }
 
-pub struct ActorStoreReader {
-    pub did: String,
-    db: ActorDb,
-    config: Arc<AppConfig>,
-    keypair: Arc<Keypair<Secp256k1>>,
+// Helper function for SHA-256 hashing
+async fn sha256_hex(input: &str) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let result = hasher.finalize();
+    Ok(hex::encode(result))
 }
 
-impl ActorStoreReader {
-    fn new(
-        did: String,
-        db: ActorDb,
-        config: Arc<AppConfig>,
-        keypair: Arc<Keypair<Secp256k1>>,
-    ) -> Self {
+impl Clone for ActorStoreResources {
+    fn clone(&self) -> Self {
         Self {
-            did,
-            db,
-            config,
-            keypair,
+            config: self.config.clone(),
+            background_queue: self.background_queue.clone(),
         }
-    }
-
-    pub fn blob(&self) -> BlobReader {
-        BlobReader::new(self.db.clone())
-    }
-
-    pub fn record(&self) -> RecordReader {
-        RecordReader::new(self.db.clone())
-    }
-
-    pub fn repo(&self) -> RepoReader {
-        RepoReader::new(self.db.clone(), self.did.clone())
-    }
-
-    pub fn pref(&self) -> PreferenceReader {
-        PreferenceReader::new(self.db.clone())
-    }
-}
-
-pub struct ActorStoreTransactor {
-    pub did: String,
-    db: ActorDb,
-    config: Arc<AppConfig>,
-    keypair: Arc<Keypair<Secp256k1>>,
-}
-
-impl ActorStoreTransactor {
-    fn new(
-        did: String,
-        db: ActorDb,
-        config: Arc<AppConfig>,
-        keypair: Arc<Keypair<Secp256k1>>,
-    ) -> Self {
-        Self {
-            did,
-            db,
-            config,
-            keypair,
-        }
-    }
-
-    pub fn blob(&self) -> BlobTransactor {
-        BlobTransactor::new(self.db.clone())
-    }
-
-    pub fn record(&self) -> RecordTransactor {
-        RecordTransactor::new(self.db.clone())
-    }
-
-    pub fn repo(&self) -> RepoTransactor {
-        RepoTransactor::new(self.db.clone(), self.keypair.clone(), self.did.clone())
-    }
-
-    pub fn pref(&self) -> PreferenceTransactor {
-        PreferenceTransactor::new(self.db.clone())
     }
 }

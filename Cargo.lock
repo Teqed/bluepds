@@ -672,6 +672,7 @@ dependencies = [
  "constcat",
  "figment",
  "futures",
+ "hex",
  "http-cache-reqwest",
  "k256",
  "memmap2",
