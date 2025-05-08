@@ -106,7 +106,7 @@ pub(crate) async fn create_storage_for_did(
         .context("failed to connect to SQLite database")?;
 
     // Initialize tables
-    sqlx::query(
+    _ = sqlx::query(
         "
             CREATE TABLE IF NOT EXISTS blocks (
                 cid TEXT PRIMARY KEY NOT NULL,
@@ -123,6 +123,7 @@ pub(crate) async fn create_storage_for_did(
             );
             CREATE INDEX IF NOT EXISTS idx_blocks_cid ON blocks(cid);
             CREATE INDEX IF NOT EXISTS idx_tree_nodes_repo ON tree_nodes(repo_did);
+            PRAGMA journal_mode=WAL;
         ",
     )
     .execute(&pool)
