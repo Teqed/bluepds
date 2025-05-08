@@ -673,6 +673,7 @@ dependencies = [
  "figment",
  "futures",
  "http-cache-reqwest",
+ "k256",
  "memmap2",
  "metrics",
  "metrics-exporter-prometheus",
@@ -2082,7 +2083,9 @@ dependencies = [
  "cfg-if",
  "ecdsa",
  "elliptic-curve",
+ "once_cell",
  "sha2",
+ "signature",
 ]
 
 [[package]]

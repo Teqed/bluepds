@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT data FROM blocks WHERE cid = ?",
+  "query": "SELECT content FROM repo_block WHERE cid = ?",
   "describe": {
     "columns": [
       {
-        "name": "data",
+        "name": "content",
         "ordinal": 0,
         "type_info": "Blob"
       }
@@ -16,5 +16,5 @@
       false
     ]
   },
-  "hash": "1db52857493a1e8a7004872eaff6e8fe5dec41579dd57d696008385b8d23788d"
+  "hash": "3b4745208f268678a84401e522c3836e0632ca34a0f23bbae5297d076610f0ab"
 }

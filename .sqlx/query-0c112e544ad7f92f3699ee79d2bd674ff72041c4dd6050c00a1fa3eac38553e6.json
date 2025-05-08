@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE repo_root SET cid = ?, rev = ?, indexedAt = ? WHERE did = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "0c112e544ad7f92f3699ee79d2bd674ff72041c4dd6050c00a1fa3eac38553e6"
+}

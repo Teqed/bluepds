@@ -1,4 +1,5 @@
 //! PDS implementation.
+mod actor_store;
 mod auth;
 mod config;
 mod did;
