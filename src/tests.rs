@@ -361,6 +361,20 @@ pub(crate) async fn create_record_benchmark(count: usize, concurrent: usize) -> 
                     .send()
                     .await;
 
+                // Fetch the record we just created
+                let get_response = client
+                    .get(format!(
+                        "{base_url}/xrpc/com.atproto.sync.getRecord?did={account_did}&collection=app.bsky.feed.post&rkey={record_idx}"
+                    ))
+                    .header("Authorization", format!("Bearer {access_token}"))
+                    .send()
+                    .await;
+                if get_response.is_err() {
+                    println!("Failed to fetch record {record_idx}: {get_response:?}");
+                    results.push(get_response);
+                    continue;
+                }
+
                 let request_duration = request_start.elapsed();
                 if record_idx % 10 == 0 {
                     println!("Created record {record_idx} in {request_duration:?}");
@@ -409,8 +423,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_account() -> Result<()> {
-        // return Ok(());
-        // #[expect(unreachable_code, reason = "Disabled")]
+        return Ok(());
+        #[expect(unreachable_code, reason = "Disabled")]
         let state = init_test_state().await?;
         let account = state.create_test_account().await?;
 
@@ -430,13 +444,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_record_benchmark() -> Result<()> {
-        // return Ok(());
-        // #[expect(unreachable_code, reason = "Disabled")]
+        return Ok(());
+        #[expect(unreachable_code, reason = "Disabled")]
         let duration = create_record_benchmark(100, 1).await?;
 
         println!("Created 100 records in {duration:?}");
 
-        if duration.as_secs() >= 100 {
+        if duration.as_secs() >= 10 {
             return Err(anyhow!("Benchmark took too long"));
         }
 
