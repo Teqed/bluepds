@@ -14,27 +14,27 @@ use sqlx::SqlitePool;
 use crate::config::RepoConfig;
 
 /// Resources required by the actor store.
-pub struct ActorStoreResources {
+pub(crate) struct ActorStoreResources {
     /// Configuration for the repo.
-    pub config: RepoConfig,
+    pub(crate) config: RepoConfig,
     /// Background task queue (we'll need to implement this later).
-    pub background_queue: Arc<()>, // Placeholder until we implement a proper queue
+    pub(crate) background_queue: Arc<()>, // Placeholder until we implement a proper queue
 }
 
 /// The location of an actor's data.
-pub struct ActorLocation {
+pub(crate) struct ActorLocation {
     /// The directory for the actor's data.
-    pub directory: PathBuf,
+    pub(crate) directory: PathBuf,
     /// The database location for the actor.
-    pub db_location: PathBuf,
+    pub(crate) db_location: PathBuf,
     /// The keypair location for the actor.
-    pub key_location: PathBuf,
+    pub(crate) key_location: PathBuf,
 }
 
 /// The actor store for repository data.
-pub struct ActorStore {
+pub(crate) struct ActorStore {
     /// The directory for actor data.
-    pub directory: PathBuf,
+    pub(crate) directory: PathBuf,
     /// The directory for reserved keys.
     reserved_key_dir: PathBuf,
     /// Resources used by the actor store.
@@ -42,7 +42,7 @@ pub struct ActorStore {
 }
 
 /// Reader for actor data.
-pub struct ActorStoreReader {
+pub(crate) struct ActorStoreReader {
     /// The DID of the actor.
     did: String,
     /// The database connection.
@@ -54,7 +54,7 @@ pub struct ActorStoreReader {
 }
 
 /// Writer for actor data with transaction support.
-pub struct ActorStoreWriter {
+pub(crate) struct ActorStoreWriter {
     /// The DID of the actor.
     did: String,
     /// The database connection.
@@ -66,7 +66,7 @@ pub struct ActorStoreWriter {
 }
 
 /// Transactor for actor data.
-pub struct ActorStoreTransactor {
+pub(crate) struct ActorStoreTransactor {
     /// The DID of the actor.
     did: String,
     /// The database connection.
@@ -79,7 +79,7 @@ pub struct ActorStoreTransactor {
 
 impl ActorStore {
     /// Create a new actor store.
-    pub fn new(directory: impl Into<PathBuf>, resources: ActorStoreResources) -> Self {
+    pub(crate) fn new(directory: impl Into<PathBuf>, resources: ActorStoreResources) -> Self {
         let directory = directory.into();
         let reserved_key_dir = directory.join("reserved_keys");
         Self {
@@ -90,7 +90,7 @@ impl ActorStore {
     }
 
     /// Get the location of a DID's data.
-    pub async fn get_location(&self, did: &str) -> Result<ActorLocation> {
+    pub(crate) async fn get_location(&self, did: &str) -> Result<ActorLocation> {
         let did_hash = sha256_hex(did).await?;
         let directory = self.directory.join(&did_hash[0..2]).join(did);
         let db_location = directory.join("store.sqlite");
@@ -104,13 +104,13 @@ impl ActorStore {
     }
 
     /// Check if an actor exists.
-    pub async fn exists(&self, did: &str) -> Result<bool> {
+    pub(crate) async fn exists(&self, did: &str) -> Result<bool> {
         let location = self.get_location(did).await?;
         Ok(tokio::fs::try_exists(&location.db_location).await?)
     }
 
     /// Get the keypair for an actor.
-    pub async fn keypair(&self, did: &str) -> Result<Arc<Secp256k1Keypair>> {
+    pub(crate) async fn keypair(&self, did: &str) -> Result<Arc<Secp256k1Keypair>> {
         let location = self.get_location(did).await?;
         let priv_key = tokio::fs::read(&location.key_location).await?;
         let keypair = Secp256k1Keypair::import(&priv_key)?;
@@ -118,7 +118,7 @@ impl ActorStore {
     }
 
     /// Open the database for an actor.
-    pub async fn open_db(&self, did: &str) -> Result<SqlitePool> {
+    pub(crate) async fn open_db(&self, did: &str) -> Result<SqlitePool> {
         let location = self.get_location(did).await?;
 
         if !tokio::fs::try_exists(&location.db_location).await? {
@@ -139,7 +139,7 @@ impl ActorStore {
     }
 
     /// Read from an actor store.
-    pub async fn read<T, F>(&self, did: &str, f: F) -> Result<T>
+    pub(crate) async fn read<T, F>(&self, did: &str, f: F) -> Result<T>
     where
         F: FnOnce(ActorStoreReader) -> Result<T>,
     {
@@ -158,7 +158,7 @@ impl ActorStore {
     }
 
     /// Transact against an actor store with full transaction support.
-    pub async fn transact<T, F>(&self, did: &str, f: F) -> Result<T>
+    pub(crate) async fn transact<T, F>(&self, did: &str, f: F) -> Result<T>
     where
         F: FnOnce(ActorStoreTransactor) -> Result<T>,
     {
@@ -177,7 +177,7 @@ impl ActorStore {
     }
 
     /// Write to an actor store without transaction support.
-    pub async fn write_no_transaction<T, F>(&self, did: &str, f: F) -> Result<T>
+    pub(crate) async fn write_no_transaction<T, F>(&self, did: &str, f: F) -> Result<T>
     where
         F: FnOnce(ActorStoreWriter) -> Result<T>,
     {
@@ -196,7 +196,7 @@ impl ActorStore {
     }
 
     /// Create a new actor repository.
-    pub async fn create(&self, did: &str, keypair: Secp256k1Keypair) -> Result<()> {
+    pub(crate) async fn create(&self, did: &str, keypair: Secp256k1Keypair) -> Result<()> {
         let location = self.get_location(did).await?;
 
         // Create directory if it doesn't exist
@@ -222,7 +222,7 @@ impl ActorStore {
             .context("failed to create SQLite database")?;
 
         // Create database schema
-        db::create_tables(&db).await?;
+        self::db::create_tables(&db).await?;
 
         Ok(())
     }
