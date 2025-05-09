@@ -7,7 +7,6 @@ use atrium_repo::{
     Cid,
     blockstore::{AsyncBlockStoreWrite, Error as BlockstoreError},
 };
-use rsky_repo::{block_map::BlockMap, types::CommitData};
 use sha2::Digest;
 use sqlx::SqlitePool;
 
@@ -59,12 +58,13 @@ impl SqlRepoTransactor {
     /// Apply a commit to the repository.
     pub(crate) async fn apply_commit(&self, commit: CommitData, is_create: bool) -> Result<()> {
         let is_create = is_create || false;
+        let removed_cids_list = commit.removed_cids.to_list();
 
         // Run these operations in parallel for better performance
         tokio::try_join!(
             self.update_root(commit.cid, &commit.rev, is_create),
             self.put_many(&commit.new_blocks, &commit.rev),
-            self.delete_many(&commit.removed_cids.to_list())
+            self.delete_many(&removed_cids_list)
         )?;
 
         Ok(())
@@ -111,8 +111,8 @@ impl SqlRepoTransactor {
     /// Put a block into the repository.
     pub(crate) async fn put_block(&self, cid: Cid, block: &[u8], rev: &str) -> Result<()> {
         let cid_str = cid.to_string();
-        let did = self.reader.did.clone();
 
+        let block_len = block.len() as i64;
         sqlx::query!(
             r#"
                 INSERT INTO repo_block (cid, repoRev, size, content)
@@ -121,7 +121,7 @@ impl SqlRepoTransactor {
                 "#,
             cid_str,
             rev,
-            block.len() as i64,
+            block_len,
             block
         )
         .execute(&self.reader.db)
@@ -132,7 +132,7 @@ impl SqlRepoTransactor {
 
     /// Put many blocks into the repository.
     pub(crate) async fn put_many(&self, blocks: &BlockMap, rev: &str) -> Result<()> {
-        if blocks.is_empty() {
+        if blocks.size() == 0 {
             return Ok(());
         }
 
@@ -140,11 +140,12 @@ impl SqlRepoTransactor {
         let mut batch = Vec::new();
 
         blocks.for_each(|cid, bytes| {
+            let cid_string = format!("{:?}", cid);
             batch.push((
-                cid.to_string(),
+                cid_string,
                 did.clone(),
                 rev.to_string(),
-                bytes.len() as i64,
+                bytes.encoded_len() as i64,
                 bytes.clone(),
             ));
         });
@@ -221,7 +222,6 @@ impl AsyncBlockStoreWrite for SqlRepoTransactor {
         contents: &[u8],
     ) -> impl Future<Output = Result<Cid, BlockstoreError>> + Send {
         let contents = contents.to_vec();
-        let did = self.reader.did.clone();
         let rev = self.now.clone();
 
         async move {
@@ -235,6 +235,7 @@ impl AsyncBlockStoreWrite for SqlRepoTransactor {
 
             let cid = Cid::new_v1(codec, multihash);
             let cid_str = cid.to_string();
+            let contents_len = contents.len() as i64;
 
             sqlx::query!(
                 r#"
@@ -244,14 +245,14 @@ impl AsyncBlockStoreWrite for SqlRepoTransactor {
                     "#,
                 cid_str,
                 rev,
-                contents.len() as i64,
+                contents_len,
                 contents
             )
             .execute(&self.reader.db)
             .await
             .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
 
-            self.cache.set(cid, contents);
+            self.cache.set(&cid, contents);
             Ok(cid)
         }
     }

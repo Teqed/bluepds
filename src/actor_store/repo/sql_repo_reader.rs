@@ -5,8 +5,6 @@ use atrium_repo::{
     Cid,
     blockstore::{AsyncBlockStoreRead, Error as BlockstoreError},
 };
-use rsky_repo::{block_map::BlockMap, cid_set::CidSet};
-use sha2::Digest;
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -41,13 +39,40 @@ impl SqlRepoReader {
     }
 
     // async getRoot(): Promise<CID> {
-    // async getBytes(cid: CID): Promise<Uint8Array | null> {
     // async has(cid: CID): Promise<boolean> {
     // async getCarStream(since?: string) {
     // async *iterateCarBlocks(since?: string): AsyncIterable<CarBlock> {
     // async getBlockRange(since?: string, cursor?: RevCursor) {
     // async countBlocks(): Promise<number> {
     // async destroy(): Promise<void> {
+
+    pub(crate) async fn get_bytes(&self, cid: &Cid) -> Result<Option<Vec<u8>>> {
+        // First check the cache
+        {
+            let cache_guard = self.cache.read().await;
+            if let Some(cached) = cache_guard.get(*cid) {
+                return Ok(Some(cached.clone()));
+            }
+        }
+
+        // Not in cache, query from database
+        let cid_str = cid.to_string();
+        let did = self.did.clone();
+
+        let content = sqlx::query!(r#"SELECT content FROM repo_block WHERE cid = ?"#, cid_str,)
+            .fetch_optional(&self.db)
+            .await
+            .context("failed to fetch block content")?
+            .map(|row| row.content);
+
+        // If found, update the cache
+        if let Some(bytes) = &content {
+            let mut cache_guard = self.cache.write().await;
+            cache_guard.set(*cid, bytes.clone());
+        }
+
+        Ok(content)
+    }
 
     /// Get the detailed root information.
     pub(crate) async fn get_root_detailed(&self) -> Result<RootInfo> {
