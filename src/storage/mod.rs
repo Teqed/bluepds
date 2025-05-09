@@ -1,6 +1,6 @@
 //! `ATProto` user repository datastore functionality.
 
-mod car;
+pub(crate) mod car;
 mod sqlite;
 
 use anyhow::{Context as _, Result};

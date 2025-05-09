@@ -2,8 +2,6 @@
 
 mod blob;
 mod db;
-mod preference;
-mod record;
 mod repo;
 
 use std::path::PathBuf;
