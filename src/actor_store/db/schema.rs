@@ -1,10 +1,5 @@
 //! Database schema definitions for the actor store.
 
-use anyhow::{Context as _, Result};
-use sqlx::SqlitePool;
-
-use super::ActorDb;
-
 /// Repository root information
 #[derive(Debug, Clone)]
 pub struct RepoRoot {
@@ -14,6 +9,8 @@ pub struct RepoRoot {
     pub indexed_at: String,
 }
 
+pub const REPO_ROOT_TABLE: &str = "repo_root";
+
 /// Repository block (IPLD block)
 #[derive(Debug, Clone)]
 pub struct RepoBlock {
@@ -22,6 +19,8 @@ pub struct RepoBlock {
     pub size: i64,
     pub content: Vec<u8>,
 }
+
+pub const REPO_BLOCK_TABLE: &str = "repo_block";
 
 /// Record information
 #[derive(Debug, Clone)]
@@ -34,6 +33,8 @@ pub struct Record {
     pub indexed_at: String,
     pub takedown_ref: Option<String>,
 }
+
+pub const RECORD_TABLE: &str = "record";
 
 /// Blob information
 #[derive(Debug, Clone)]
@@ -48,12 +49,16 @@ pub struct Blob {
     pub takedown_ref: Option<String>,
 }
 
+pub const BLOB_TABLE: &str = "blob";
+
 /// Record-blob association
 #[derive(Debug, Clone)]
 pub struct RecordBlob {
     pub blob_cid: String,
     pub record_uri: String,
 }
+
+pub const RECORD_BLOB_TABLE: &str = "record_blob";
 
 /// Backlink between records
 #[derive(Debug, Clone)]
@@ -63,7 +68,9 @@ pub struct Backlink {
     pub link_to: String,
 }
 
-/// User preference
+pub const BACKLINK_TABLE: &str = "backlink";
+
+/// Account preference
 #[derive(Debug, Clone)]
 pub struct AccountPref {
     pub id: i64,
@@ -71,35 +78,31 @@ pub struct AccountPref {
     pub value_json: String,
 }
 
-/// Database migrator
-pub struct Migrator {
-    db: ActorDb,
-}
+pub const ACCOUNT_PREF_TABLE: &str = "account_pref";
 
-impl Migrator {
-    /// Create a new migrator
-    pub fn new(db: ActorDb) -> Self {
-        Self { db }
-    }
+/// Database schema for the reference type system
+pub type DatabaseSchema = PartialRepoRoot &
+    PartialRepoBlock &
+    PartialRecord &
+    PartialBlob &
+    PartialRecordBlob &
+    PartialBacklink &
+    PartialAccountPref;
 
-    /// Run all migrations
-    pub async fn migrate_to_latest(&self) -> Result<()> {
-        // Create the tables
-        self.db.create_tables().await
-    }
+/// Type alias for RepoRoot partial database
+pub type PartialRepoRoot = { [REPO_ROOT_TABLE]: RepoRoot };
+/// Type alias for RepoBlock partial database
+pub type PartialRepoBlock = { [REPO_BLOCK_TABLE]: RepoBlock };
+/// Type alias for Record partial database
+pub type PartialRecord = { [RECORD_TABLE]: Record };
+/// Type alias for Blob partial database
+pub type PartialBlob = { [BLOB_TABLE]: Blob };
+/// Type alias for RecordBlob partial database
+pub type PartialRecordBlob = { [RECORD_BLOB_TABLE]: RecordBlob };
+/// Type alias for Backlink partial database
+pub type PartialBacklink = { [BACKLINK_TABLE]: Backlink };
+/// Type alias for AccountPref partial database
+pub type PartialAccountPref = { [ACCOUNT_PREF_TABLE]: AccountPref };
 
-    /// Run migrations and throw an error if any fail
-    pub async fn migrate_to_latest_or_throw(&self) -> Result<()> {
-        self.migrate_to_latest().await
-    }
-}
-
-/// Count all items in a query
-pub fn count_all() -> String {
-    "COUNT(*)".to_string()
-}
-
-/// Count distinct items in a query
-pub fn count_distinct(field: impl Into<String>) -> String {
-    format!("COUNT(DISTINCT {})", field.into())
-}
+/// Migrator placeholder - implementation in migrations module
+pub struct Migrator;

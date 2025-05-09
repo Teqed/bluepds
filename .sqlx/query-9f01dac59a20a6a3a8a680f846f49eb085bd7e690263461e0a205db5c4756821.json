@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT takedownRef FROM blob WHERE cid = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "takedownRef",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "9f01dac59a20a6a3a8a680f846f49eb085bd7e690263461e0a205db5c4756821"
+}

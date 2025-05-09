@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO blob\n            (cid, mimeType, size, tempKey, width, height, createdAt)\n            VALUES (?, ?, ?, ?, ?, ?, ?)\n            ON CONFLICT(cid) DO UPDATE SET\n            tempKey = CASE\n                WHEN blob.tempKey IS NULL THEN EXCLUDED.tempKey\n                ELSE blob.tempKey\n            END\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 7
+    },
+    "nullable": []
+  },
+  "hash": "5aed2a8fc372cc0c7b5eaee23ab2a4b63c3b3d21027759f81a925e87af9077c9"
+}

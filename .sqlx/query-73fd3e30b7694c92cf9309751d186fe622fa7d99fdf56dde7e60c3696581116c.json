@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT COUNT(*) FROM repo_root WHERE did = ?",
+  "query": "SELECT COUNT(*) FROM blocks WHERE cid = ?",
   "describe": {
     "columns": [
       {
@@ -16,5 +16,5 @@
       false
     ]
   },
-  "hash": "1d91d3f785f8f3e86baa2af1e643364b242bb6e8dbc0d50b86602022c0000ed4"
+  "hash": "73fd3e30b7694c92cf9309751d186fe622fa7d99fdf56dde7e60c3696581116c"
 }

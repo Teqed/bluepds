@@ -13,7 +13,6 @@ use std::str::FromStr as _;
 use crate::{Db, config::RepoConfig};
 
 // Re-export public items
-pub(crate) use car::open_car_store;
 pub(crate) use sqlite::{SQLiteStore, open_sqlite_store};
 
 /// Open a repository for a given DID.
