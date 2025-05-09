@@ -18,105 +18,80 @@ pub(crate) struct SQLiteStore {
 
 impl AsyncBlockStoreRead for SQLiteStore {
     async fn read_block(&mut self, cid: Cid) -> Result<Vec<u8>, BlockstoreError> {
-        tracing::info!("Reading block with CID: {}", cid);
         let mut contents = Vec::new();
         self.read_block_into(cid, &mut contents).await?;
         Ok(contents)
     }
-    fn read_block_into(
+    async fn read_block_into(
         &mut self,
         cid: Cid,
         contents: &mut Vec<u8>,
-    ) -> impl Future<Output = Result<(), BlockstoreError>> + Send {
-        tracing::info!("Reading block into buffer with CID: {}", cid);
+    ) -> Result<(), BlockstoreError> {
         let cid_str = cid.to_string();
-        let pool = self.pool.clone();
+        let record = sqlx::query!(r#"SELECT data FROM blocks WHERE cid = ?"#, cid_str)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| BlockstoreError::Other(Box::new(e)))?
+            .ok_or(BlockstoreError::CidNotFound)?;
 
-        tracing::info!("Async moving block read");
-        async move {
-            tracing::info!("Async move block read");
-            // let record = sqlx::query!(r#"SELECT data FROM blocks WHERE cid = ?"#, cid_str)
-            //     .fetch_optional(&pool)
-            //     .await
-            //     .map_err(|e| BlockstoreError::Other(Box::new(e)))?
-            //     .ok_or(BlockstoreError::CidNotFound)?;
-            let record = sqlx::query!(r#"SELECT data FROM blocks WHERE cid = ?"#, cid_str)
-                .fetch_optional(&pool)
-                .await;
-            tracing::info!("Record fetched: {:?}", record);
-            let record = match record {
-                Ok(Some(record)) => record,
-                Ok(None) => return Err(BlockstoreError::CidNotFound),
-                Err(e) => return Err(BlockstoreError::Other(Box::new(e))),
-            };
-            tracing::info!("Block read successful");
-
-            contents.clear();
-            tracing::info!("Contents cleared");
-            contents.extend_from_slice(&record.data);
-            tracing::info!("Contents extended");
-            Ok(())
-        }
+        contents.clear();
+        contents.extend_from_slice(&record.data);
+        Ok(())
     }
 }
 
 impl AsyncBlockStoreWrite for SQLiteStore {
-    fn write_block(
+    async fn write_block(
         &mut self,
         codec: u64,
         hash: u64,
         contents: &[u8],
-    ) -> impl Future<Output = Result<Cid, BlockstoreError>> + Send {
-        let contents = contents.to_vec(); // Clone the data
-        let pool = self.pool.clone();
+    ) -> Result<Cid, BlockstoreError> {
+        let digest = match hash {
+            atrium_repo::blockstore::SHA2_256 => sha2::Sha256::digest(&contents),
+            _ => return Err(BlockstoreError::UnsupportedHash(hash)),
+        };
 
-        async move {
-            let digest = match hash {
-                atrium_repo::blockstore::SHA2_256 => sha2::Sha256::digest(&contents),
-                _ => return Err(BlockstoreError::UnsupportedHash(hash)),
-            };
+        let multihash = Multihash::wrap(hash, digest.as_slice())
+            .map_err(|_| BlockstoreError::UnsupportedHash(hash))?;
 
-            let multihash = Multihash::wrap(hash, digest.as_slice())
-                .map_err(|_| BlockstoreError::UnsupportedHash(hash))?;
+        let cid = Cid::new_v1(codec, multihash);
+        let cid_str = cid.to_string();
 
-            let cid = Cid::new_v1(codec, multihash);
-            let cid_str = cid.to_string();
+        // Use a transaction for atomicity
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
 
-            // Use a transaction for atomicity
-            let mut tx = pool
-                .begin()
-                .await
-                .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
+        // Check if block already exists
+        let exists = sqlx::query_scalar!(r#"SELECT COUNT(*) FROM blocks WHERE cid = ?"#, cid_str)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
 
-            // Check if block already exists
-            let exists =
-                sqlx::query_scalar!(r#"SELECT COUNT(*) FROM blocks WHERE cid = ?"#, cid_str)
-                    .fetch_one(&mut *tx)
-                    .await
-                    .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
-
-            // Only insert if block doesn't exist
-            let codec = codec as i64;
-            let hash = hash as i64;
-            if exists == 0 {
-                _ = sqlx::query!(
-                    r#"INSERT INTO blocks (cid, data, multicodec, multihash) VALUES (?, ?, ?, ?)"#,
-                    cid_str,
-                    contents,
-                    codec,
-                    hash
-                )
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
-            }
-
-            tx.commit()
-                .await
-                .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
-
-            Ok(cid)
+        // Only insert if block doesn't exist
+        let codec = codec as i64;
+        let hash = hash as i64;
+        if exists == 0 {
+            _ = sqlx::query!(
+                r#"INSERT INTO blocks (cid, data, multicodec, multihash) VALUES (?, ?, ?, ?)"#,
+                cid_str,
+                contents,
+                codec,
+                hash
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
         }
+
+        tx.commit()
+            .await
+            .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
+
+        Ok(cid)
     }
 }
 
@@ -124,7 +99,7 @@ impl AsyncBlockStoreWrite for SQLiteStore {
 pub(crate) async fn open_sqlite_store(
     config: &RepoConfig,
     did: impl Into<String>,
-) -> Result<SQLiteStore> {
+) -> Result<impl AsyncBlockStoreRead + AsyncBlockStoreWrite> {
     tracing::info!("Opening SQLite store for DID");
     let did_str = did.into();
 

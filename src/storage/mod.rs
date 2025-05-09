@@ -6,13 +6,14 @@ mod sqlite;
 use anyhow::{Context as _, Result};
 use atrium_repo::{
     Cid, Repository,
-    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite},
+    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, Error as BlockstoreError},
 };
 use std::str::FromStr as _;
 
 use crate::{Db, config::RepoConfig};
 
 // Re-export public items
+pub(crate) use car::open_car_store;
 pub(crate) use sqlite::{SQLiteStore, open_sqlite_store};
 
 /// Open a repository for a given DID.
@@ -47,19 +48,22 @@ pub(crate) async fn open_repo(
     did: impl Into<String>,
     cid: Cid,
 ) -> Result<Repository<impl AsyncBlockStoreRead + AsyncBlockStoreWrite>> {
-    let did = did.into();
-
-    // if config.use_sqlite {
-    let store = open_sqlite_store(config, did.clone()).await?;
-    tracing::info!("Opening SQLite store for DID: {}, CID: {}", did, cid);
+    let store = open_car_store(config, did.into()).await?;
+    Repository::open(store, cid)
+        .await
+        .context("failed to open repo")
+}
+/// Open a repository for a given DID and CID.
+/// SQLite backend.
+pub(crate) async fn open_repo_sqlite(
+    config: &RepoConfig,
+    did: impl Into<String>,
+    cid: Cid,
+) -> Result<Repository<impl AsyncBlockStoreRead + AsyncBlockStoreWrite>> {
+    let store = open_sqlite_store(config, did.into()).await?;
     return Repository::open(store, cid)
         .await
         .context("failed to open repo");
-    // }
-    // let store = open_car_store(config, &did).await?;
-    // Repository::open(store, cid)
-    //     .await
-    //     .context("failed to open repo")
 }
 
 /// Open a block store for a given DID.
