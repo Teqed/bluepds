@@ -81,7 +81,43 @@ impl BlobReader {
 
     /// List blobs for a repository.
     pub async fn list_blobs(&self, opts: ListBlobsOptions) -> Result<Vec<String>> {
-        todo!("Implement blob listing");
+        let mut query = sqlx::QueryBuilder::new("SELECT cid FROM blob");
+
+        // Add filters for since revision
+        if let Some(since) = &opts.since {
+            query
+                .push(" WHERE EXISTS (")
+                .push("SELECT 1 FROM record_blob rb JOIN record r ON rb.recordUri = r.uri")
+                .push(" WHERE rb.blobCid = blob.cid AND r.repoRev > ")
+                .push_bind(since)
+                .push(")");
+        }
+
+        // Add cursor pagination
+        if let Some(cursor) = &opts.cursor {
+            if opts.since.is_some() {
+                query.push(" AND");
+            } else {
+                query.push(" WHERE");
+            }
+            query.push(" cid > ").push_bind(cursor);
+        }
+
+        // Add order and limit
+        query
+            .push(" ORDER BY cid ASC")
+            .push(" LIMIT ")
+            .push_bind(opts.limit);
+
+        // Execute query
+        let blobs = query
+            .build()
+            .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(0))
+            .fetch_all(&self.db)
+            .await
+            .context("failed to list blobs")?;
+
+        Ok(blobs)
     }
 
     /// Get takedown status for a blob.
@@ -174,6 +210,27 @@ impl BlobReader {
             .context("failed to fetch missing blobs")?;
 
         Ok(missing)
+    }
+
+    /// Register a new blob in the database (without file storage)
+    pub async fn register_blob(&self, cid: String, mime_type: String, size: i64) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        sqlx::query!(
+            r#"
+            INSERT INTO blob (cid, mimeType, size, createdAt)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
+            "#,
+            cid,
+            mime_type,
+            size,
+            now
+        )
+        .execute(&self.db)
+        .await
+        .context("failed to register blob")?;
+
+        Ok(())
     }
 }
 

@@ -674,6 +674,7 @@ dependencies = [
  "futures",
  "hex",
  "http-cache-reqwest",
+ "ipld-core",
  "k256",
  "memmap2",
  "metrics",

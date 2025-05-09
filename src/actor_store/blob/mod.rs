@@ -2,6 +2,3 @@
 
 mod reader;
 mod transactor;
-
-pub use reader::BlobReader;
-pub use transactor::{BlobMetadata, BlobTransactor};
