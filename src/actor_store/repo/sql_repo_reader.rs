@@ -5,7 +5,7 @@ use atrium_repo::{
     Cid,
     blockstore::{AsyncBlockStoreRead, Error as BlockstoreError},
 };
-use rsky_repo::block_map::BlockMap;
+use rsky_repo::{block_map::BlockMap, cid_set::CidSet};
 use sha2::Digest;
 use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
@@ -65,7 +65,74 @@ impl SqlRepoReader {
 
     /// Get blocks from the database.
     pub(crate) async fn get_blocks(&self, cids: Vec<Cid>) -> Result<BlocksAndMissing> {
-        todo!("Implement get_blocks")
+        let mut cached = {
+            let cache_guard = self.cache.read().await;
+            cache_guard.get_many(&cids)
+        };
+
+        if cached.missing.is_empty() {
+            return Ok(cached);
+        }
+
+        let missing = cached.missing.clone();
+        let missing_strings: Vec<String> = missing.iter().map(|c| c.to_string()).collect();
+
+        let blocks = BlockMap::new();
+        let mut missing_set = CidSet::new();
+        for cid in &missing {
+            missing_set.add(*cid);
+        }
+
+        // Process in chunks to avoid too many parameters
+        for chunk in missing_strings.chunks(500) {
+            let placeholders = std::iter::repeat("?")
+                .take(chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let query = format!(
+                "SELECT cid, content FROM repo_block
+                 WHERE did = ? AND cid IN ({})
+                 ORDER BY cid",
+                placeholders
+            );
+
+            let mut query_builder = sqlx::query(&query);
+            query_builder = query_builder.bind(&self.did);
+            for cid in chunk {
+                query_builder = query_builder.bind(cid);
+            }
+
+            let rows = query_builder
+                .map(|row: sqlx::sqlite::SqliteRow| {
+                    (
+                        row.get::<String, _>("cid"),
+                        row.get::<Vec<u8>, _>("content"),
+                    )
+                })
+                .fetch_all(&self.db)
+                .await?;
+
+            for (cid_str, content) in rows {
+                let cid = Cid::from_str(&cid_str)?;
+                blocks.set(cid, content);
+                missing_set.delete(cid);
+            }
+        }
+
+        // Update cache
+        {
+            let mut cache_guard = self.cache.write().await;
+            cache_guard.add_map(&blocks)?;
+        }
+
+        // Add cached blocks
+        blocks.add_map(&cached.blocks)?;
+
+        Ok(BlocksAndMissing {
+            blocks,
+            missing: missing_set.to_list(),
+        })
     }
 }
 
@@ -79,7 +146,11 @@ pub(crate) struct BlocksAndMissing {
 
 impl AsyncBlockStoreRead for SqlRepoReader {
     async fn read_block(&mut self, cid: Cid) -> Result<Vec<u8>, BlockstoreError> {
-        todo!("Implement read_block")
+        let bytes = self
+            .get_bytes(&cid)
+            .await?
+            .ok_or(BlockstoreError::CidNotFound)?;
+        Ok(bytes)
     }
 
     fn read_block_into(
@@ -87,7 +158,14 @@ impl AsyncBlockStoreRead for SqlRepoReader {
         cid: Cid,
         contents: &mut Vec<u8>,
     ) -> impl Future<Output = Result<(), BlockstoreError>> + Send {
-        todo!("Implement read_block_into");
-        async move { Ok(()) }
+        async move {
+            let bytes = self
+                .get_bytes(&cid)
+                .await?
+                .ok_or(BlockstoreError::CidNotFound)?;
+            contents.clear();
+            contents.extend_from_slice(&bytes);
+            Ok(())
+        }
     }
 }
