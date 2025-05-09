@@ -6,7 +6,7 @@ mod sqlite;
 use anyhow::{Context as _, Result};
 use atrium_repo::{
     Cid, Repository,
-    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite, CarStore, Error as BlockstoreError},
+    blockstore::{AsyncBlockStoreRead, AsyncBlockStoreWrite},
 };
 use std::str::FromStr as _;
 

@@ -5,21 +5,21 @@ use sqlx::SqlitePool;
 use super::reader::{AccountPreference, PreferenceReader, pref_in_scope, pref_match_namespace};
 
 /// Transactor for preference operations.
-pub struct PreferenceTransactor {
+pub(super) struct PreferenceTransactor {
     /// Preference reader.
     pub reader: PreferenceReader,
 }
 
 impl PreferenceTransactor {
     /// Create a new preference transactor.
-    pub fn new(db: SqlitePool, did: String) -> Self {
+    pub(super) fn new(db: SqlitePool, did: String) -> Self {
         Self {
             reader: PreferenceReader::new(db, did),
         }
     }
 
     /// Put preferences for a namespace.
-    pub async fn put_preferences(
+    pub(super) async fn put_preferences(
         &self,
         values: Vec<AccountPreference>,
         namespace: &str,
