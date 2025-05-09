@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use atrium_crypto::keypair::{Did as _, Export as _, Secp256k1Keypair};
+use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
 use sqlx::SqlitePool;
 
 use crate::config::RepoConfig;
@@ -222,7 +222,7 @@ impl ActorStore {
             .context("failed to create SQLite database")?;
 
         // Create database schema
-        self::db::create_tables(&db).await?;
+        db::create_tables(&db).await?;
 
         Ok(())
     }

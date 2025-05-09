@@ -236,4 +236,3 @@ pub(crate) mod util {
 }
 
 // Re-export commonly used types
-pub(crate) use schema::{AccountPref, Backlink, Blob, Record, RecordBlob, RepoBlock, RepoRoot};

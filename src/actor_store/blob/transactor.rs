@@ -14,7 +14,7 @@ use crate::config::BlobConfig;
 
 /// Blob metadata for a newly uploaded blob.
 #[derive(Debug, Clone)]
-pub struct BlobMetadata {
+pub(super) struct BlobMetadata {
     /// Temporary key for the blob during upload.
     pub temp_key: String,
     /// Size of the blob in bytes.
@@ -30,7 +30,7 @@ pub struct BlobMetadata {
 }
 
 /// Transactor for blob operations.
-pub struct BlobTransactor {
+pub(super) struct BlobTransactor {
     /// The blob reader.
     pub reader: BlobReader,
     /// The blob storage directory.
@@ -41,7 +41,7 @@ pub struct BlobTransactor {
 
 impl BlobTransactor {
     /// Create a new blob transactor.
-    pub fn new(db: SqlitePool, config: BlobConfig, did: String) -> Self {
+    pub(super) fn new(db: SqlitePool, config: BlobConfig, did: String) -> Self {
         Self {
             reader: BlobReader::new(db, config.clone(), did),
             blobs_dir: config.path.clone(),
@@ -50,7 +50,7 @@ impl BlobTransactor {
     }
 
     /// Register blob associations with records.
-    pub async fn insert_blobs(&self, record_uri: &str, blobs: &[Blob]) -> Result<()> {
+    pub(super) async fn insert_blobs(&self, record_uri: &str, blobs: &[Blob]) -> Result<()> {
         if blobs.is_empty() {
             return Ok(());
         }
@@ -84,7 +84,7 @@ impl BlobTransactor {
     }
 
     /// Upload a blob and get its metadata.
-    pub async fn upload_blob_and_get_metadata(
+    pub(super) async fn upload_blob_and_get_metadata(
         &self,
         mime_type: &str,
         data: &[u8],
@@ -126,7 +126,7 @@ impl BlobTransactor {
     }
 
     /// Track a new blob that's not yet associated with a record.
-    pub async fn track_untethered_blob(&self, metadata: &BlobMetadata) -> Result<Blob> {
+    pub(super) async fn track_untethered_blob(&self, metadata: &BlobMetadata) -> Result<Blob> {
         let cid_str = metadata.cid.to_string();
 
         // Check if blob exists and is taken down
@@ -178,7 +178,7 @@ impl BlobTransactor {
     }
 
     /// Process blobs for a repository write operation.
-    pub async fn process_write_blobs(
+    pub(super) async fn process_write_blobs(
         &self,
         _rev: &str,
         blobs: &[Blob],
@@ -197,7 +197,7 @@ impl BlobTransactor {
     }
 
     /// Delete blobs that are no longer referenced by any record.
-    pub async fn delete_dereferenced_blobs(&self, updated_uris: &[String]) -> Result<()> {
+    pub(super) async fn delete_dereferenced_blobs(&self, updated_uris: &[String]) -> Result<()> {
         if updated_uris.is_empty() {
             return Ok(());
         }
@@ -279,7 +279,7 @@ impl BlobTransactor {
     }
 
     /// Verify a blob's integrity and move it from temporary to permanent storage.
-    pub async fn verify_blob_and_make_permanent(&self, blob: &Blob) -> Result<()> {
+    pub(super) async fn verify_blob_and_make_permanent(&self, blob: &Blob) -> Result<()> {
         let cid_str = blob.r#ref.0.to_string();
 
         // Get blob from database
@@ -350,12 +350,12 @@ impl BlobTransactor {
     }
 
     /// Register a blob in the database
-    pub async fn register_blob(&self, cid: String, mime_type: String, size: u64) -> Result<()> {
+    pub(super) async fn register_blob(&self, cid: String, mime_type: String, size: u64) -> Result<()> {
         self.reader.register_blob(cid, mime_type, size as i64).await
     }
 
     /// Associate a blob with a record
-    pub async fn associate_blob(&self, cid: &str, record_uri: &str) -> Result<()> {
+    pub(super) async fn associate_blob(&self, cid: &str, record_uri: &str) -> Result<()> {
         sqlx::query!(
             r#"
             INSERT INTO record_blob (blobCid, recordUri)

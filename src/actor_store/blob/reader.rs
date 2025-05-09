@@ -7,7 +7,7 @@ use sqlx::{Row, SqlitePool};
 use crate::config::BlobConfig;
 
 /// Reader for blob data in the actor store.
-pub struct BlobReader {
+pub(super) struct BlobReader {
     /// Database connection.
     pub db: SqlitePool,
     /// Configuration for blob storage.
@@ -18,12 +18,12 @@ pub struct BlobReader {
 
 impl BlobReader {
     /// Create a new blob reader.
-    pub fn new(db: SqlitePool, config: BlobConfig, did: String) -> Self {
+    pub(super) fn new(db: SqlitePool, config: BlobConfig, did: String) -> Self {
         Self { db, config, did }
     }
 
     /// Get metadata for a blob.
-    pub async fn get_blob_metadata(&self, cid: &Cid) -> Result<Option<BlobMetadata>> {
+    pub(super) async fn get_blob_metadata(&self, cid: &Cid) -> Result<Option<BlobMetadata>> {
         let cid_str = cid.to_string();
         let result = sqlx::query!(
             r#"SELECT size, mimeType, takedownRef FROM blob WHERE cid = ?"#,
@@ -45,7 +45,7 @@ impl BlobReader {
     }
 
     /// Get a blob's full data and metadata.
-    pub async fn get_blob(&self, cid: &Cid) -> Result<Option<BlobData>> {
+    pub(super) async fn get_blob(&self, cid: &Cid) -> Result<Option<BlobData>> {
         // First check the metadata
         let metadata = match self.get_blob_metadata(cid).await? {
             Some(meta) => meta,
@@ -80,7 +80,7 @@ impl BlobReader {
     }
 
     /// List blobs for a repository.
-    pub async fn list_blobs(&self, opts: ListBlobsOptions) -> Result<Vec<String>> {
+    pub(super) async fn list_blobs(&self, opts: ListBlobsOptions) -> Result<Vec<String>> {
         let mut query = sqlx::QueryBuilder::new("SELECT cid FROM blob");
 
         // Add filters for since revision
@@ -121,7 +121,7 @@ impl BlobReader {
     }
 
     /// Get takedown status for a blob.
-    pub async fn get_blob_takedown_status(&self, cid: &Cid) -> Result<Option<String>> {
+    pub(super) async fn get_blob_takedown_status(&self, cid: &Cid) -> Result<Option<String>> {
         let cid_str = cid.to_string();
         let result = sqlx::query!(r#"SELECT takedownRef FROM blob WHERE cid = ?"#, cid_str)
             .fetch_optional(&self.db)
@@ -132,7 +132,7 @@ impl BlobReader {
     }
 
     /// Get records that reference a blob.
-    pub async fn get_records_for_blob(&self, cid: &Cid) -> Result<Vec<String>> {
+    pub(super) async fn get_records_for_blob(&self, cid: &Cid) -> Result<Vec<String>> {
         let cid_str = cid.to_string();
         let records = sqlx::query!(
             r#"SELECT recordUri FROM record_blob WHERE blobCid = ?"#,
@@ -146,7 +146,7 @@ impl BlobReader {
     }
 
     /// Get blobs referenced by a record.
-    pub async fn get_blobs_for_record(&self, record_uri: &str) -> Result<Vec<String>> {
+    pub(super) async fn get_blobs_for_record(&self, record_uri: &str) -> Result<Vec<String>> {
         let blobs = sqlx::query!(
             r#"SELECT blobCid FROM record_blob WHERE recordUri = ?"#,
             record_uri
@@ -159,7 +159,7 @@ impl BlobReader {
     }
 
     /// Count total blobs.
-    pub async fn blob_count(&self) -> Result<i64> {
+    pub(super) async fn blob_count(&self) -> Result<i64> {
         let result = sqlx::query!(r#"SELECT COUNT(*) as count FROM blob"#)
             .fetch_one(&self.db)
             .await
@@ -169,7 +169,7 @@ impl BlobReader {
     }
 
     /// Count distinct blobs referenced by records.
-    pub async fn record_blob_count(&self) -> Result<i64> {
+    pub(super) async fn record_blob_count(&self) -> Result<i64> {
         let result = sqlx::query!(r#"SELECT COUNT(DISTINCT blobCid) as count FROM record_blob"#)
             .fetch_one(&self.db)
             .await
@@ -179,7 +179,7 @@ impl BlobReader {
     }
 
     /// List blobs that are referenced but missing from storage.
-    pub async fn list_missing_blobs(
+    pub(super) async fn list_missing_blobs(
         &self,
         opts: ListMissingBlobsOptions,
     ) -> Result<Vec<MissingBlob>> {
@@ -213,7 +213,7 @@ impl BlobReader {
     }
 
     /// Register a new blob in the database (without file storage)
-    pub async fn register_blob(&self, cid: String, mime_type: String, size: i64) -> Result<()> {
+    pub(super) async fn register_blob(&self, cid: String, mime_type: String, size: i64) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query!(
             r#"
@@ -236,7 +236,7 @@ impl BlobReader {
 
 /// Metadata about a blob.
 #[derive(Debug, Clone)]
-pub struct BlobMetadata {
+pub(super) struct BlobMetadata {
     /// The CID of the blob.
     pub cid: Cid,
     /// The size of the blob in bytes.
@@ -249,7 +249,7 @@ pub struct BlobMetadata {
 
 /// Complete blob data with content.
 #[derive(Debug)]
-pub struct BlobData {
+pub(super) struct BlobData {
     /// Metadata about the blob.
     pub metadata: BlobMetadata,
     /// The actual content of the blob, if available.
@@ -258,7 +258,7 @@ pub struct BlobData {
 
 /// Options for listing blobs.
 #[derive(Debug, Clone)]
-pub struct ListBlobsOptions {
+pub(super) struct ListBlobsOptions {
     /// Optional revision to list blobs since.
     pub since: Option<String>,
     /// Optional cursor for pagination.
@@ -269,7 +269,7 @@ pub struct ListBlobsOptions {
 
 /// Options for listing missing blobs.
 #[derive(Debug, Clone)]
-pub struct ListMissingBlobsOptions {
+pub(super) struct ListMissingBlobsOptions {
     /// Optional cursor for pagination.
     pub cursor: Option<String>,
     /// Maximum number of missing blobs to return.
@@ -278,7 +278,7 @@ pub struct ListMissingBlobsOptions {
 
 /// Information about a missing blob.
 #[derive(Debug, Clone)]
-pub struct MissingBlob {
+pub(super) struct MissingBlob {
     /// CID of the missing blob.
     pub cid: String,
     /// URI of the record referencing the missing blob.

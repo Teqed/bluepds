@@ -1,5 +1,5 @@
 //! Database migrations for the actor store.
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 
 use crate::actor_store::db::ActorDb;
 
