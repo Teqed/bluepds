@@ -10,6 +10,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::actor_store::block_map::{BlockMap, BlocksAndMissing, CidSet};
+
 /// SQL-based repository reader.
 pub(crate) struct SqlRepoReader {
     /// Cache for blocks to avoid redundant database queries.
@@ -90,10 +92,7 @@ impl SqlRepoReader {
 
     /// Get blocks from the database.
     pub(crate) async fn get_blocks(&self, cids: Vec<Cid>) -> Result<BlocksAndMissing> {
-        let mut cached = {
-            let cache_guard = self.cache.read().await;
-            cache_guard.get_many(&cids)
-        };
+        let cached = { self.cache.write().await.get_many(cids)? }; // TODO: use read lock?
 
         if cached.missing.is_empty() {
             return Ok(cached);
@@ -102,8 +101,8 @@ impl SqlRepoReader {
         let missing = cached.missing.clone();
         let missing_strings: Vec<String> = missing.iter().map(|c| c.to_string()).collect();
 
-        let blocks = BlockMap::new();
-        let mut missing_set = CidSet::new();
+        let mut blocks = BlockMap::new();
+        let mut missing_set = CidSet::new(None);
         for cid in &missing {
             missing_set.add(*cid);
         }
@@ -117,8 +116,8 @@ impl SqlRepoReader {
 
             let query = format!(
                 "SELECT cid, content FROM repo_block
-                 WHERE did = ? AND cid IN ({})
-                 ORDER BY cid",
+                     WHERE did = ? AND cid IN ({})
+                     ORDER BY cid",
                 placeholders
             );
 
@@ -146,13 +145,10 @@ impl SqlRepoReader {
         }
 
         // Update cache
-        {
-            let mut cache_guard = self.cache.write().await;
-            cache_guard.add_map(&blocks)?;
-        }
+        self.cache.write().await.add_map(blocks.clone())?; // TODO: unnecessary clone?
 
         // Add cached blocks
-        blocks.add_map(&cached.blocks)?;
+        blocks.add_map(cached.blocks)?;
 
         Ok(BlocksAndMissing {
             blocks,
@@ -161,19 +157,12 @@ impl SqlRepoReader {
     }
 }
 
-/// Result of a get_blocks operation.
-pub(crate) struct BlocksAndMissing {
-    /// Blocks that were found.
-    pub blocks: BlockMap,
-    /// CIDs that were not found.
-    pub missing: Vec<Cid>,
-}
-
 impl AsyncBlockStoreRead for SqlRepoReader {
     async fn read_block(&mut self, cid: Cid) -> Result<Vec<u8>, BlockstoreError> {
         let bytes = self
             .get_bytes(&cid)
-            .await?
+            .await
+            .unwrap()
             .ok_or(BlockstoreError::CidNotFound)?;
         Ok(bytes)
     }
@@ -186,7 +175,8 @@ impl AsyncBlockStoreRead for SqlRepoReader {
         async move {
             let bytes = self
                 .get_bytes(&cid)
-                .await?
+                .await
+                .unwrap()
                 .ok_or(BlockstoreError::CidNotFound)?;
             contents.clear();
             contents.extend_from_slice(&bytes);

@@ -5,11 +5,88 @@
 
 use anyhow::Result;
 use atrium_repo::Cid;
-use ipld_core::codec::Codec;
 use serde::{Deserialize, Serialize};
-use serde_ipld_dagcbor::codec::DagCborCodec;
-use std::collections::BTreeMap;
+use sha2::Digest;
+use std::collections::{BTreeMap, HashSet};
 use std::str::FromStr;
+
+/// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-repo/src/types.rs#L341C1-L350C2
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct CommitData {
+    pub cid: Cid,
+    pub rev: String,
+    pub since: Option<String>,
+    pub prev: Option<Cid>,
+    pub new_blocks: BlockMap,
+    pub relevant_blocks: BlockMap,
+    pub removed_cids: CidSet,
+}
+
+/// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-repo/src/cid_set.rs
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct CidSet {
+    pub set: HashSet<String>,
+}
+impl CidSet {
+    pub fn new(arr: Option<Vec<Cid>>) -> Self {
+        let str_arr: Vec<String> = arr
+            .unwrap_or(Vec::new())
+            .into_iter()
+            .map(|cid| cid.to_string())
+            .collect::<Vec<String>>();
+        CidSet {
+            set: HashSet::from_iter(str_arr),
+        }
+    }
+
+    pub fn add(&mut self, cid: Cid) -> () {
+        let _ = &self.set.insert(cid.to_string());
+        ()
+    }
+
+    pub fn add_set(&mut self, to_merge: CidSet) -> () {
+        for cid in to_merge.to_list() {
+            let _ = &self.add(cid);
+        }
+        ()
+    }
+
+    pub fn subtract_set(&mut self, to_subtract: CidSet) -> () {
+        for cid in to_subtract.to_list() {
+            self.delete(cid);
+        }
+        ()
+    }
+
+    pub fn delete(&mut self, cid: Cid) -> () {
+        self.set.remove(&cid.to_string());
+        ()
+    }
+
+    pub fn has(&self, cid: Cid) -> bool {
+        self.set.contains(&cid.to_string())
+    }
+
+    pub fn size(&self) -> usize {
+        self.set.len()
+    }
+
+    pub fn clear(mut self) -> () {
+        self.set.clear();
+        ()
+    }
+
+    pub fn to_list(&self) -> Vec<Cid> {
+        self.set
+            .clone()
+            .into_iter()
+            .filter_map(|cid| match Cid::from_str(&cid) {
+                Ok(r) => Some(r),
+                Err(_) => None,
+            })
+            .collect::<Vec<Cid>>()
+    }
+}
 
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-common/src/lib.rs#L57
 pub fn struct_to_cbor<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
@@ -17,28 +94,30 @@ pub fn struct_to_cbor<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
 }
 
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/37954845d06aaafea2b914d9096a1657abfc8d75/rsky-common/src/ipld.rs
+/// Create a CID for CBOR-encoded data
 pub fn cid_for_cbor<T: Serialize>(data: &T) -> Result<Cid> {
-    // let bytes = struct_to_cbor(data)?;
-    // let cid = Cid::new_v1(
-    //     u64::from(DagCborCodec),
-    //     Code::Sha2_256.digest(bytes.as_slice()),
-    // );
-    // Ok(cid)
-    todo!()
+    let bytes = struct_to_cbor(data)?;
+    let multihash = atrium_repo::Multihash::wrap(
+        atrium_repo::blockstore::SHA2_256,
+        &sha2::Sha256::digest(&bytes),
+    )
+    .expect("valid multihash");
+
+    // Use the constant for DAG_CBOR (0x71) directly instead of converting from DagCborCodec
+    Ok(Cid::new_v1(0x71, multihash))
 }
 
-// pub fn sha256_to_cid<T: Codec>(hash: Vec<u8>, codec: T) -> Cid
-// where
-//     u64: From<T>,
-// {
-//     let cid = Cid::new_v1(u64::from(codec), Code::Sha2_256.digest(hash.as_slice()));
-//     cid
-// }
-// todo!()
+/// Create a CID from a SHA-256 hash with the specified codec
+pub fn sha256_to_cid(hash: Vec<u8>, codec: u64) -> Cid {
+    let multihash = atrium_repo::Multihash::wrap(atrium_repo::blockstore::SHA2_256, &hash)
+        .expect("valid multihash");
 
+    Cid::new_v1(codec, multihash)
+}
+
+/// Create a CID from a raw SHA-256 hash (using raw codec 0x55)
 pub fn sha256_raw_to_cid(hash: Vec<u8>) -> Cid {
-    // sha256_to_cid(hash, RawCodec)
-    todo!()
+    sha256_to_cid(hash, 0x55) // 0x55 is the codec for raw
 }
 
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-repo/src/types.rs#L436

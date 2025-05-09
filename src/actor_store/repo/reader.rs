@@ -2,11 +2,10 @@
 
 use anyhow::Result;
 use atrium_repo::Cid;
-use rsky_repo::block_map::BlockMap;
 use sqlx::SqlitePool;
 
 use super::sql_repo_reader::SqlRepoReader;
-use crate::config::BlobConfig;
+use crate::{actor_store::block_map::BlockMap, config::BlobConfig};
 
 /// Reader for repository data in the actor store.
 pub(crate) struct RepoReader {

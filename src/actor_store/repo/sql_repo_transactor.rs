@@ -10,6 +10,8 @@ use atrium_repo::{
 use sha2::Digest;
 use sqlx::SqlitePool;
 
+use crate::actor_store::block_map::{BlockMap, CommitData};
+
 use super::sql_repo_reader::SqlRepoReader;
 
 /// SQL-based repository transactor that extends the reader.
@@ -139,15 +141,8 @@ impl SqlRepoTransactor {
         let did = self.reader.did.clone();
         let mut batch = Vec::new();
 
-        blocks.for_each(|cid, bytes| {
-            let cid_string = format!("{:?}", cid);
-            batch.push((
-                cid_string,
-                did.clone(),
-                rev.to_string(),
-                bytes.encoded_len() as i64,
-                bytes.clone(),
-            ));
+        blocks.to_owned().map.into_iter().for_each(|(cid, bytes)| {
+            batch.push((cid, did.clone(), rev, bytes.0.len() as i64, bytes.0));
         });
 
         // Process in chunks to avoid too many parameters
@@ -252,7 +247,7 @@ impl AsyncBlockStoreWrite for SqlRepoTransactor {
             .await
             .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
 
-            self.cache.set(&cid, contents);
+            self.cache.set(cid, contents);
             Ok(cid)
         }
     }
