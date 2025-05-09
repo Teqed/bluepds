@@ -10,7 +10,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::actor_store::block_map::{BlockMap, BlocksAndMissing, CidSet};
+use crate::repo::block_map::{BlockMap, BlocksAndMissing, CidSet};
 
 /// SQL-based repository reader.
 pub(crate) struct SqlRepoReader {

@@ -10,7 +10,7 @@ use atrium_repo::{
 use sha2::Digest;
 use sqlx::SqlitePool;
 
-use crate::actor_store::block_map::{BlockMap, CommitData};
+use crate::repo::block_map::{BlockMap, CommitData};
 
 use super::sql_repo_reader::SqlRepoReader;
 

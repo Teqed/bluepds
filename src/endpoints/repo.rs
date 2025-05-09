@@ -1,7 +1,8 @@
 //! PDS repository endpoints /xrpc/com.atproto.repo.*)
-use std::{collections::HashSet, str::FromStr as _};
+use std::{collections::HashSet, str::FromStr};
 
 use anyhow::{Context as _, anyhow};
+use atrium_api::com::atproto::repo::apply_writes::{self, InputWritesItem, OutputResultsItem};
 use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
     types::{
@@ -20,32 +21,21 @@ use axum::{
 use constcat::concat;
 use futures::TryStreamExt as _;
 use metrics::counter;
+use rsky_syntax::aturi::AtUri;
 use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
 use tokio::io::AsyncWriteExt as _;
 
 use crate::{
     AppState, Db, Error, Result, SigningKey,
+    actor_store::{ActorStore, ActorStoreReader, ActorStoreTransactor, ActorStoreWriter},
     auth::AuthenticatedUser,
     config::AppConfig,
     error::ErrorMessage,
     firehose::{self, FirehoseProducer, RepoOp},
     metrics::{REPO_COMMITS, REPO_OP_CREATE, REPO_OP_DELETE, REPO_OP_UPDATE},
+    repo::types::{PreparedWrite, WriteOpAction},
     storage,
 };
-
-/// IPLD CID raw binary
-const IPLD_RAW: u64 = 0x55;
-/// SHA2-256 mulithash
-const IPLD_MH_SHA2_256: u64 = 0x12;
-
-/// Used in [`scan_blobs`] to identify a blob.
-#[derive(Deserialize, Debug, Clone)]
-struct BlobRef {
-    /// `BlobRef` link. Include `$` when serializing to JSON, since `$` isn't allowed in struct names.
-    #[serde(rename = "$link")]
-    link: String,
-}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -72,48 +62,7 @@ pub(super) struct ListRecordsParameters {
     pub rkey_start: Option<String>,
 }
 
-async fn swap_commit(
-    db: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
-    cid: Cid,
-    rev: Tid,
-    old_cid: Option<Cid>,
-    did_str: &str,
-) -> anyhow::Result<bool> {
-    let cid_str = cid.to_string();
-    let rev_str = rev.to_string();
-
-    if let Some(swap) = old_cid {
-        let swap_str = swap.to_string();
-
-        let result = sqlx::query!(
-            r#"UPDATE accounts SET root = ?, rev = ? WHERE did = ? AND root = ?"#,
-            cid_str,
-            rev_str,
-            did_str,
-            swap_str,
-        )
-        .execute(db)
-        .await
-        .context("failed to update root")?;
-
-        // If the swap failed, indicate as such.
-        Ok(result.rows_affected() != 0)
-    } else {
-        _ = sqlx::query!(
-            r#"UPDATE accounts SET root = ?, rev = ? WHERE did = ?"#,
-            cid_str,
-            rev_str,
-            did_str,
-        )
-        .execute(db)
-        .await
-        .context("failed to update root")?;
-
-        Ok(true)
-    }
-}
-
-/// Resolves DID to DID document. Does not bi-directionally verify handle.
+/// Resolve DID to DID document. Does not bi-directionally verify handle.
 /// - GET /xrpc/com.atproto.repo.resolveDid
 /// ### Query Parameters
 /// - `did`: DID to resolve.
@@ -162,65 +111,6 @@ async fn resolve_did(
     Ok((did.to_owned(), handle.to_owned()))
 }
 
-/// Used in [`apply_writes`] to scan for blobs in the JSON object and return their CIDs.
-fn scan_blobs(unknown: &Unknown) -> anyhow::Result<Vec<Cid>> {
-    // { "$type": "blob", "ref": { "$link": "bafyrei..." } }
-
-    let mut cids = Vec::new();
-    let mut stack = vec![
-        serde_json::Value::try_from_unknown(unknown.clone())
-            .context("failed to convert unknown into json")?,
-    ];
-    while let Some(value) = stack.pop() {
-        match value {
-            serde_json::Value::Bool(_)
-            | serde_json::Value::Null
-            | serde_json::Value::Number(_)
-            | serde_json::Value::String(_) => (),
-            serde_json::Value::Array(values) => stack.extend(values.into_iter()),
-            serde_json::Value::Object(map) => {
-                if let (Some(blob_type), Some(blob_ref)) = (map.get("$type"), map.get("ref")) {
-                    if blob_type == &serde_json::Value::String("blob".to_owned()) {
-                        if let Ok(rf) = serde_json::from_value::<BlobRef>(blob_ref.clone()) {
-                            cids.push(Cid::from_str(&rf.link).context("failed to convert cid")?);
-                        }
-                    }
-                }
-
-                stack.extend(map.values().cloned());
-            }
-        }
-    }
-
-    Ok(cids)
-}
-
-#[test]
-fn test_scan_blobs() {
-    use std::str::FromStr as _;
-
-    let json = serde_json::json!({
-        "test": "a",
-        "blob": {
-            "$type": "blob",
-            "ref": {
-                "$link": "bafkreifzxf2wa6dyakzbdaxkz2wkvfrv3hiuafhxewbn5wahcw6eh3hzji"
-            }
-        }
-    });
-
-    let blob = scan_blobs(&json.try_into_unknown().expect("should be valid JSON"))
-        .expect("should be able to scan blobs");
-    assert_eq!(
-        blob,
-        vec![
-            Cid::from_str("bafkreifzxf2wa6dyakzbdaxkz2wkvfrv3hiuafhxewbn5wahcw6eh3hzji")
-                .expect("should be valid CID")
-        ]
-    );
-}
-
-#[expect(clippy::too_many_lines)]
 /// Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
 /// - POST /xrpc/com.atproto.repo.applyWrites
 /// ### Request Body
@@ -233,319 +123,31 @@ fn test_scan_blobs() {
 /// - `swap_commit`: `cid` // If provided, the entire operation will fail if the current repo commit CID does not match this value. Used to prevent conflicting repo mutations.
 async fn apply_writes(
     user: AuthenticatedUser,
+    State(actor_store): State<ActorStore>,
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::apply_writes::Input>,
 ) -> Result<Json<repo::apply_writes::Output>> {
-    use atrium_api::com::atproto::repo::apply_writes::{self, InputWritesItem, OutputResultsItem};
-
-    // TODO: `input.validate`
-
-    let (target_did, _) = resolve_did(&db, &input.repo)
-        .await
-        .context("failed to resolve did")?;
+    // TODO: Implement validation when `input.validate` is set
 
     // Ensure that we are updating the correct repository.
-    if target_did.as_str() != user.did() {
-        return Err(Error::with_status(
-            StatusCode::BAD_REQUEST,
-            anyhow!("repo did not match the authenticated user"),
-        ));
-    }
+    todo!();
+    // Convert ATProto writes to our internal format
+    todo!();
+    // Process the writes using the actor store
+    todo!();
 
-    let mut repo = storage::open_repo_db(&config.repo, &db, user.did())
-        .await
-        .context("failed to open user repo")?;
-    let orig_cid = repo.root();
-    let orig_rev = repo.commit().rev();
-
-    let mut blobs = vec![];
-    let mut res = vec![];
-    let mut ops = vec![];
-    let mut keys = vec![];
-    for write in &input.writes {
-        let (builder, key) = match *write {
-            InputWritesItem::Create(ref object) => {
-                let now = Tid::now(LimitedU32::MIN);
-                let key = format!(
-                    "{}/{}",
-                    &object.collection.as_str(),
-                    &object.rkey.as_deref().unwrap_or_else(|| now.as_str())
-                );
-                let uri = format!("at://{}/{}", user.did(), key);
-
-                let (builder, cid) = repo
-                    .add_raw(&key, &object.value)
-                    .await
-                    .context("failed to add record")?;
-
-                if let Ok(new_blobs) = scan_blobs(&object.value) {
-                    blobs.extend(
-                        new_blobs
-                            .into_iter()
-                            .map(|blob_cid| (key.clone(), blob_cid)),
-                    );
-                }
-
-                ops.push(RepoOp::Create {
-                    cid,
-                    path: key.clone(),
-                });
-
-                res.push(OutputResultsItem::CreateResult(Box::new(
-                    apply_writes::CreateResultData {
-                        cid: atrium_api::types::string::Cid::new(cid),
-                        uri,
-                        validation_status: None,
-                    }
-                    .into(),
-                )));
-
-                (builder, key)
-            }
-            InputWritesItem::Update(ref object) => {
-                let builder: atrium_repo::repo::CommitBuilder<_>;
-                let key = format!("{}/{}", &object.collection.as_str(), &object.rkey.as_str());
-                let uri = format!("at://{}/{}", user.did(), key);
-
-                let prev = repo
-                    .tree()
-                    .get(&key)
-                    .await
-                    .context("failed to search MST")?;
-                if prev.is_none() {
-                    let (create_builder, cid) = repo
-                        .add_raw(&key, &object.value)
-                        .await
-                        .context("failed to add record")?;
-                    if let Ok(new_blobs) = scan_blobs(&object.value) {
-                        blobs.extend(
-                            new_blobs
-                                .into_iter()
-                                .map(|blod_cid| (key.clone(), blod_cid)),
-                        );
-                    }
-                    ops.push(RepoOp::Create {
-                        cid,
-                        path: key.clone(),
-                    });
-                    res.push(OutputResultsItem::CreateResult(Box::new(
-                        apply_writes::CreateResultData {
-                            cid: atrium_api::types::string::Cid::new(cid),
-                            uri,
-                            validation_status: None,
-                        }
-                        .into(),
-                    )));
-                    builder = create_builder;
-                } else {
-                    let prev = prev.context("should be able to find previous record")?;
-                    let (update_builder, cid) = repo
-                        .update_raw(&key, &object.value)
-                        .await
-                        .context("failed to add record")?;
-                    if let Ok(new_blobs) = scan_blobs(&object.value) {
-                        blobs.extend(
-                            new_blobs
-                                .into_iter()
-                                .map(|blod_cid| (key.clone(), blod_cid)),
-                        );
-                    }
-                    ops.push(RepoOp::Update {
-                        cid,
-                        path: key.clone(),
-                        prev,
-                    });
-                    res.push(OutputResultsItem::UpdateResult(Box::new(
-                        apply_writes::UpdateResultData {
-                            cid: atrium_api::types::string::Cid::new(cid),
-                            uri,
-                            validation_status: None,
-                        }
-                        .into(),
-                    )));
-                    builder = update_builder;
-                }
-                (builder, key)
-            }
-            InputWritesItem::Delete(ref object) => {
-                let key = format!("{}/{}", &object.collection.as_str(), &object.rkey.as_str());
-
-                let prev = repo
-                    .tree()
-                    .get(&key)
-                    .await
-                    .context("failed to search MST")?
-                    .context("previous record does not exist")?;
-
-                ops.push(RepoOp::Delete {
-                    path: key.clone(),
-                    prev,
-                });
-
-                res.push(OutputResultsItem::DeleteResult(Box::new(
-                    apply_writes::DeleteResultData {}.into(),
-                )));
-
-                let builder = repo
-                    .delete_raw(&key)
-                    .await
-                    .context("failed to add record")?;
-
-                (builder, key)
-            }
-        };
-
-        let sig = skey
-            .sign(&builder.bytes())
-            .context("failed to sign commit")?;
-
-        _ = builder
-            .finalize(sig)
-            .await
-            .context("failed to write signed commit")?;
-
-        keys.push(key);
-    }
-
-    // Construct a firehose record.
-    let mut mem = Vec::new();
-    let mut store = CarStore::create_with_roots(std::io::Cursor::new(&mut mem), [repo.root()])
-        .await
-        .context("failed to create temp store")?;
-
-    // Extract the records out of the user's repository.
-    for key in keys {
-        repo.extract_raw_into(&key, &mut store)
-            .await
-            .context("failed to extract key")?;
-    }
-
-    let mut tx = db.begin().await.context("failed to begin transaction")?;
-
-    if !swap_commit(
-        &mut *tx,
-        repo.root(),
-        repo.commit().rev(),
-        input.swap_commit.as_ref().map(|cid| *cid.as_ref()),
-        &user.did(),
-    )
-    .await
-    .context("failed to swap commit")?
-    {
-        // This should always succeed.
-        let old = input
-            .swap_commit
-            .clone()
-            .context("swap_commit should always be Some")?;
-
-        // The swap failed. Return the old commit and do not update the repository.
-        return Ok(Json(
-            apply_writes::OutputData {
-                results: None,
-                commit: Some(
-                    CommitMetaData {
-                        cid: old,
-                        rev: orig_rev,
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
-        ));
-    }
-
-    let did_str = user.did();
-
-    // For updates and removals, unlink the old/deleted record from the blob_ref table.
-    for op in &ops {
-        match op {
-            &RepoOp::Update { ref path, .. } | &RepoOp::Delete { ref path, .. } => {
-                // FIXME: This may cause issues if a user deletes more than one record referencing the same blob.
-                _ = &sqlx::query!(
-                    r#"UPDATE blob_ref SET record = NULL WHERE did = ? AND record = ?"#,
-                    did_str,
-                    path
-                )
-                .execute(&mut *tx)
-                .await
-                .context("failed to remove blob_ref")?;
-            }
-            &RepoOp::Create { .. } => {}
-        }
-    }
-
-    for &mut (ref key, cid) in &mut blobs {
-        let cid_str = cid.to_string();
-
-        // Handle the case where a new record references an existing blob.
-        if sqlx::query!(
-            r#"UPDATE blob_ref SET record = ? WHERE cid = ? AND did = ? AND record IS NULL"#,
-            key,
-            cid_str,
-            did_str,
-        )
-        .execute(&mut *tx)
-        .await
-        .context("failed to update blob_ref")?
-        .rows_affected()
-            == 0
-        {
-            _ = sqlx::query!(
-                r#"INSERT INTO blob_ref (record, cid, did) VALUES (?, ?, ?)"#,
-                key,
-                cid_str,
-                did_str,
-            )
-            .execute(&mut *tx)
-            .await
-            .context("failed to update blob_ref")?;
-        }
-    }
-
-    tx.commit()
-        .await
-        .context("failed to commit blob ref to database")?;
-
-    // Update counters.
+    // Update metrics
     counter!(REPO_COMMITS).increment(1);
-    for op in &ops {
-        match *op {
-            RepoOp::Create { .. } => counter!(REPO_OP_CREATE).increment(1),
-            RepoOp::Update { .. } => counter!(REPO_OP_UPDATE).increment(1),
-            RepoOp::Delete { .. } => counter!(REPO_OP_DELETE).increment(1),
-        }
-    }
+    todo!();
 
-    // We've committed the transaction to the database, and the commit is now stored in the user's
-    // canonical repository.
-    // We can now broadcast this on the firehose.
-    fhp.commit(firehose::Commit {
-        car: mem,
-        ops,
-        cid: repo.root(),
-        rev: repo.commit().rev().to_string(),
-        did: atrium_api::types::string::Did::new(user.did()).expect("should be valid DID"),
-        pcid: Some(orig_cid),
-        blobs: blobs.into_iter().map(|(_, cid)| cid).collect::<Vec<_>>(),
-    })
-    .await;
+    // Send commit to firehose
+    todo!();
 
-    Ok(Json(
-        apply_writes::OutputData {
-            results: Some(res),
-            commit: Some(
-                CommitMetaData {
-                    cid: atrium_api::types::string::Cid::new(repo.root()),
-                    rev: repo.commit().rev(),
-                }
-                .into(),
-            ),
-        }
-        .into(),
-    ))
+    // Convert to API response format
+    todo!();
 }
 
 /// Create a single new repository record. Requires auth, implemented by PDS.
@@ -563,6 +165,7 @@ async fn apply_writes(
 /// - 401 Unauthorized
 async fn create_record(
     user: AuthenticatedUser,
+    State(actor_store): State<ActorStore>,
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -571,6 +174,7 @@ async fn create_record(
 ) -> Result<Json<repo::create_record::Output>> {
     let write_result = apply_writes(
         user,
+        State(actor_store),
         State(skey),
         State(config),
         State(db),
@@ -635,6 +239,7 @@ async fn create_record(
 /// - 401 Unauthorized
 async fn put_record(
     user: AuthenticatedUser,
+    State(actor_store): State<ActorStore>,
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -662,6 +267,7 @@ async fn put_record(
 
     let write_result = apply_writes(
         user,
+        State(actor_store),
         State(skey),
         State(config),
         State(db),
@@ -712,6 +318,7 @@ async fn put_record(
 /// - 401 Unauthorized
 async fn delete_record(
     user: AuthenticatedUser,
+    State(actor_store): State<ActorStore>,
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
@@ -724,6 +331,7 @@ async fn delete_record(
         repo::delete_record::OutputData {
             commit: apply_writes(
                 user,
+                State(actor_store),
                 State(skey),
                 State(config),
                 State(db),
@@ -763,6 +371,7 @@ async fn delete_record(
 /// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
 /// - 401 Unauthorized
 async fn describe_repo(
+    State(actor_store): State<ActorStore>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
     Query(input): Query<repo::describe_repo::ParametersData>,
@@ -772,33 +381,8 @@ async fn describe_repo(
         .await
         .context("failed to resolve handle")?;
 
-    let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
-        .await
-        .context("failed to open user repo")?;
-
-    let mut collections = HashSet::new();
-
-    let mut tree = repo.tree();
-    let mut it = Box::pin(tree.keys());
-    while let Some(key) = it.try_next().await.context("failed to iterate repo keys")? {
-        if let Some((collection, _rkey)) = key.split_once('/') {
-            _ = collections.insert(collection.to_owned());
-        }
-    }
-
-    Ok(Json(
-        repo::describe_repo::OutputData {
-            collections: collections
-                .into_iter()
-                .map(|nsid| Nsid::new(nsid).expect("should be valid NSID"))
-                .collect::<Vec<_>>(),
-            did: did.clone(),
-            did_doc: Unknown::Null, // TODO: Fetch the DID document from the PLC directory
-            handle: handle.clone(),
-            handle_is_correct: true, // TODO
-        }
-        .into(),
-    ))
+    // Use Actor Store to get the collections
+    todo!();
 }
 
 /// Get a single record from a repository. Does not require auth.
@@ -813,6 +397,7 @@ async fn describe_repo(
 /// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`, `RecordNotFound`]}
 /// - 401 Unauthorized
 async fn get_record(
+    State(actor_store): State<ActorStore>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
     Query(input): Query<repo::get_record::ParametersData>,
@@ -828,43 +413,16 @@ async fn get_record(
         .await
         .context("failed to resolve handle")?;
 
-    let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
-        .await
-        .context("failed to open user repo")?;
+    // Create a URI from the parameters
+    let uri = format!(
+        "at://{}/{}/{}",
+        did.as_str(),
+        input.collection.as_str(),
+        input.rkey.as_str()
+    );
 
-    let key = format!("{}/{}", input.collection.as_str(), input.rkey.as_str());
-    let uri = format!("at://{}/{}", did.as_str(), &key);
-
-    let cid = repo
-        .tree()
-        .get(&key)
-        .await
-        .context("failed to find record")?;
-
-    let record: Option<serde_json::Value> =
-        repo.get_raw(&key).await.context("failed to read record")?;
-
-    record.map_or_else(
-        || {
-            Err(Error::with_message(
-                StatusCode::BAD_REQUEST,
-                anyhow!("could not find the requested record at {}", uri),
-                ErrorMessage::new("RecordNotFound", format!("Could not locate record: {uri}")),
-            ))
-        },
-        |record_value| {
-            Ok(Json(
-                repo::get_record::OutputData {
-                    cid: cid.map(atrium_api::types::string::Cid::new),
-                    uri: uri.clone(),
-                    value: record_value
-                        .try_into_unknown()
-                        .context("should be valid JSON")?,
-                }
-                .into(),
-            ))
-        },
-    )
+    // Use Actor Store to get the record
+    todo!();
 }
 
 /// List a range of records in a repository, matching a specific collection. Does not require auth.
@@ -880,65 +438,18 @@ async fn get_record(
 /// - 400 Bad Request: {error:[`InvalidRequest`, `ExpiredToken`, `InvalidToken`]}
 /// - 401 Unauthorized
 async fn list_records(
+    State(actor_store): State<ActorStore>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
     Query(input): Query<Object<ListRecordsParameters>>,
 ) -> Result<Json<repo::list_records::Output>> {
-    // TODO: `input.reverse`
-
     // Lookup the DID by the provided handle.
     let (did, _handle) = resolve_did(&db, &input.repo)
         .await
         .context("failed to resolve handle")?;
 
-    let mut repo = storage::open_repo_db(&config.repo, &db, did.as_str())
-        .await
-        .context("failed to open user repo")?;
-
-    let mut keys = Vec::new();
-    let mut tree = repo.tree();
-
-    let mut entry = input.collection.to_string();
-    entry.push('/');
-    let mut iterator = Box::pin(tree.entries_prefixed(entry.as_str()));
-    while let Some((key, cid)) = iterator
-        .try_next()
-        .await
-        .context("failed to iterate keys")?
-    {
-        keys.push((key, cid));
-    }
-
-    drop(iterator);
-
-    // TODO: Calculate the view on `keys` using `cursor` and `limit`.
-
-    let mut records = Vec::new();
-    for &(ref key, cid) in &keys {
-        let value: serde_json::Value = repo
-            .get_raw(key)
-            .await
-            .context("failed to get record")?
-            .context("record not found")?;
-
-        records.push(
-            repo::list_records::RecordData {
-                cid: atrium_api::types::string::Cid::new(cid),
-                uri: format!("at://{}/{}", did.as_str(), key),
-                value: value.try_into_unknown().context("should be valid JSON")?,
-            }
-            .into(),
-        );
-    }
-
-    #[expect(clippy::pattern_type_mismatch)]
-    Ok(Json(
-        repo::list_records::OutputData {
-            cursor: keys.last().map(|(_, cid)| cid.to_string()),
-            records,
-        }
-        .into(),
-    ))
+    // Use Actor Store to list records for the collection
+    todo!();
 }
 
 /// Upload a new blob, to be referenced from a repository record. \
@@ -953,6 +464,7 @@ async fn list_records(
 /// - 401 Unauthorized
 async fn upload_blob(
     user: AuthenticatedUser,
+    State(actor_store): State<ActorStore>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
     request: Request<Body>,
@@ -980,80 +492,23 @@ async fn upload_blob(
         ));
     }
 
-    // FIXME: Need to make this more robust. This will fail under load.
-    let filename = config
-        .blob
-        .path
-        .join(format!("temp-{}.blob", chrono::Utc::now().timestamp()));
-    let mut file = tokio::fs::File::create(&filename)
-        .await
-        .context("failed to create temporary file")?;
-
-    let mut len = 0_usize;
-    let mut sha = Sha256::new();
+    // Read the blob data
+    let mut body_data = Vec::new();
     let mut stream = request.into_body().into_data_stream();
     while let Some(bytes) = stream.try_next().await.context("failed to receive file")? {
-        len = len.checked_add(bytes.len()).context("size overflow")?;
+        body_data.extend_from_slice(&bytes);
 
-        // Deal with any sneaky end-users trying to bypass size limitations.
-        let len_u64: u64 = len.try_into().context("failed to convert `len`")?;
-        if len_u64 > config.blob.limit {
-            drop(file);
-            tokio::fs::remove_file(&filename)
-                .await
-                .context("failed to remove temp file")?;
-
+        // Check size limit incrementally
+        if body_data.len() as u64 > config.blob.limit {
             return Err(Error::with_status(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 anyhow!("size above limit and content-length header was wrong"),
             ));
         }
-
-        sha.update(&bytes);
-
-        file.write_all(&bytes)
-            .await
-            .context("failed to write blob")?;
     }
 
-    drop(file);
-    let hash = sha.finalize();
-
-    let cid = Cid::new_v1(
-        IPLD_RAW,
-        atrium_repo::Multihash::wrap(IPLD_MH_SHA2_256, hash.as_slice())
-            .context("should be valid hash")?,
-    );
-
-    let cid_str = cid.to_string();
-
-    tokio::fs::rename(&filename, config.blob.path.join(format!("{cid_str}.blob")))
-        .await
-        .context("failed to finalize blob")?;
-
-    let did_str = user.did();
-
-    _ = sqlx::query!(
-        r#"INSERT INTO blob_ref (cid, did, record) VALUES (?, ?, NULL)"#,
-        cid_str,
-        did_str
-    )
-    .execute(&db)
-    .await
-    .context("failed to insert blob into database")?;
-
-    Ok(Json(
-        repo::upload_blob::OutputData {
-            blob: atrium_api::types::BlobRef::Typed(atrium_api::types::TypedBlobRef::Blob(
-                atrium_api::types::Blob {
-                    r#ref: atrium_api::types::CidLink(cid),
-                    mime_type: mime,
-                    size: len,
-                },
-            )),
-        }
-        .into(),
-    ))
+    // Use Actor Store to upload the blob
+    todo!();
 }
 
 async fn todo() -> Result<()> {

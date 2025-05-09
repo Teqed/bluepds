@@ -12,7 +12,7 @@ use std::str::FromStr;
 
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-repo/src/types.rs#L341C1-L350C2
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub(super) struct CommitData {
+pub(crate) struct CommitData {
     pub cid: Cid,
     pub rev: String,
     pub since: Option<String>,
@@ -22,13 +22,36 @@ pub(super) struct CommitData {
     pub removed_cids: CidSet,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub enum CommitAction {
+    Create,
+    Update,
+    Delete,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct CommitOp {
+    pub action: CommitAction,
+    pub path: String,
+    pub cid: Option<Cid>,
+    pub prev: Option<Cid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct CommitDataWithOps {
+    #[serde(flatten)]
+    pub commit_data: CommitData,
+    pub ops: Vec<CommitOp>,
+    pub prev_data: Option<Cid>,
+}
+
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-repo/src/cid_set.rs
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub(super) struct CidSet {
+pub(crate) struct CidSet {
     pub set: HashSet<String>,
 }
 impl CidSet {
-    pub(super) fn new(arr: Option<Vec<Cid>>) -> Self {
+    pub(crate) fn new(arr: Option<Vec<Cid>>) -> Self {
         let str_arr: Vec<String> = arr
             .unwrap_or(Vec::new())
             .into_iter()
@@ -39,44 +62,44 @@ impl CidSet {
         }
     }
 
-    pub(super) fn add(&mut self, cid: Cid) -> () {
+    pub(crate) fn add(&mut self, cid: Cid) -> () {
         let _ = &self.set.insert(cid.to_string());
         ()
     }
 
-    pub(super) fn add_set(&mut self, to_merge: CidSet) -> () {
+    pub(crate) fn add_set(&mut self, to_merge: CidSet) -> () {
         for cid in to_merge.to_list() {
             let _ = &self.add(cid);
         }
         ()
     }
 
-    pub(super) fn subtract_set(&mut self, to_subtract: CidSet) -> () {
+    pub(crate) fn subtract_set(&mut self, to_subtract: CidSet) -> () {
         for cid in to_subtract.to_list() {
             self.delete(cid);
         }
         ()
     }
 
-    pub(super) fn delete(&mut self, cid: Cid) -> () {
+    pub(crate) fn delete(&mut self, cid: Cid) -> () {
         self.set.remove(&cid.to_string());
         ()
     }
 
-    pub(super) fn has(&self, cid: Cid) -> bool {
+    pub(crate) fn has(&self, cid: Cid) -> bool {
         self.set.contains(&cid.to_string())
     }
 
-    pub(super) fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         self.set.len()
     }
 
-    pub(super) fn clear(mut self) -> () {
+    pub(crate) fn clear(mut self) -> () {
         self.set.clear();
         ()
     }
 
-    pub(super) fn to_list(&self) -> Vec<Cid> {
+    pub(crate) fn to_list(&self) -> Vec<Cid> {
         self.set
             .clone()
             .into_iter()
@@ -89,13 +112,13 @@ impl CidSet {
 }
 
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-common/src/lib.rs#L57
-pub(super) fn struct_to_cbor<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
+pub(crate) fn struct_to_cbor<T: Serialize>(obj: &T) -> Result<Vec<u8>> {
     Ok(serde_ipld_dagcbor::to_vec(obj)?)
 }
 
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/37954845d06aaafea2b914d9096a1657abfc8d75/rsky-common/src/ipld.rs
 /// Create a CID for CBOR-encoded data
-pub(super) fn cid_for_cbor<T: Serialize>(data: &T) -> Result<Cid> {
+pub(crate) fn cid_for_cbor<T: Serialize>(data: &T) -> Result<Cid> {
     let bytes = struct_to_cbor(data)?;
     let multihash = atrium_repo::Multihash::wrap(
         atrium_repo::blockstore::SHA2_256,
@@ -108,7 +131,7 @@ pub(super) fn cid_for_cbor<T: Serialize>(data: &T) -> Result<Cid> {
 }
 
 /// Create a CID from a SHA-256 hash with the specified codec
-pub(super) fn sha256_to_cid(hash: Vec<u8>, codec: u64) -> Cid {
+pub(crate) fn sha256_to_cid(hash: Vec<u8>, codec: u64) -> Cid {
     let multihash = atrium_repo::Multihash::wrap(atrium_repo::blockstore::SHA2_256, &hash)
         .expect("valid multihash");
 
@@ -116,13 +139,13 @@ pub(super) fn sha256_to_cid(hash: Vec<u8>, codec: u64) -> Cid {
 }
 
 /// Create a CID from a raw SHA-256 hash (using raw codec 0x55)
-pub(super) fn sha256_raw_to_cid(hash: Vec<u8>) -> Cid {
+pub(crate) fn sha256_raw_to_cid(hash: Vec<u8>) -> Cid {
     sha256_to_cid(hash, 0x55) // 0x55 is the codec for raw
 }
 
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-repo/src/types.rs#L436
-pub(super) type CarBlock = CidAndBytes;
-pub(super) struct CidAndBytes {
+pub(crate) type CarBlock = CidAndBytes;
+pub(crate) struct CidAndBytes {
     pub cid: Cid,
     pub bytes: Vec<u8>,
 }
@@ -132,21 +155,21 @@ pub(super) struct CidAndBytes {
 // this newtype is treated the same as the underlying Vec<u8>.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub(super) struct Bytes(#[serde(with = "serde_bytes")] pub Vec<u8>);
+pub(crate) struct Bytes(#[serde(with = "serde_bytes")] pub Vec<u8>);
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub(super) struct BlockMap {
+pub(crate) struct BlockMap {
     pub map: BTreeMap<String, Bytes>,
 }
 
 impl BlockMap {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         BlockMap {
             map: BTreeMap::new(),
         }
     }
 
-    pub(super) fn add<T: Serialize>(&mut self, value: T) -> Result<Cid> {
+    pub(crate) fn add<T: Serialize>(&mut self, value: T) -> Result<Cid> {
         let cid = cid_for_cbor(&value)?;
         self.set(
             cid,
@@ -155,20 +178,20 @@ impl BlockMap {
         Ok(cid)
     }
 
-    pub(super) fn set(&mut self, cid: Cid, bytes: Vec<u8>) -> () {
+    pub(crate) fn set(&mut self, cid: Cid, bytes: Vec<u8>) -> () {
         self.map.insert(cid.to_string(), Bytes(bytes));
         ()
     }
 
-    pub(super) fn get(&self, cid: Cid) -> Option<&Vec<u8>> {
+    pub(crate) fn get(&self, cid: Cid) -> Option<&Vec<u8>> {
         self.map.get(&cid.to_string()).map(|bytes| &bytes.0)
     }
-    pub(super) fn delete(&mut self, cid: Cid) -> Result<()> {
+    pub(crate) fn delete(&mut self, cid: Cid) -> Result<()> {
         self.map.remove(&cid.to_string());
         Ok(())
     }
 
-    pub(super) fn get_many(&mut self, cids: Vec<Cid>) -> Result<BlocksAndMissing> {
+    pub(crate) fn get_many(&mut self, cids: Vec<Cid>) -> Result<BlocksAndMissing> {
         let mut missing: Vec<Cid> = Vec::new();
         let mut blocks = BlockMap::new();
         for cid in cids {
@@ -182,23 +205,23 @@ impl BlockMap {
         Ok(BlocksAndMissing { blocks, missing })
     }
 
-    pub(super) fn has(&self, cid: Cid) -> bool {
+    pub(crate) fn has(&self, cid: Cid) -> bool {
         self.map.contains_key(&cid.to_string())
     }
 
-    pub(super) fn clear(&mut self) -> () {
+    pub(crate) fn clear(&mut self) -> () {
         self.map.clear()
     }
 
     // Not really using. Issues with closures
-    pub(super) fn for_each(&self, cb: impl Fn(&Vec<u8>, Cid) -> ()) -> Result<()> {
+    pub(crate) fn for_each(&self, cb: impl Fn(&Vec<u8>, Cid) -> ()) -> Result<()> {
         for (key, val) in self.map.iter() {
             cb(&val.0, Cid::from_str(&key)?);
         }
         Ok(())
     }
 
-    pub(super) fn entries(&self) -> Result<Vec<CidAndBytes>> {
+    pub(crate) fn entries(&self) -> Result<Vec<CidAndBytes>> {
         let mut entries: Vec<CidAndBytes> = Vec::new();
         for (cid, bytes) in self.map.iter() {
             entries.push(CidAndBytes {
@@ -209,22 +232,22 @@ impl BlockMap {
         Ok(entries)
     }
 
-    pub(super) fn cids(&self) -> Result<Vec<Cid>> {
+    pub(crate) fn cids(&self) -> Result<Vec<Cid>> {
         Ok(self.entries()?.into_iter().map(|e| e.cid).collect())
     }
 
-    pub(super) fn add_map(&mut self, to_add: BlockMap) -> Result<()> {
+    pub(crate) fn add_map(&mut self, to_add: BlockMap) -> Result<()> {
         let results = for (cid, bytes) in to_add.map.iter() {
             self.set(Cid::from_str(cid)?, bytes.0.clone());
         };
         Ok(results)
     }
 
-    pub(super) fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         self.map.len()
     }
 
-    pub(super) fn byte_size(&self) -> Result<usize> {
+    pub(crate) fn byte_size(&self) -> Result<usize> {
         let mut size = 0;
         for (_, bytes) in self.map.iter() {
             size += bytes.0.len();
@@ -232,7 +255,7 @@ impl BlockMap {
         Ok(size)
     }
 
-    pub(super) fn equals(&self, other: BlockMap) -> Result<bool> {
+    pub(crate) fn equals(&self, other: BlockMap) -> Result<bool> {
         if self.size() != other.size() {
             return Ok(false);
         }
@@ -274,7 +297,7 @@ impl IntoIterator for BlockMap {
 }
 
 #[derive(Debug)]
-pub(super) struct BlocksAndMissing {
+pub(crate) struct BlocksAndMissing {
     pub blocks: BlockMap,
     pub missing: Vec<Cid>,
 }

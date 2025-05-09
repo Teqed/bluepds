@@ -5,7 +5,7 @@ use atrium_repo::Cid;
 use sqlx::SqlitePool;
 
 use super::sql_repo_reader::SqlRepoReader;
-use crate::{actor_store::block_map::BlockMap, config::BlobConfig};
+use crate::{config::BlobConfig, repo::block_map::BlockMap};
 
 /// Reader for repository data in the actor store.
 pub(crate) struct RepoReader {
