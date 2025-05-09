@@ -350,7 +350,12 @@ impl BlobTransactor {
     }
 
     /// Register a blob in the database
-    pub(super) async fn register_blob(&self, cid: String, mime_type: String, size: u64) -> Result<()> {
+    pub(super) async fn register_blob(
+        &self,
+        cid: String,
+        mime_type: String,
+        size: u64,
+    ) -> Result<()> {
         self.reader.register_blob(cid, mime_type, size as i64).await
     }
 
@@ -374,7 +379,7 @@ impl BlobTransactor {
 }
 
 /// Check if a mime type is accepted based on the accept list.
-fn accepts_mime(mime: &str, accepted: &[String]) -> bool {
+fn accepted_mime(mime: &str, accepted: &[String]) -> bool {
     // Accept all types
     if accepted.contains(&"*/*".to_string()) {
         return true;

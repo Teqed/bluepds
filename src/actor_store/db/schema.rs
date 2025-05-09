@@ -29,9 +29,10 @@ pub(crate) struct Record {
     pub(crate) cid: String,
     pub(crate) collection: String,
     pub(crate) rkey: String,
-    pub(crate) repo_rev: String,
+    pub(crate) repo_rev: Option<String>,
     pub(crate) indexed_at: String,
     pub(crate) takedown_ref: Option<String>,
+    pub(crate) did: String,
 }
 
 pub(crate) const RECORD_TABLE: &str = "record";
@@ -47,6 +48,7 @@ pub(crate) struct Blob {
     pub(crate) height: Option<i64>,
     pub(crate) created_at: String,
     pub(crate) takedown_ref: Option<String>,
+    pub(crate) did: String,
 }
 
 pub(crate) const BLOB_TABLE: &str = "blob";

@@ -2,6 +2,7 @@
 
 mod blob;
 mod db;
+mod record;
 mod repo;
 
 use std::path::PathBuf;
