@@ -182,3 +182,7 @@ async-trait = "0.1.88"
 k256 = "0.13.4"
 hex = "0.4.3"
 ipld-core = "0.4.2"
+lazy_static = "1.5.0"
+regex = "1.11.1"
+rsky-syntax = { git = "https://github.com/blacksky-algorithms/rsky.git" }
+rsky-repo = { git = "https://github.com/blacksky-algorithms/rsky.git" }

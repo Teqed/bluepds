@@ -3,5 +3,5 @@
 mod reader;
 mod transactor;
 
-pub use reader::RecordReader;
-pub use transactor::RecordTransactor;
+pub(crate) use reader::RecordReader;
+pub(crate) use transactor::RecordTransactor;
