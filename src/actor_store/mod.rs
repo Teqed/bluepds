@@ -1,6 +1,7 @@
 //! Actor store implementation for ATProto PDS.
 
 mod blob;
+mod block_map;
 mod db;
 mod preference;
 mod record;

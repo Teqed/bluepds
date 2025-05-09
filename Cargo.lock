@@ -754,6 +754,7 @@ dependencies = [
  "memmap2",
  "metrics",
  "metrics-exporter-prometheus",
+ "multihash 0.19.3",
  "rand 0.8.5",
  "regex",
  "reqwest",
@@ -761,7 +762,9 @@ dependencies = [
  "rsky-repo",
  "rsky-syntax",
  "serde",
+ "serde_bytes",
  "serde_ipld_dagcbor",
+ "serde_ipld_dagjson",
  "serde_json",
  "sha2",
  "sqlx",
@@ -4017,6 +4020,17 @@ dependencies = [
  "ipld-core",
  "scopeguard",
  "serde",
+]
+
+[[package]]
+name = "serde_ipld_dagjson"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3359b47ba7f4a306ef5984665e10539e212e97217afa489437d533208eecda36"
+dependencies = [
+ "ipld-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
