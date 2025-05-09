@@ -46,7 +46,10 @@ impl RepoTransactor {
     // }
 
     /// Create a new repository.
-    pub(crate) async fn create_repo(&self, writes: Vec<PreparedWrite>) -> Result<CommitDataWithOps> {
+    pub(crate) async fn create_repo(
+        &self,
+        writes: Vec<PreparedWrite>,
+    ) -> Result<CommitDataWithOps> {
         todo!("Implement create_repo")
     }
 
