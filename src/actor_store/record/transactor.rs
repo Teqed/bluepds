@@ -10,7 +10,7 @@ use crate::actor_store::db::schema::Backlink;
 use crate::actor_store::record::reader::{RecordReader, StatusAttr, get_backlinks};
 
 /// Transaction handler for record operations.
-pub struct RecordTransactor {
+pub(crate) struct RecordTransactor {
     /// The record reader.
     pub reader: RecordReader,
     /// The blob store.
@@ -19,7 +19,7 @@ pub struct RecordTransactor {
 
 impl RecordTransactor {
     /// Create a new record transactor.
-    pub fn new(db: SqlitePool, blobstore: SqlitePool, did: String) -> Self {
+    pub(crate) fn new(db: SqlitePool, blobstore: SqlitePool, did: String) -> Self {
         Self {
             reader: RecordReader::new(db, did),
             blobstore,
@@ -27,7 +27,7 @@ impl RecordTransactor {
     }
 
     /// Index a record in the database.
-    pub async fn index_record(
+    pub(crate) async fn index_record(
         &self,
         uri: AtUri,
         cid: Cid,
@@ -102,7 +102,7 @@ impl RecordTransactor {
     }
 
     /// Delete a record from the database.
-    pub async fn delete_record(&self, uri: &AtUri) -> Result<()> {
+    pub(crate) async fn delete_record(&self, uri: &AtUri) -> Result<()> {
         let uri_str = uri.to_string();
         tracing::debug!("Deleting indexed record {}", uri_str);
 
@@ -128,7 +128,7 @@ impl RecordTransactor {
     }
 
     /// Remove backlinks for a URI.
-    pub async fn remove_backlinks_by_uri(&self, uri: &str) -> Result<()> {
+    pub(crate) async fn remove_backlinks_by_uri(&self, uri: &str) -> Result<()> {
         sqlx::query!("DELETE FROM backlink WHERE uri = ?", uri)
             .execute(&self.reader.db)
             .await
@@ -138,7 +138,7 @@ impl RecordTransactor {
     }
 
     /// Add backlinks to the database.
-    pub async fn add_backlinks(&self, backlinks: Vec<Backlink>) -> Result<()> {
+    pub(crate) async fn add_backlinks(&self, backlinks: Vec<Backlink>) -> Result<()> {
         if backlinks.is_empty() {
             return Ok(());
         }
@@ -173,7 +173,7 @@ impl RecordTransactor {
     }
 
     /// Update the takedown status of a record.
-    pub async fn update_record_takedown_status(
+    pub(crate) async fn update_record_takedown_status(
         &self,
         uri: &AtUri,
         takedown: StatusAttr,

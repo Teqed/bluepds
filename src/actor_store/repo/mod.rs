@@ -5,5 +5,3 @@ mod sql_repo_reader;
 mod sql_repo_transactor;
 mod transactor;
 
-pub use reader::RepoReader;
-pub use transactor::RepoTransactor;

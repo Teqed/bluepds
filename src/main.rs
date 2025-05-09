@@ -11,7 +11,6 @@ mod mmap;
 mod oauth;
 mod plc;
 mod storage;
-mod syntax;
 #[cfg(test)]
 mod tests;
 

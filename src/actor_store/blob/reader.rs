@@ -213,7 +213,12 @@ impl BlobReader {
     }
 
     /// Register a new blob in the database (without file storage)
-    pub(super) async fn register_blob(&self, cid: String, mime_type: String, size: i64) -> Result<()> {
+    pub(super) async fn register_blob(
+        &self,
+        cid: String,
+        mime_type: String,
+        size: i64,
+    ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         sqlx::query!(
             r#"

@@ -9,7 +9,7 @@ use std::str::FromStr;
 use crate::actor_store::db::schema::Backlink;
 
 /// Reader for record data.
-pub struct RecordReader {
+pub(crate) struct RecordReader {
     /// Database connection.
     pub db: SqlitePool,
     /// DID of the repository owner.
@@ -17,7 +17,7 @@ pub struct RecordReader {
 }
 
 /// Record descriptor containing URI, path, and CID.
-pub struct RecordDescript {
+pub(crate) struct RecordDescript {
     /// Record URI.
     pub uri: String,
     /// Record path.
@@ -28,7 +28,7 @@ pub struct RecordDescript {
 
 /// Record data with values.
 #[derive(Debug, Clone)]
-pub struct RecordData {
+pub(crate) struct RecordData {
     /// Record URI.
     pub uri: String,
     /// Record CID.
@@ -43,7 +43,7 @@ pub struct RecordData {
 
 /// Options for listing records in a collection.
 #[derive(Debug, Clone)]
-pub struct ListRecordsOptions {
+pub(crate) struct ListRecordsOptions {
     /// Collection to list records from.
     pub collection: String,
     /// Maximum number of records to return.
@@ -62,12 +62,12 @@ pub struct ListRecordsOptions {
 
 impl RecordReader {
     /// Create a new record reader.
-    pub fn new(db: SqlitePool, did: String) -> Self {
+    pub(crate) fn new(db: SqlitePool, did: String) -> Self {
         Self { db, did }
     }
 
     /// Count the total number of records.
-    pub async fn record_count(&self) -> Result<i64> {
+    pub(crate) async fn record_count(&self) -> Result<i64> {
         let result = sqlx::query!(r#"SELECT COUNT(*) as count FROM record"#)
             .fetch_one(&self.db)
             .await
@@ -77,7 +77,7 @@ impl RecordReader {
     }
 
     /// List all records.
-    pub async fn list_all(&self) -> Result<Vec<RecordDescript>> {
+    pub(crate) async fn list_all(&self) -> Result<Vec<RecordDescript>> {
         let mut records = Vec::new();
         let mut cursor = Some("".to_string());
 
@@ -114,7 +114,7 @@ impl RecordReader {
     }
 
     /// List all collections in the repository.
-    pub async fn list_collections(&self) -> Result<Vec<String>> {
+    pub(crate) async fn list_collections(&self) -> Result<Vec<String>> {
         let rows = sqlx::query!("SELECT collection FROM record GROUP BY collection")
             .fetch_all(&self.db)
             .await
@@ -124,7 +124,7 @@ impl RecordReader {
     }
 
     /// List records for a specific collection.
-    pub async fn list_records_for_collection(
+    pub(crate) async fn list_records_for_collection(
         &self,
         opts: ListRecordsOptions,
     ) -> Result<Vec<RecordData>> {
@@ -201,7 +201,7 @@ impl RecordReader {
     }
 
     /// Get a specific record by URI.
-    pub async fn get_record(
+    pub(crate) async fn get_record(
         &self,
         uri: &str,
         cid: Option<&str>,
@@ -255,7 +255,7 @@ impl RecordReader {
     }
 
     /// Check if a record exists.
-    pub async fn has_record(
+    pub(crate) async fn has_record(
         &self,
         uri: &str,
         cid: Option<&str>,
@@ -284,7 +284,7 @@ impl RecordReader {
     }
 
     /// Get the takedown status of a record.
-    pub async fn get_record_takedown_status(&self, uri: &str) -> Result<Option<StatusAttr>> {
+    pub(crate) async fn get_record_takedown_status(&self, uri: &str) -> Result<Option<StatusAttr>> {
         let result = sqlx::query!("SELECT takedownRef FROM record WHERE uri = ?", uri)
             .fetch_optional(&self.db)
             .await
@@ -309,7 +309,7 @@ impl RecordReader {
     }
 
     /// Get the current CID for a record URI.
-    pub async fn get_current_record_cid(&self, uri: &str) -> Result<Option<Cid>> {
+    pub(crate) async fn get_current_record_cid(&self, uri: &str) -> Result<Option<Cid>> {
         let result = sqlx::query!("SELECT cid FROM record WHERE uri = ?", uri)
             .fetch_optional(&self.db)
             .await
@@ -325,7 +325,7 @@ impl RecordReader {
     }
 
     /// Get backlinks for a record.
-    pub async fn get_record_backlinks(
+    pub(crate) async fn get_record_backlinks(
         &self,
         collection: &str,
         path: &str,
@@ -366,7 +366,7 @@ impl RecordReader {
     }
 
     /// Get backlink conflicts for a record.
-    pub async fn get_backlink_conflicts(
+    pub(crate) async fn get_backlink_conflicts(
         &self,
         uri: AtUri,
         record: &serde_json::Value,
@@ -405,7 +405,7 @@ impl RecordReader {
     }
 
     /// List existing blocks in the repository.
-    pub async fn list_existing_blocks(&self) -> Result<Vec<Cid>> {
+    pub(crate) async fn list_existing_blocks(&self) -> Result<Vec<Cid>> {
         let mut blocks = Vec::new();
         let mut cursor = Some("".to_string());
 
@@ -434,7 +434,7 @@ impl RecordReader {
     }
 
     /// Get the profile record for this repository
-    pub async fn get_profile_record(&self) -> Result<Option<serde_json::Value>> {
+    pub(crate) async fn get_profile_record(&self) -> Result<Option<serde_json::Value>> {
         let row = sqlx::query!(
             r#"
             SELECT b.content
@@ -462,7 +462,7 @@ impl RecordReader {
     }
 
     /// Get records created or updated since a specific revision
-    pub async fn get_records_since_rev(&self, rev: &str) -> Result<Vec<RecordData>> {
+    pub(crate) async fn get_records_since_rev(&self, rev: &str) -> Result<Vec<RecordData>> {
         // First check if the revision exists
         let sanity_check = sqlx::query!(
             r#"SELECT repoRev FROM record WHERE repoRev <= ? LIMIT 1"#,
@@ -512,7 +512,7 @@ impl RecordReader {
 
 /// Database record structure.
 #[derive(Debug, Clone)]
-pub struct Record {
+pub(crate) struct Record {
     /// Record URI.
     pub uri: String,
     /// Record CID.
@@ -533,7 +533,7 @@ pub struct Record {
 
 /// Status attribute for takedowns
 #[derive(Debug, Clone)]
-pub struct StatusAttr {
+pub(crate) struct StatusAttr {
     /// Whether the takedown is applied
     pub applied: bool,
     /// Reference for the takedown
@@ -541,7 +541,7 @@ pub struct StatusAttr {
 }
 
 /// Extract backlinks from a record.
-pub fn get_backlinks(uri: &AtUri, record: &serde_json::Value) -> Result<Vec<Backlink>> {
+pub(super) fn get_backlinks(uri: &AtUri, record: &serde_json::Value) -> Result<Vec<Backlink>> {
     let mut backlinks = Vec::new();
 
     // Check for record type
