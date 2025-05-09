@@ -23,7 +23,7 @@ impl Migrator {
 
     /// Run all migrations
     pub(crate) async fn migrate_to_latest(&self) -> Result<()> {
-        // In a production system, we'd track which migrations have been run
+        // We could track which migrations have been run
         // For simplicity, we just run them all for now
         for migration in &self.migrations {
             migration(&self.db)?;
@@ -42,9 +42,7 @@ impl Migrator {
 /// Initial migration to create tables
 fn init_migration(db: &ActorDb) -> Result<()> {
     tokio::task::block_in_place(|| {
-        tokio::runtime::Handle::current().block_on(async {
-            // Use the create_tables function that's now defined in the db module
-            crate::actor_store::db::create_tables(&db.db).await
-        })
+        tokio::runtime::Handle::current()
+            .block_on(async { crate::actor_store::db::create_tables(&db.db).await })
     })
 }

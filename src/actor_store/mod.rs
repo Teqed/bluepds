@@ -18,7 +18,7 @@ pub(crate) struct ActorStoreResources {
     /// Configuration for the repo.
     pub(crate) config: RepoConfig,
     /// Background task queue (we'll need to implement this later).
-    pub(crate) background_queue: Arc<()>, // Placeholder until we implement a proper queue
+    pub(crate) background_queue: Arc<()>, // TODO: Placeholder until we implement a proper queue
 }
 
 /// The location of an actor's data.
@@ -227,7 +227,7 @@ impl ActorStore {
         Ok(())
     }
 
-    // To be implemented: destroy, reserve_keypair, etc.
+    // TODO: To be implemented: destroy, reserve_keypair, etc.
 }
 
 // Helper function for SHA-256 hashing
