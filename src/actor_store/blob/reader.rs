@@ -1,138 +1,131 @@
 //! Blob reading functionality.
 
+use std::str::FromStr;
+
 use anyhow::{Context as _, Result};
+use atrium_api::com::atproto::admin::defs::StatusAttrData;
 use atrium_repo::Cid;
 use sqlx::{Row, SqlitePool};
 
-use crate::config::BlobConfig;
-
 /// Reader for blob data in the actor store.
-pub(super) struct BlobReader {
+pub(crate) struct BlobReader {
     /// Database connection.
     pub db: SqlitePool,
-    /// Configuration for blob storage.
-    pub config: BlobConfig,
-    /// DID of the repository owner.
-    pub did: String,
+    /// BlobStore.
+    pub blobstore: BlobStore,
 }
 
 impl BlobReader {
     /// Create a new blob reader.
-    pub(super) fn new(db: SqlitePool, config: BlobConfig, did: String) -> Self {
-        Self { db, config, did }
+    pub(crate) fn new(db: SqlitePool, blobstore: BlobStore) -> Self {
+        Self { db, blobstore }
     }
 
     /// Get metadata for a blob.
-    pub(super) async fn get_blob_metadata(&self, cid: &Cid) -> Result<Option<BlobMetadata>> {
+    pub(crate) async fn get_blob_metadata(&self, cid: &Cid) -> Result<Option<BlobMetadata>> {
         let cid_str = cid.to_string();
-        let result = sqlx::query!(
-            r#"SELECT size, mimeType, takedownRef FROM blob WHERE cid = ?"#,
+        let found = sqlx::query!(
+            r#"
+            SELECT mimeType, size, takedownRef
+            FROM blob
+            WHERE cid = ? AND takedownRef IS NULL
+            "#,
             cid_str
         )
         .fetch_optional(&self.db)
         .await
         .context("failed to fetch blob metadata")?;
-
-        match result {
-            Some(row) => Ok(Some(BlobMetadata {
-                cid: cid.clone(),
-                size: row.size as u64,
-                mime_type: row.mimeType,
-                takedown_ref: row.takedownRef,
-            })),
-            None => Ok(None),
+        if found.is_none() {
+            return Err(anyhow::anyhow!("Blob not found")); // InvalidRequestError('Blob not found')
         }
+        let found = found.unwrap();
+        let size = found.size as u64;
+        let mime_type = found.mimeType;
+        return Ok(Some(BlobMetadata { size, mime_type }));
     }
 
     /// Get a blob's full data and metadata.
-    pub(super) async fn get_blob(&self, cid: &Cid) -> Result<Option<BlobData>> {
-        // First check the metadata
-        let metadata = match self.get_blob_metadata(cid).await? {
-            Some(meta) => meta,
-            None => return Ok(None),
-        };
-
-        // If there's a takedown, return metadata only with no content
-        if metadata.takedown_ref.is_some() {
-            return Ok(Some(BlobData {
-                metadata,
-                content: None,
-            }));
+    pub(crate) async fn get_blob(&self, cid: &Cid) -> Result<Option<BlobData>> {
+        let metadata = self.get_blob_metadata(cid).await?;
+        let blob_stream = self.blobstore.get_stream(cid).await?;
+        if blob_stream.is_none() {
+            return Err(anyhow::anyhow!("Blob not found")); // InvalidRequestError('Blob not found')
         }
-
-        // Get the blob file path
-        let blob_path = self.config.path.join(format!("{}.blob", cid));
-
-        // Check if file exists
-        if !blob_path.exists() {
-            return Ok(None);
-        }
-
-        // Read the file
-        let content = tokio::fs::read(&blob_path)
-            .await
-            .context("failed to read blob file")?;
-
+        let metadata = metadata.unwrap();
         Ok(Some(BlobData {
-            metadata,
-            content: Some(content),
+            size: metadata.size,
+            mime_type: Some(metadata.mime_type),
+            stream: blob_stream.unwrap(),
         }))
     }
 
     /// List blobs for a repository.
-    pub(super) async fn list_blobs(&self, opts: ListBlobsOptions) -> Result<Vec<String>> {
-        let mut query = sqlx::QueryBuilder::new("SELECT cid FROM blob");
-
-        // Add filters for since revision
+    pub(crate) async fn list_blobs(&self, opts: ListBlobsOptions) -> Result<Vec<String>> {
+        let mut query = sqlx::QueryBuilder::new(
+            "SELECT rb.blobCid FROM record_blob rb
+             INNER JOIN record r ON r.uri = rb.recordUri",
+        );
         if let Some(since) = &opts.since {
-            query
-                .push(" WHERE EXISTS (")
-                .push("SELECT 1 FROM record_blob rb JOIN record r ON rb.recordUri = r.uri")
-                .push(" WHERE rb.blobCid = blob.cid AND r.repoRev > ")
-                .push_bind(since)
-                .push(")");
+            query.push(" WHERE r.repoRev > ").push_bind(since);
         }
-
-        // Add cursor pagination
         if let Some(cursor) = &opts.cursor {
-            if opts.since.is_some() {
-                query.push(" AND");
-            } else {
-                query.push(" WHERE");
-            }
-            query.push(" cid > ").push_bind(cursor);
+            query.push(" AND rb.blobCid > ").push_bind(cursor);
         }
-
-        // Add order and limit
         query
-            .push(" ORDER BY cid ASC")
+            .push(" ORDER BY rb.blobCid ASC")
             .push(" LIMIT ")
             .push_bind(opts.limit);
-
-        // Execute query
         let blobs = query
             .build()
             .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(0))
             .fetch_all(&self.db)
             .await
-            .context("failed to list blobs")?;
-
+            .context("failed to fetch blobs")?;
         Ok(blobs)
     }
 
     /// Get takedown status for a blob.
-    pub(super) async fn get_blob_takedown_status(&self, cid: &Cid) -> Result<Option<String>> {
+    pub(crate) async fn get_blob_takedown_status(
+        &self,
+        cid: &Cid,
+    ) -> Result<Option<StatusAttrData>> {
+        // const res = await this.db.db
+        //   .selectFrom('blob')
+        //   .select('takedownRef')
+        //   .where('cid', '=', cid.toString())
+        //   .executeTakeFirst()
+        // if (!res) return null
+        // return res.takedownRef
+        //   ? { applied: true, ref: res.takedownRef }
+        //   : { applied: false }
         let cid_str = cid.to_string();
         let result = sqlx::query!(r#"SELECT takedownRef FROM blob WHERE cid = ?"#, cid_str)
             .fetch_optional(&self.db)
             .await
             .context("failed to fetch blob takedown status")?;
 
-        Ok(result.and_then(|row| row.takedownRef))
+        Ok({
+            if result.is_none() {
+                None
+            } else {
+                let takedown_ref = result.unwrap().takedownRef.unwrap();
+                if takedown_ref == "false" {
+                    Some(StatusAttrData {
+                        applied: false,
+                        r#ref: None,
+                    })
+                } else {
+                    Some(StatusAttrData {
+                        applied: true,
+                        r#ref: Some(takedown_ref),
+                    })
+                }
+            }
+        })
     }
 
     /// Get records that reference a blob.
-    pub(super) async fn get_records_for_blob(&self, cid: &Cid) -> Result<Vec<String>> {
+    pub(crate) async fn get_records_for_blob(&self, cid: &Cid) -> Result<Vec<String>> {
         let cid_str = cid.to_string();
         let records = sqlx::query!(
             r#"SELECT recordUri FROM record_blob WHERE blobCid = ?"#,
@@ -146,20 +139,27 @@ impl BlobReader {
     }
 
     /// Get blobs referenced by a record.
-    pub(super) async fn get_blobs_for_record(&self, record_uri: &str) -> Result<Vec<String>> {
+    pub(crate) async fn get_blobs_for_record(&self, record_uri: &str) -> Result<Vec<String>> {
+        // const res = await this.db.db
+        //   .selectFrom('blob')
+        //   .innerJoin('record_blob', 'record_blob.blobCid', 'blob.cid')
+        //   .where('recordUri', '=', recordUri)
+        //   .select('blob.cid')
+        //   .execute()
+        // return res.map((row) => row.cid)
         let blobs = sqlx::query!(
-            r#"SELECT blobCid FROM record_blob WHERE recordUri = ?"#,
+            r#"SELECT blob.cid FROM blob INNER JOIN record_blob ON record_blob.blobCid = blob.cid WHERE recordUri = ?"#,
             record_uri
         )
         .fetch_all(&self.db)
         .await
         .context("failed to fetch blobs for record")?;
 
-        Ok(blobs.into_iter().map(|r| r.blobCid).collect())
+        Ok(blobs.into_iter().map(|blob| blob.cid).collect())
     }
 
     /// Count total blobs.
-    pub(super) async fn blob_count(&self) -> Result<i64> {
+    pub(crate) async fn blob_count(&self) -> Result<i64> {
         let result = sqlx::query!(r#"SELECT COUNT(*) as count FROM blob"#)
             .fetch_one(&self.db)
             .await
@@ -169,7 +169,7 @@ impl BlobReader {
     }
 
     /// Count distinct blobs referenced by records.
-    pub(super) async fn record_blob_count(&self) -> Result<i64> {
+    pub(crate) async fn record_blob_count(&self) -> Result<i64> {
         let result = sqlx::query!(r#"SELECT COUNT(DISTINCT blobCid) as count FROM record_blob"#)
             .fetch_one(&self.db)
             .await
@@ -179,7 +179,7 @@ impl BlobReader {
     }
 
     /// List blobs that are referenced but missing from storage.
-    pub(super) async fn list_missing_blobs(
+    pub(crate) async fn list_missing_blobs(
         &self,
         opts: ListMissingBlobsOptions,
     ) -> Result<Vec<MissingBlob>> {
@@ -212,58 +212,40 @@ impl BlobReader {
         Ok(missing)
     }
 
-    /// Register a new blob in the database (without file storage)
-    pub(super) async fn register_blob(
-        &self,
-        cid: String,
-        mime_type: String,
-        size: i64,
-    ) -> Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
-        sqlx::query!(
-            r#"
-            INSERT INTO blob (cid, mimeType, size, createdAt)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT DO NOTHING
-            "#,
-            cid,
-            mime_type,
-            size,
-            now
-        )
-        .execute(&self.db)
-        .await
-        .context("failed to register blob")?;
-
-        Ok(())
+    pub(crate) async fn get_blod_cids(&self) -> Result<Vec<Cid>> {
+        let rows = sqlx::query!("SELECT cid FROM blob")
+            .fetch_all(&self.db)
+            .await
+            .context("failed to fetch blob CIDs")?;
+        Ok(rows
+            .into_iter()
+            .map(|row| Cid::from_str(&row.cid).unwrap())
+            .collect())
     }
 }
 
 /// Metadata about a blob.
 #[derive(Debug, Clone)]
-pub(super) struct BlobMetadata {
-    /// The CID of the blob.
-    pub cid: Cid,
+pub(crate) struct BlobMetadata {
     /// The size of the blob in bytes.
     pub size: u64,
     /// The MIME type of the blob.
     pub mime_type: String,
-    /// Reference for takedown, if any.
-    pub takedown_ref: Option<String>,
 }
 
 /// Complete blob data with content.
 #[derive(Debug)]
-pub(super) struct BlobData {
-    /// Metadata about the blob.
-    pub metadata: BlobMetadata,
-    /// The actual content of the blob, if available.
-    pub content: Option<Vec<u8>>,
+pub(crate) struct BlobData {
+    /// The size of the blob.
+    pub size: u64,
+    /// The MIME type of the blob.
+    pub mime_type: Option<String>,
+    pub stream: BlobStream,
 }
 
 /// Options for listing blobs.
 #[derive(Debug, Clone)]
-pub(super) struct ListBlobsOptions {
+pub(crate) struct ListBlobsOptions {
     /// Optional revision to list blobs since.
     pub since: Option<String>,
     /// Optional cursor for pagination.
@@ -274,7 +256,7 @@ pub(super) struct ListBlobsOptions {
 
 /// Options for listing missing blobs.
 #[derive(Debug, Clone)]
-pub(super) struct ListMissingBlobsOptions {
+pub(crate) struct ListMissingBlobsOptions {
     /// Optional cursor for pagination.
     pub cursor: Option<String>,
     /// Maximum number of missing blobs to return.
@@ -283,7 +265,7 @@ pub(super) struct ListMissingBlobsOptions {
 
 /// Information about a missing blob.
 #[derive(Debug, Clone)]
-pub(super) struct MissingBlob {
+pub(crate) struct MissingBlob {
     /// CID of the missing blob.
     pub cid: String,
     /// URI of the record referencing the missing blob.

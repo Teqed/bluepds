@@ -1,7 +1,10 @@
 //! Blob transaction functionality.
 
 use anyhow::{Context as _, Result};
-use atrium_api::types::{Blob, CidLink};
+use atrium_api::{
+    com::atproto::admin::defs::StatusAttr,
+    types::{Blob, CidLink},
+};
 use atrium_repo::Cid;
 use sha2::Digest;
 use sqlx::{Row, SqlitePool};
@@ -9,12 +12,12 @@ use std::path::PathBuf;
 use tokio::fs;
 use uuid::Uuid;
 
-use super::reader::BlobReader;
-use crate::config::BlobConfig;
+use super::BlobReader;
+use crate::repo::types::{PreparedBlobRef, PreparedWrite, WriteOpAction};
 
 /// Blob metadata for a newly uploaded blob.
 #[derive(Debug, Clone)]
-pub(super) struct BlobMetadata {
+pub(crate) struct BlobMetadata {
     /// Temporary key for the blob during upload.
     pub temp_key: String,
     /// Size of the blob in bytes.
@@ -30,27 +33,27 @@ pub(super) struct BlobMetadata {
 }
 
 /// Transactor for blob operations.
-pub(super) struct BlobTransactor {
+pub(crate) struct BlobTransactor {
     /// The blob reader.
     pub reader: BlobReader,
-    /// The blob storage directory.
-    pub blobs_dir: PathBuf,
-    /// Temporary directory for blob uploads.
-    pub temp_dir: PathBuf,
+    pub background_queue: BackgroundQueue,
 }
 
 impl BlobTransactor {
     /// Create a new blob transactor.
-    pub(super) fn new(db: SqlitePool, config: BlobConfig, did: String) -> Self {
+    pub(crate) fn new(
+        db: SqlitePool,
+        blob_store: BlobStore,
+        background_queue: BackgroundQueue,
+    ) -> Self {
         Self {
-            reader: BlobReader::new(db, config.clone(), did),
-            blobs_dir: config.path.clone(),
-            temp_dir: config.path.join("temp"),
+            reader: BlobReader::new(db, blob_store),
+            background_queue,
         }
     }
 
     /// Register blob associations with records.
-    pub(super) async fn insert_blobs(&self, record_uri: &str, blobs: &[Blob]) -> Result<()> {
+    pub(crate) async fn insert_blobs(&self, record_uri: &str, blobs: &[Blob]) -> Result<()> {
         if blobs.is_empty() {
             return Ok(());
         }
@@ -84,49 +87,30 @@ impl BlobTransactor {
     }
 
     /// Upload a blob and get its metadata.
-    pub(super) async fn upload_blob_and_get_metadata(
+    pub(crate) async fn upload_blob_and_get_metadata(
         &self,
-        mime_type: &str,
-        data: &[u8],
+        user_suggested_mime: &str,
+        blob_stream: &[u8],
     ) -> Result<BlobMetadata> {
-        // Ensure temp directory exists
-        fs::create_dir_all(&self.temp_dir)
-            .await
-            .context("failed to create temp directory")?;
-
-        // Generate a temporary key
-        let temp_key = format!("temp-{}", Uuid::new_v4());
-        let temp_path = self.temp_dir.join(&temp_key);
-
-        // Write data to temp file
-        fs::write(&temp_path, data)
-            .await
-            .context("failed to write blob to temp file")?;
-
-        // Calculate SHA-256 hash for CID
-        let digest = sha2::Sha256::digest(data);
-
-        // Create CID from hash (using raw codec 0x55)
-        let multihash = atrium_repo::Multihash::wrap(atrium_repo::blockstore::SHA2_256, &digest)
-            .context("failed to create multihash")?;
-        let cid = Cid::new_v1(0x55, multihash);
-
-        // For now, we're not detecting image dimensions
-        let width = None;
-        let height = None;
-
+        let temp_key = self.reader.blobstore.put_temp(blob_stream).await?;
+        let size = stream_size(blob_stream).await?;
+        let sha256 = sha256_stream(blob_stream).await?;
+        let img_info = img::maybe_get_info(blob_stream).await?;
+        let sniffed_mime = mime_type_from_stream(blob_stream).await?;
+        let cid = sha256_raw_to_cid(sha256);
+        let mime_type = sniffed_mime.unwrap_or_else(|| user_suggested_mime.to_string());
         Ok(BlobMetadata {
             temp_key,
-            size: data.len() as u64,
+            size,
             cid,
-            mime_type: mime_type.to_string(),
-            width,
-            height,
+            mime_type,
+            width: img_info.map(|info| info.width),
+            height: img_info.map(|info| info.height),
         })
     }
 
     /// Track a new blob that's not yet associated with a record.
-    pub(super) async fn track_untethered_blob(&self, metadata: &BlobMetadata) -> Result<Blob> {
+    pub(crate) async fn track_untethered_blob(&self, metadata: &BlobMetadata) -> Result<Blob> {
         let cid_str = metadata.cid.to_string();
 
         // Check if blob exists and is taken down
@@ -178,189 +162,189 @@ impl BlobTransactor {
     }
 
     /// Process blobs for a repository write operation.
-    pub(super) async fn process_write_blobs(
-        &self,
-        _rev: &str,
-        blobs: &[Blob],
-        uris: &[String],
-    ) -> Result<()> {
-        // Handle deleted/updated records
-        self.delete_dereferenced_blobs(uris).await?;
-
-        // Process each blob
-        for blob in blobs {
-            // Verify and make permanent
-            self.verify_blob_and_make_permanent(blob).await?;
+    pub(crate) async fn process_write_blobs(&self, writes: Vec<PreparedWrite>) -> Result<()> {
+        self.delete_dereferenced_blobs(writes)
+            .await
+            .context("failed to delete dereferenced blobs")?;
+        for write in writes {
+            if write.action == WriteOpAction::Create || write.action == WriteOpAction::Update {
+                for blob in &write.blobs {
+                    self.verify_blob_and_make_permanent(blob)
+                        .await
+                        .context("failed to verify and make blob permanent")?;
+                    self.associate_blob(&blob.r#ref.0.to_string(), &write.uri)
+                        .await
+                        .context("failed to associate blob with record")?;
+                }
+            }
         }
+        Ok(())
+    }
+
+    /// Update the takedown status of a blob.
+    pub(crate) async fn update_blob_takedown_status(
+        &self,
+        blob: &Blob,
+        takedown: &StatusAttr,
+    ) -> Result<()> {
+        let takedown_ref = if takedown.applied {
+            Some(
+                takedown
+                    .r#ref
+                    .clone()
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            )
+        } else {
+            None
+        };
+
+        let cid_str = blob.r#ref.0.to_string();
+        sqlx::query!(
+            r#"UPDATE blob SET takedownRef = ? WHERE cid = ?"#,
+            takedown_ref,
+            cid_str
+        )
+        .execute(&self.reader.db)
+        .await
+        .context("failed to update blob takedown status")?;
 
         Ok(())
     }
 
     /// Delete blobs that are no longer referenced by any record.
-    pub(super) async fn delete_dereferenced_blobs(&self, updated_uris: &[String]) -> Result<()> {
-        if updated_uris.is_empty() {
+    pub(crate) async fn delete_dereferenced_blobs(
+        &self,
+        writes: Vec<PreparedWrite>,
+        skip_blob_store: bool,
+    ) -> Result<()> {
+        let deletes = writes
+            .iter()
+            .filter(|w| w.action() == &WriteOpAction::Delete)
+            .collect::<Vec<_>>();
+        let updates = writes
+            .iter()
+            .filter(|w| w.action() == &WriteOpAction::Update)
+            .collect::<Vec<_>>();
+        let uris: Vec<String> = deletes
+            .iter()
+            .chain(updates.iter())
+            .map(|w| w.uri().to_string())
+            .collect();
+
+        if uris.is_empty() {
             return Ok(());
         }
 
-        // Find blobs that were referenced by the updated URIs
-        let placeholders = (0..updated_uris.len())
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let query = format!(
-            "DELETE FROM record_blob WHERE recordUri IN ({}) RETURNING blobCid",
-            placeholders
-        );
-
-        let mut query_builder = sqlx::query(&query);
-        for uri in updated_uris {
-            query_builder = query_builder.bind(uri);
-        }
-
-        let deleted_blobs = query_builder
-            .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(0))
-            .fetch_all(&self.reader.db)
-            .await
-            .context("failed to delete dereferenced blobs")?;
-
-        if deleted_blobs.is_empty() {
-            return Ok(());
-        }
-
-        // Find blobs that are still referenced elsewhere
-        let still_referenced = sqlx::query!(
-            r#"SELECT DISTINCT blobCid FROM record_blob WHERE blobCid IN (SELECT blobCid FROM record_blob)"#
+        // Delete blobs from record_blob table
+        let deleted_repo_blobs = sqlx::query!(
+            r#"DELETE FROM record_blob WHERE recordUri IN (?1) RETURNING *"#,
+            uris.join(",")
         )
         .fetch_all(&self.reader.db)
         .await
-        .context("failed to find referenced blobs")?;
+        .context("failed to delete dereferenced blobs")?;
 
-        let referenced_set: std::collections::HashSet<String> = still_referenced
-            .into_iter()
-            .map(|row| row.blobCid)
-            .collect();
-
-        // Delete blobs that are no longer referenced anywhere
-        let blobs_to_delete: Vec<String> = deleted_blobs
-            .into_iter()
-            .filter(|cid| !referenced_set.contains(cid))
-            .collect();
-
-        if !blobs_to_delete.is_empty() {
-            // Delete from database
-            let placeholders = (0..blobs_to_delete.len())
-                .map(|_| "?")
-                .collect::<Vec<_>>()
-                .join(",");
-
-            let query = format!("DELETE FROM blob WHERE cid IN ({})", placeholders);
-
-            let mut query_builder = sqlx::query(&query);
-            for cid in &blobs_to_delete {
-                query_builder = query_builder.bind(cid);
-            }
-
-            query_builder
-                .execute(&self.reader.db)
-                .await
-                .context("failed to delete blob records")?;
-
-            // Delete files from disk
-            for cid in blobs_to_delete {
-                let path = self.blobs_dir.join(format!("{}.blob", cid));
-                if let Err(e) = fs::remove_file(&path).await {
-                    tracing::warn!("Failed to delete blob file: {:?}", e);
-                }
-            }
+        if deleted_repo_blobs.is_empty() {
+            return Ok(());
         }
 
+        // Get the CIDs of the deleted blobs
+        let deleted_repo_blob_cids: Vec<String> = deleted_repo_blobs
+            .iter()
+            .map(|row| row.blobCid.clone())
+            .collect();
+
+        // Check for duplicates in the record_blob table
+        let duplicate_cids = sqlx::query!(
+            r#"SELECT blobCid FROM record_blob WHERE blobCid IN (?1)"#,
+            deleted_repo_blob_cids.join(",")
+        )
+        .fetch_all(&self.reader.db)
+        .await
+        .context("failed to fetch duplicate CIDs")?;
+
+        // Get new blob CIDs from the writes
+        let new_blob_cids: Vec<String> = writes
+            .iter()
+            .filter_map(|w| {
+                if w.action() == &WriteOpAction::Create || w.action() == &WriteOpAction::Update {
+                    todo!()
+                    // Some(w.blobs().iter().map(|b| b.r#ref.0.to_string()).collect())
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect();
+
+        // Determine which CIDs to keep and which to delete
+        let cids_to_keep: Vec<String> = new_blob_cids
+            .into_iter()
+            .chain(duplicate_cids.into_iter().map(|row| row.blobCid))
+            .collect();
+        let cids_to_delete: Vec<String> = deleted_repo_blob_cids
+            .into_iter()
+            .filter(|cid| !cids_to_keep.contains(cid))
+            .collect();
+        if cids_to_delete.is_empty() {
+            return Ok(());
+        }
+        // Delete blobs from the blob table
+        sqlx::query!(
+            r#"DELETE FROM blob WHERE cid IN (?1)"#,
+            cids_to_delete.join(",")
+        )
+        .execute(&self.reader.db)
+        .await
+        .context("failed to delete dereferenced blobs from blob table")?;
+        // Optionally delete blobs from the blob store
+        if !skip_blob_store {
+            todo!();
+        }
         Ok(())
     }
 
     /// Verify a blob's integrity and move it from temporary to permanent storage.
-    pub(super) async fn verify_blob_and_make_permanent(&self, blob: &Blob) -> Result<()> {
-        let cid_str = blob.r#ref.0.to_string();
-
-        // Get blob from database
-        let row = sqlx::query!(
-            r#"SELECT * FROM blob WHERE cid = ? AND takedownRef IS NULL"#,
-            cid_str
-        )
-        .fetch_optional(&self.reader.db)
-        .await
-        .context("failed to find blob")?;
-
-        let row = match row {
-            Some(r) => r,
-            None => return Err(anyhow::anyhow!("Could not find blob: {}", cid_str)),
-        };
-
-        // Verify size constraint
-        if (row.size as u64) > self.reader.config.limit {
-            return Err(anyhow::anyhow!(
-                "Blob is too large. Size is {} bytes but maximum allowed is {} bytes",
-                row.size,
-                self.reader.config.limit
-            ));
+    pub(crate) async fn verify_blob_and_make_permanent(
+        &self,
+        blob: &PreparedBlobRef,
+    ) -> Result<()> {
+        let cid_str = blob.cid.to_string();
+        let found = sqlx::query!(r#"SELECT * FROM blob WHERE cid = ?"#, cid_str)
+            .fetch_optional(&self.reader.db)
+            .await
+            .context("failed to fetch blob")?;
+        if found.is_none() {
+            return Err(anyhow::anyhow!("Blob not found"));
         }
-
-        // Check MIME type
-        if row.mimeType != blob.mime_type {
-            return Err(anyhow::anyhow!(
-                "MIME type does not match. Expected: {}, got: {}",
-                row.mimeType,
-                blob.mime_type
-            ));
+        let found = found.unwrap();
+        if found.takedownRef.is_some() {
+            return Err(anyhow::anyhow!("Blob has been taken down"));
         }
-
-        // If temp key exists, move to permanent storage
-        if let Some(temp_key) = &row.tempKey {
-            let temp_path = self.temp_dir.join(temp_key);
-            let blob_path = self.blobs_dir.join(format!("{}.blob", cid_str));
-
-            // Only move if temp file exists and permanent file doesn't
-            if fs::try_exists(&temp_path).await.unwrap_or(false)
-                && !fs::try_exists(&blob_path).await.unwrap_or(false)
-            {
-                // Create parent directories if needed
-                if let Some(parent) = blob_path.parent() {
-                    fs::create_dir_all(parent)
-                        .await
-                        .context("failed to create blob directory")?;
-                }
-
-                // Move file from temp to permanent location
-                fs::copy(&temp_path, &blob_path)
-                    .await
-                    .context("failed to copy blob to permanent storage")?;
-                fs::remove_file(&temp_path)
-                    .await
-                    .context("failed to remove temporary blob file")?;
-            }
-
-            // Update database
-            sqlx::query!(r#"UPDATE blob SET tempKey = NULL WHERE cid = ?"#, cid_str)
-                .execute(&self.reader.db)
-                .await
-                .context("failed to update blob record after making permanent")?;
+        if found.tempKey.is_some() {
+            todo!("verify_blob"); // verify_blob(blob, found);
+            self.reader
+                .blobstore
+                .make_permanent(found.tempKey.unwrap(), cid_str)
+                .await?;
+            sqlx::query!(
+                r#"UPDATE blob SET tempKey = NULL WHERE tempKey = ?"#,
+                found.tempKey
+            )
+            .execute(&self.reader.db)
+            .await
+            .context("failed to update blob temp key")?;
         }
-
         Ok(())
     }
 
-    /// Register a blob in the database
-    pub(super) async fn register_blob(
-        &self,
-        cid: String,
-        mime_type: String,
-        size: u64,
-    ) -> Result<()> {
-        self.reader.register_blob(cid, mime_type, size as i64).await
-    }
-
     /// Associate a blob with a record
-    pub(super) async fn associate_blob(&self, cid: &str, record_uri: &str) -> Result<()> {
+    pub(crate) async fn associate_blob(
+        &self,
+        blob: &PreparedBlobRef,
+        record_uri: &str,
+    ) -> Result<()> {
+        let cid = blob.cid.to_string();
         sqlx::query!(
             r#"
             INSERT INTO record_blob (blobCid, recordUri)

@@ -10,9 +10,9 @@ use atrium_repo::{
 use sha2::Digest;
 use sqlx::SqlitePool;
 
-use crate::repo::block_map::{BlockMap, CommitData};
+use crate::repo::{block_map::BlockMap, types::CommitData};
 
-use super::sql_repo_reader::SqlRepoReader;
+use super::sql_repo_reader::{RootInfo, SqlRepoReader};
 
 /// SQL-based repository transactor that extends the reader.
 pub(crate) struct SqlRepoTransactor {
@@ -33,6 +33,24 @@ impl SqlRepoTransactor {
             cache: BlockMap::new(),
             now,
         }
+    }
+
+    /// Get the root CID and revision of the repository.
+    pub(crate) async fn get_root_detailed(&self) -> Result<RootInfo> {
+        let row = sqlx::query!(
+            r#"
+                SELECT cid, rev
+                FROM repo_root
+                WHERE did = ?
+                LIMIT 1
+            "#,
+            self.reader.did
+        )
+        .fetch_one(&self.reader.db)
+        .await?;
+
+        let cid = Cid::from_str(&row.cid)?;
+        Ok(RootInfo { cid, rev: row.rev })
     }
 
     /// Proactively cache all blocks from a particular commit.

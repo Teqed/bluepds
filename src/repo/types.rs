@@ -163,6 +163,15 @@ impl PreparedWrite {
             PreparedWrite::Delete(w) => &w.action,
         }
     }
+
+    /// TEQ: Add blobs() impl
+    pub fn blobs(&self) -> Option<&Vec<PreparedBlobRef>> {
+        match self {
+            PreparedWrite::Create(w) => Some(&w.blobs),
+            PreparedWrite::Update(w) => Some(&w.blobs),
+            PreparedWrite::Delete(_) => None,
+        }
+    }
 }
 
 impl From<&PreparedWrite> for CommitAction {

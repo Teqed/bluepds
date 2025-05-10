@@ -2,3 +2,6 @@
 
 mod reader;
 mod transactor;
+
+pub(crate) use reader::BlobReader;
+pub(crate) use transactor::BlobTransactor;

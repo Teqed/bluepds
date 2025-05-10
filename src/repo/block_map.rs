@@ -10,41 +10,6 @@ use sha2::Digest;
 use std::collections::{BTreeMap, HashSet};
 use std::str::FromStr;
 
-/// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-repo/src/types.rs#L341C1-L350C2
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub(crate) struct CommitData {
-    pub cid: Cid,
-    pub rev: String,
-    pub since: Option<String>,
-    pub prev: Option<Cid>,
-    pub new_blocks: BlockMap,
-    pub relevant_blocks: BlockMap,
-    pub removed_cids: CidSet,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub enum CommitAction {
-    Create,
-    Update,
-    Delete,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct CommitOp {
-    pub action: CommitAction,
-    pub path: String,
-    pub cid: Option<Cid>,
-    pub prev: Option<Cid>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct CommitDataWithOps {
-    #[serde(flatten)]
-    pub commit_data: CommitData,
-    pub ops: Vec<CommitOp>,
-    pub prev_data: Option<Cid>,
-}
-
 /// Ref: https://github.com/blacksky-algorithms/rsky/blob/main/rsky-repo/src/cid_set.rs
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub(crate) struct CidSet {
