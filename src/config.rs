@@ -33,9 +33,6 @@ pub(crate) struct FirehoseConfig {
 pub(crate) struct RepoConfig {
     /// The path to the repository storage.
     pub path: PathBuf,
-    /// Use SQLite for repository storage instead of CAR files.
-    #[serde(default)]
-    pub use_sqlite: bool,
 }
 
 #[derive(Deserialize, Debug, Clone)]

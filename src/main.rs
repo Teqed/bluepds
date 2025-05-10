@@ -169,6 +169,14 @@ impl std::ops::Deref for SigningKey {
     }
 }
 
+impl SigningKey {
+    /// Import from a private key.
+    pub fn import(key: &[u8]) -> Result<Self> {
+        let key = Secp256k1Keypair::import(key).context("failed to import signing key")?;
+        Ok(Self(Arc::new(key)))
+    }
+}
+
 impl std::ops::Deref for RotationKey {
     type Target = Secp256k1Keypair;
 
