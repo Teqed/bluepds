@@ -1,8 +1,13 @@
 //! PDS repository endpoints /xrpc/com.atproto.repo.*)
+mod apply_writes;
+pub(crate) use apply_writes::apply_writes;
+
 use std::{collections::HashSet, str::FromStr};
 
 use anyhow::{Context as _, anyhow};
-use atrium_api::com::atproto::repo::apply_writes::{self, InputWritesItem, OutputResultsItem};
+use atrium_api::com::atproto::repo::apply_writes::{
+    self as atrium_apply_writes, InputWritesItem, OutputResultsItem,
+};
 use atrium_api::{
     com::atproto::repo::{self, defs::CommitMetaData},
     types::{
@@ -25,6 +30,8 @@ use rsky_syntax::aturi::AtUri;
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;
 
+use crate::repo::block_map::cid_for_cbor;
+use crate::repo::types::PreparedCreateOrUpdate;
 use crate::{
     AppState, Db, Error, Result, SigningKey,
     actor_store::{ActorStore, ActorStoreReader, ActorStoreTransactor, ActorStoreWriter},
@@ -111,45 +118,6 @@ async fn resolve_did(
     Ok((did.to_owned(), handle.to_owned()))
 }
 
-/// Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
-/// - POST /xrpc/com.atproto.repo.applyWrites
-/// ### Request Body
-/// - `repo`: `at-identifier` // The handle or DID of the repo (aka, current account).
-/// - `validate`: `boolean` // Can be set to 'false' to skip Lexicon schema validation of record data across all operations, 'true' to require it, or leave unset to validate only for known Lexicons.
-/// - `writes`: `object[]` // One of:
-/// - - com.atproto.repo.applyWrites.create
-/// - - com.atproto.repo.applyWrites.update
-/// - - com.atproto.repo.applyWrites.delete
-/// - `swap_commit`: `cid` // If provided, the entire operation will fail if the current repo commit CID does not match this value. Used to prevent conflicting repo mutations.
-async fn apply_writes(
-    user: AuthenticatedUser,
-    State(actor_store): State<ActorStore>,
-    State(skey): State<SigningKey>,
-    State(config): State<AppConfig>,
-    State(db): State<Db>,
-    State(fhp): State<FirehoseProducer>,
-    Json(input): Json<repo::apply_writes::Input>,
-) -> Result<Json<repo::apply_writes::Output>> {
-    // TODO: Implement validation when `input.validate` is set
-
-    // Ensure that we are updating the correct repository.
-    todo!();
-    // Convert ATProto writes to our internal format
-    todo!();
-    // Process the writes using the actor store
-    todo!();
-
-    // Update metrics
-    counter!(REPO_COMMITS).increment(1);
-    todo!();
-
-    // Send commit to firehose
-    todo!();
-
-    // Convert to API response format
-    todo!();
-}
-
 /// Create a single new repository record. Requires auth, implemented by PDS.
 /// - POST /xrpc/com.atproto.repo.createRecord
 /// ### Request Body
@@ -172,7 +140,7 @@ async fn create_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::create_record::Input>,
 ) -> Result<Json<repo::create_record::Output>> {
-    let write_result = apply_writes(
+    let write_result = apply_writes::apply_writes(
         user,
         State(actor_store),
         State(skey),
@@ -265,7 +233,7 @@ async fn put_record(
     }
     .into();
 
-    let write_result = apply_writes(
+    let write_result = apply_writes::apply_writes(
         user,
         State(actor_store),
         State(skey),
@@ -329,7 +297,7 @@ async fn delete_record(
 
     Ok(Json(
         repo::delete_record::OutputData {
-            commit: apply_writes(
+            commit: apply_writes::apply_writes(
                 user,
                 State(actor_store),
                 State(skey),
