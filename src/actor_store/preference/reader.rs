@@ -7,12 +7,10 @@ use sqlx::SqlitePool;
 pub(crate) struct PreferenceReader {
     /// Database connection.
     pub db: SqlitePool,
-    /// DID of the repository owner.
-    pub did: String,
 }
 
 /// User preference with type information.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub(crate) struct AccountPreference {
     /// Type of the preference.
     pub r#type: String,
@@ -22,19 +20,30 @@ pub(crate) struct AccountPreference {
 
 impl PreferenceReader {
     /// Create a new preference reader.
-    pub(crate) fn new(db: SqlitePool, did: String) -> Self {
-        Self { db, did }
+    pub(crate) fn new(db: SqlitePool) -> Self {
+        Self { db }
     }
 
     /// Get preferences for a namespace.
     pub(crate) async fn get_preferences(
         &self,
-        namespace: &str,
+        namespace: Option<&str>,
         scope: &str,
     ) -> Result<Vec<AccountPreference>> {
-        // TODO: Implement preference reader
-        // For now, just return an empty list
-        Ok(Vec::new())
+        let prefs_res = sqlx::query!("SELECT * FROM account_pref ORDER BY id")
+            .fetch_all(&self.db)
+            .await?;
+
+        let prefs = prefs_res
+            .into_iter()
+            .filter(|pref| {
+                namespace.map_or(true, |ns| pref_match_namespace(ns, &pref.name))
+                    && pref_in_scope(scope, &pref.name)
+            })
+            .map(|pref| serde_json::from_str(&pref.valueJson).unwrap())
+            .collect();
+
+        Ok(prefs)
     }
 }
 

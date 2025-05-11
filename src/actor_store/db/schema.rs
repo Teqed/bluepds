@@ -1,7 +1,8 @@
 //! Database schema definitions for the actor store.
 
 /// Repository root information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
+#[sqlx(rename_all = "camelCase")]
 pub(crate) struct RepoRoot {
     pub(crate) did: String,
     pub(crate) cid: String,
@@ -12,7 +13,8 @@ pub(crate) struct RepoRoot {
 pub(crate) const REPO_ROOT_TABLE: &str = "repo_root";
 
 /// Repository block (IPLD block)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
+#[sqlx(rename_all = "camelCase")]
 pub(crate) struct RepoBlock {
     pub(crate) cid: String,
     pub(crate) repo_rev: String,
@@ -23,7 +25,8 @@ pub(crate) struct RepoBlock {
 pub(crate) const REPO_BLOCK_TABLE: &str = "repo_block";
 
 /// Record information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
+#[sqlx(rename_all = "camelCase")]
 pub(crate) struct Record {
     pub(crate) uri: String,
     pub(crate) cid: String,
@@ -38,7 +41,8 @@ pub(crate) struct Record {
 pub(crate) const RECORD_TABLE: &str = "record";
 
 /// Blob information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
+#[sqlx(rename_all = "camelCase")]
 pub(crate) struct Blob {
     pub(crate) cid: String,
     pub(crate) mime_type: String,
@@ -54,7 +58,8 @@ pub(crate) struct Blob {
 pub(crate) const BLOB_TABLE: &str = "blob";
 
 /// Record-blob association
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
+#[sqlx(rename_all = "camelCase")]
 pub(crate) struct RecordBlob {
     pub(crate) blob_cid: String,
     pub(crate) record_uri: String,
@@ -63,7 +68,8 @@ pub(crate) struct RecordBlob {
 pub(crate) const RECORD_BLOB_TABLE: &str = "record_blob";
 
 /// Backlink between records
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
+#[sqlx(rename_all = "camelCase")]
 pub(crate) struct Backlink {
     pub(crate) uri: String,
     pub(crate) path: String,
@@ -73,7 +79,8 @@ pub(crate) struct Backlink {
 pub(crate) const BACKLINK_TABLE: &str = "backlink";
 
 /// Account preference
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
+#[sqlx(rename_all = "camelCase")]
 pub(crate) struct AccountPref {
     pub(crate) id: i64,
     pub(crate) name: String,
