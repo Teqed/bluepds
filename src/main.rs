@@ -2,6 +2,7 @@
 mod actor_store;
 mod auth;
 mod config;
+mod db;
 mod did;
 mod endpoints;
 mod error;
