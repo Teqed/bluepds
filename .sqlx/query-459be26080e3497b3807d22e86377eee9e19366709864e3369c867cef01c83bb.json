@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                INSERT INTO repo_block (cid, repoRev, size, content)\n                VALUES (?, ?, ?, ?)\n                ON CONFLICT DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "459be26080e3497b3807d22e86377eee9e19366709864e3369c867cef01c83bb"
+}

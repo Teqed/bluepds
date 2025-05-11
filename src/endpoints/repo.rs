@@ -34,7 +34,7 @@ use crate::repo::block_map::cid_for_cbor;
 use crate::repo::types::PreparedCreateOrUpdate;
 use crate::{
     AppState, Db, Error, Result, SigningKey,
-    actor_store::{ActorStore, ActorStoreReader, ActorStoreTransactor, ActorStoreWriter},
+    actor_store::{ActorStoreTransactor, ActorStoreWriter},
     auth::AuthenticatedUser,
     config::AppConfig,
     error::ErrorMessage,
@@ -140,55 +140,56 @@ async fn create_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::create_record::Input>,
 ) -> Result<Json<repo::create_record::Output>> {
-    let write_result = apply_writes::apply_writes(
-        user,
-        State(actor_store),
-        State(skey),
-        State(config),
-        State(db),
-        State(fhp),
-        Json(
-            repo::apply_writes::InputData {
-                repo: input.repo.clone(),
-                validate: input.validate,
-                swap_commit: input.swap_commit.clone(),
-                writes: vec![repo::apply_writes::InputWritesItem::Create(Box::new(
-                    repo::apply_writes::CreateData {
-                        collection: input.collection.clone(),
-                        rkey: input.rkey.clone(),
-                        value: input.record.clone(),
-                    }
-                    .into(),
-                ))],
-            }
-            .into(),
-        ),
-    )
-    .await
-    .context("failed to apply writes")?;
+    todo!();
+    // let write_result = apply_writes::apply_writes(
+    //     user,
+    //     State(actor_store),
+    //     State(skey),
+    //     State(config),
+    //     State(db),
+    //     State(fhp),
+    //     Json(
+    //         repo::apply_writes::InputData {
+    //             repo: input.repo.clone(),
+    //             validate: input.validate,
+    //             swap_commit: input.swap_commit.clone(),
+    //             writes: vec![repo::apply_writes::InputWritesItem::Create(Box::new(
+    //                 repo::apply_writes::CreateData {
+    //                     collection: input.collection.clone(),
+    //                     rkey: input.rkey.clone(),
+    //                     value: input.record.clone(),
+    //                 }
+    //                 .into(),
+    //             ))],
+    //         }
+    //         .into(),
+    //     ),
+    // )
+    // .await
+    // .context("failed to apply writes")?;
 
-    let create_result = if let repo::apply_writes::OutputResultsItem::CreateResult(create_result) =
-        write_result
-            .results
-            .clone()
-            .and_then(|result| result.first().cloned())
-            .context("unexpected output from apply_writes")?
-    {
-        Some(create_result)
-    } else {
-        None
-    }
-    .context("unexpected result from apply_writes")?;
+    // let create_result = if let repo::apply_writes::OutputResultsItem::CreateResult(create_result) =
+    //     write_result
+    //         .results
+    //         .clone()
+    //         .and_then(|result| result.first().cloned())
+    //         .context("unexpected output from apply_writes")?
+    // {
+    //     Some(create_result)
+    // } else {
+    //     None
+    // }
+    // .context("unexpected result from apply_writes")?;
 
-    Ok(Json(
-        repo::create_record::OutputData {
-            cid: create_result.cid.clone(),
-            commit: write_result.commit.clone(),
-            uri: create_result.uri.clone(),
-            validation_status: Some("unknown".to_owned()),
-        }
-        .into(),
-    ))
+    // Ok(Json(
+    //     repo::create_record::OutputData {
+    //         cid: create_result.cid.clone(),
+    //         commit: write_result.commit.clone(),
+    //         uri: create_result.uri.clone(),
+    //         validation_status: Some("unknown".to_owned()),
+    //     }
+    //     .into(),
+    // ))
 }
 
 /// Write a repository record, creating or updating it as needed. Requires auth, implemented by PDS.
@@ -214,62 +215,63 @@ async fn put_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::put_record::Input>,
 ) -> Result<Json<repo::put_record::Output>> {
-    // TODO: `input.swap_record`
-    // FIXME: "put" implies that we will create the record if it does not exist.
-    // We currently only update existing records and/or throw an error if one doesn't exist.
-    let input = (*input).clone();
-    let input = repo::apply_writes::InputData {
-        repo: input.repo,
-        validate: input.validate,
-        swap_commit: input.swap_commit,
-        writes: vec![repo::apply_writes::InputWritesItem::Update(Box::new(
-            repo::apply_writes::UpdateData {
-                collection: input.collection,
-                rkey: input.rkey,
-                value: input.record,
-            }
-            .into(),
-        ))],
-    }
-    .into();
+    todo!();
+    // // TODO: `input.swap_record`
+    // // FIXME: "put" implies that we will create the record if it does not exist.
+    // // We currently only update existing records and/or throw an error if one doesn't exist.
+    // let input = (*input).clone();
+    // let input = repo::apply_writes::InputData {
+    //     repo: input.repo,
+    //     validate: input.validate,
+    //     swap_commit: input.swap_commit,
+    //     writes: vec![repo::apply_writes::InputWritesItem::Update(Box::new(
+    //         repo::apply_writes::UpdateData {
+    //             collection: input.collection,
+    //             rkey: input.rkey,
+    //             value: input.record,
+    //         }
+    //         .into(),
+    //     ))],
+    // }
+    // .into();
 
-    let write_result = apply_writes::apply_writes(
-        user,
-        State(actor_store),
-        State(skey),
-        State(config),
-        State(db),
-        State(fhp),
-        Json(input),
-    )
-    .await
-    .context("failed to apply writes")?;
+    // let write_result = apply_writes::apply_writes(
+    //     user,
+    //     State(actor_store),
+    //     State(skey),
+    //     State(config),
+    //     State(db),
+    //     State(fhp),
+    //     Json(input),
+    // )
+    // .await
+    // .context("failed to apply writes")?;
 
-    let update_result = write_result
-        .results
-        .clone()
-        .and_then(|result| result.first().cloned())
-        .context("unexpected output from apply_writes")?;
-    let (cid, uri) = match update_result {
-        repo::apply_writes::OutputResultsItem::CreateResult(create_result) => (
-            Some(create_result.cid.clone()),
-            Some(create_result.uri.clone()),
-        ),
-        repo::apply_writes::OutputResultsItem::UpdateResult(update_result) => (
-            Some(update_result.cid.clone()),
-            Some(update_result.uri.clone()),
-        ),
-        repo::apply_writes::OutputResultsItem::DeleteResult(_) => (None, None),
-    };
-    Ok(Json(
-        repo::put_record::OutputData {
-            cid: cid.context("missing cid")?,
-            commit: write_result.commit.clone(),
-            uri: uri.context("missing uri")?,
-            validation_status: Some("unknown".to_owned()),
-        }
-        .into(),
-    ))
+    // let update_result = write_result
+    //     .results
+    //     .clone()
+    //     .and_then(|result| result.first().cloned())
+    //     .context("unexpected output from apply_writes")?;
+    // let (cid, uri) = match update_result {
+    //     repo::apply_writes::OutputResultsItem::CreateResult(create_result) => (
+    //         Some(create_result.cid.clone()),
+    //         Some(create_result.uri.clone()),
+    //     ),
+    //     repo::apply_writes::OutputResultsItem::UpdateResult(update_result) => (
+    //         Some(update_result.cid.clone()),
+    //         Some(update_result.uri.clone()),
+    //     ),
+    //     repo::apply_writes::OutputResultsItem::DeleteResult(_) => (None, None),
+    // };
+    // Ok(Json(
+    //     repo::put_record::OutputData {
+    //         cid: cid.context("missing cid")?,
+    //         commit: write_result.commit.clone(),
+    //         uri: uri.context("missing uri")?,
+    //         validation_status: Some("unknown".to_owned()),
+    //     }
+    //     .into(),
+    // ))
 }
 
 /// Delete a repository record, or ensure it doesn't exist. Requires auth, implemented by PDS.
@@ -293,40 +295,41 @@ async fn delete_record(
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<repo::delete_record::Input>,
 ) -> Result<Json<repo::delete_record::Output>> {
-    // TODO: `input.swap_record`
+    todo!();
+    // // TODO: `input.swap_record`
 
-    Ok(Json(
-        repo::delete_record::OutputData {
-            commit: apply_writes::apply_writes(
-                user,
-                State(actor_store),
-                State(skey),
-                State(config),
-                State(db),
-                State(fhp),
-                Json(
-                    repo::apply_writes::InputData {
-                        repo: input.repo.clone(),
-                        swap_commit: input.swap_commit.clone(),
-                        validate: None,
-                        writes: vec![repo::apply_writes::InputWritesItem::Delete(Box::new(
-                            repo::apply_writes::DeleteData {
-                                collection: input.collection.clone(),
-                                rkey: input.rkey.clone(),
-                            }
-                            .into(),
-                        ))],
-                    }
-                    .into(),
-                ),
-            )
-            .await
-            .context("failed to apply writes")?
-            .commit
-            .clone(),
-        }
-        .into(),
-    ))
+    // Ok(Json(
+    //     repo::delete_record::OutputData {
+    //         commit: apply_writes::apply_writes(
+    //             user,
+    //             State(actor_store),
+    //             State(skey),
+    //             State(config),
+    //             State(db),
+    //             State(fhp),
+    //             Json(
+    //                 repo::apply_writes::InputData {
+    //                     repo: input.repo.clone(),
+    //                     swap_commit: input.swap_commit.clone(),
+    //                     validate: None,
+    //                     writes: vec![repo::apply_writes::InputWritesItem::Delete(Box::new(
+    //                         repo::apply_writes::DeleteData {
+    //                             collection: input.collection.clone(),
+    //                             rkey: input.rkey.clone(),
+    //                         }
+    //                         .into(),
+    //                     ))],
+    //                 }
+    //                 .into(),
+    //             ),
+    //         )
+    //         .await
+    //         .context("failed to apply writes")?
+    //         .commit
+    //         .clone(),
+    //     }
+    //     .into(),
+    // ))
 }
 
 /// Get information about an account and repository, including the list of collections. Does not require auth.
@@ -499,13 +502,13 @@ async fn todo() -> Result<()> {
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route(concat!("/", repo::apply_writes::NSID), post(apply_writes))
-        .route(concat!("/", repo::create_record::NSID), post(create_record))
-        .route(concat!("/", repo::put_record::NSID), post(put_record))
-        .route(concat!("/", repo::delete_record::NSID), post(delete_record))
-        .route(concat!("/", repo::upload_blob::NSID), post(upload_blob))
-        .route(concat!("/", repo::describe_repo::NSID), get(describe_repo))
-        .route(concat!("/", repo::get_record::NSID), get(get_record))
+        // .route(concat!("/", repo::create_record::NSID), post(create_record))
+        // .route(concat!("/", repo::put_record::NSID), post(put_record))
+        // .route(concat!("/", repo::delete_record::NSID), post(delete_record))
+        // .route(concat!("/", repo::upload_blob::NSID), post(upload_blob))
+        // .route(concat!("/", repo::describe_repo::NSID), get(describe_repo))
+        // .route(concat!("/", repo::get_record::NSID), get(get_record))
         .route(concat!("/", repo::import_repo::NSID), post(todo))
         .route(concat!("/", repo::list_missing_blobs::NSID), get(todo))
-        .route(concat!("/", repo::list_records::NSID), get(list_records))
+    // .route(concat!("/", repo::list_records::NSID), get(list_records))
 }

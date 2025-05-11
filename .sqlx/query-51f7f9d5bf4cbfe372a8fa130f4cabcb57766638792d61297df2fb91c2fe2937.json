@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n                    INSERT INTO repo_root (did, cid, rev, indexedAt)\n                    VALUES (?, ?, ?, ?)\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "51f7f9d5bf4cbfe372a8fa130f4cabcb57766638792d61297df2fb91c2fe2937"
+}

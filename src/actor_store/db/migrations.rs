@@ -2,7 +2,7 @@
 use anyhow::{Context as _, Result};
 use sqlx::SqlitePool;
 
-use crate::actor_store::db::ActorDb;
+use super::ActorDb;
 
 /// Migration identifier
 type Migration = fn(&ActorDb) -> Result<()>;
@@ -24,7 +24,7 @@ impl Migrator {
 
     /// Run all migrations
     pub(crate) async fn migrate_to_latest(&self) -> Result<()> {
-        let past_migrations = sqlx::query!("SELECT name FROM migration")
+        let past_migrations = sqlx::query!("SELECT name FROM actor_migration")
             .fetch_all(&self.db.db)
             .await?;
         let mut past_migration_names = past_migrations
@@ -36,11 +36,14 @@ impl Migrator {
             let name = format!("{:p}", migration);
             if !past_migration_names.contains(&name) {
                 migration(&self.db)?;
-                sqlx::query("INSERT INTO migration (name, appliedAt) VALUES (?, ?)")
-                    .bind(name)
-                    .bind(chrono::Utc::now().to_rfc3339())
-                    .execute(&self.db.db)
-                    .await?;
+                sqlx::query!(
+                    "INSERT INTO actor_migration (name, appliedAt) VALUES (?, ?)",
+                    name,
+                    chrono::Utc::now().to_rfc3339()
+                )
+                .execute(&self.db.db)
+                .await
+                .context("failed to insert migration record")?;
             }
         }
         Ok(())
@@ -58,7 +61,8 @@ impl Migrator {
 fn _001_init(db: &ActorDb) -> Result<()> {
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(async { crate::actor_store::db::create_tables(&db.db).await })
+            .block_on(create_tables(&db.db))
+            .context("failed to create initial tables")
     })
 }
 
@@ -120,7 +124,7 @@ pub(crate) async fn create_tables(db: &SqlitePool) -> Result<()> {
             valueJson TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS migration (
+        CREATE TABLE IF NOT EXISTS actor_migration (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             appliedAt TEXT NOT NULL

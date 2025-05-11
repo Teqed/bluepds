@@ -17,9 +17,10 @@ const DEFAULT_PRAGMAS: &[(&str, &str)] = &[
 ];
 
 /// Database struct for managing SQLite connections and transactions.
-pub struct Database {
+#[derive(Clone)]
+pub(crate) struct Database {
     /// SQLite connection pool.
-    db: Arc<SqlitePool>,
+    pub(crate) db: Arc<SqlitePool>,
     /// Flag indicating if the database is destroyed.
     destroyed: Arc<Mutex<bool>>,
     /// Queue of commit hooks.

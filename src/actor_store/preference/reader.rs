@@ -1,12 +1,13 @@
 //! Reader for preference data in the actor store.
 
 use anyhow::Result;
-use sqlx::SqlitePool;
+
+use super::super::ActorDb;
 
 /// Reader for preference data.
 pub(crate) struct PreferenceReader {
     /// Database connection.
-    pub db: SqlitePool,
+    pub db: ActorDb,
 }
 
 /// User preference with type information.
@@ -20,7 +21,7 @@ pub(crate) struct AccountPreference {
 
 impl PreferenceReader {
     /// Create a new preference reader.
-    pub(crate) fn new(db: SqlitePool) -> Self {
+    pub(crate) fn new(db: ActorDb) -> Self {
         Self { db }
     }
 
@@ -31,7 +32,7 @@ impl PreferenceReader {
         scope: &str,
     ) -> Result<Vec<AccountPreference>> {
         let prefs_res = sqlx::query!("SELECT * FROM account_pref ORDER BY id")
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.db)
             .await?;
 
         let prefs = prefs_res

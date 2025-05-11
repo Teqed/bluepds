@@ -1,6 +1,7 @@
 // src/actor_store/preference/transactor.rs
 use anyhow::{Context as _, Result, bail};
-use sqlx::SqlitePool;
+
+use super::super::ActorDb;
 
 use super::reader::{AccountPreference, PreferenceReader, pref_in_scope, pref_match_namespace};
 
@@ -12,9 +13,9 @@ pub(crate) struct PreferenceTransactor {
 
 impl PreferenceTransactor {
     /// Create a new preference transactor.
-    pub(crate) fn new(db: SqlitePool, did: String) -> Self {
+    pub(crate) fn new(db: ActorDb) -> Self {
         Self {
-            reader: PreferenceReader::new(db, did),
+            reader: PreferenceReader::new(db),
         }
     }
 
@@ -46,6 +47,7 @@ impl PreferenceTransactor {
         // Get current preferences
         let mut tx = self
             .reader
+            .db
             .db
             .begin()
             .await
