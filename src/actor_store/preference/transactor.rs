@@ -48,7 +48,7 @@ impl PreferenceTransactor {
         let mut tx = self
             .reader
             .db
-            .db
+            .pool
             .begin()
             .await
             .context("failed to begin transaction")?;

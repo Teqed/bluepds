@@ -1,6 +1,6 @@
 //! Database migrations for the actor store.
 use anyhow::{Context as _, Result};
-use sqlx::SqlitePool;
+use sqlx::{Executor, SqlitePool};
 
 use super::ActorDb;
 
@@ -25,7 +25,7 @@ impl Migrator {
     /// Run all migrations
     pub(crate) async fn migrate_to_latest(&self) -> Result<()> {
         let past_migrations = sqlx::query!("SELECT name FROM actor_migration")
-            .fetch_all(&self.db.db)
+            .fetch_all(&self.db.pool)
             .await?;
         let mut past_migration_names = past_migrations
             .iter()
@@ -36,12 +36,13 @@ impl Migrator {
             let name = format!("{:p}", migration);
             if !past_migration_names.contains(&name) {
                 migration(&self.db)?;
+                let now = chrono::Utc::now().to_rfc3339();
                 sqlx::query!(
                     "INSERT INTO actor_migration (name, appliedAt) VALUES (?, ?)",
                     name,
-                    chrono::Utc::now().to_rfc3339()
+                    now,
                 )
-                .execute(&self.db.db)
+                .execute(&self.db.pool)
                 .await
                 .context("failed to insert migration record")?;
             }
@@ -61,7 +62,7 @@ impl Migrator {
 fn _001_init(db: &ActorDb) -> Result<()> {
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(create_tables(&db.db))
+            .block_on(create_tables(&db.pool))
             .context("failed to create initial tables")
     })
 }

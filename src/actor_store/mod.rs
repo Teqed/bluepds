@@ -5,7 +5,7 @@
 mod actor_store_transactor;
 mod actor_store_writer;
 mod blob;
-// mod db;
+mod db;
 mod preference;
 mod record;
 mod repo;
@@ -15,5 +15,5 @@ mod resources;
 // pub(crate) use actor_store_reader::ActorStoreReader;
 pub(crate) use actor_store_transactor::ActorStoreTransactor;
 pub(crate) use actor_store_writer::ActorStoreWriter;
-// pub(crate) use db::ActorDb;
+pub(crate) use db::ActorDb;
 pub(crate) use resources::ActorStoreResources;

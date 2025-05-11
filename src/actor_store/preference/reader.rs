@@ -32,7 +32,7 @@ impl PreferenceReader {
         scope: &str,
     ) -> Result<Vec<AccountPreference>> {
         let prefs_res = sqlx::query!("SELECT * FROM account_pref ORDER BY id")
-            .fetch_all(&self.db.db)
+            .fetch_all(&self.db.pool)
             .await?;
 
         let prefs = prefs_res

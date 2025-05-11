@@ -20,11 +20,11 @@ const DEFAULT_PRAGMAS: &[(&str, &str)] = &[
 #[derive(Clone)]
 pub(crate) struct Database {
     /// SQLite connection pool.
-    pub(crate) db: Arc<SqlitePool>,
+    pub(crate) pool: SqlitePool,
     /// Flag indicating if the database is destroyed.
-    destroyed: Arc<Mutex<bool>>,
+    pub(crate) destroyed: Arc<Mutex<bool>>,
     /// Queue of commit hooks.
-    commit_hooks: Arc<AsyncMutex<VecDeque<Box<dyn FnOnce() + Send>>>>,
+    pub(crate) commit_hooks: Arc<AsyncMutex<VecDeque<Box<dyn FnOnce() + Send>>>>,
 }
 
 impl Database {
@@ -39,7 +39,7 @@ impl Database {
 
         let pool = SqlitePool::connect_with(options).await?;
         Ok(Self {
-            db: Arc::new(pool),
+            pool,
             destroyed: Arc::new(Mutex::new(false)),
             commit_hooks: Arc::new(AsyncMutex::new(VecDeque::new())),
         })
@@ -47,7 +47,7 @@ impl Database {
 
     /// Ensures the database is using Write-Ahead Logging (WAL) mode.
     pub async fn ensure_wal(&self) -> sqlx::Result<()> {
-        let mut conn = self.db.acquire().await?;
+        let mut conn = self.pool.acquire().await?;
         sqlx::query("PRAGMA journal_mode = WAL")
             .execute(&mut *conn)
             .await?;
@@ -59,7 +59,7 @@ impl Database {
     where
         F: FnOnce(&mut Transaction<'_, Sqlite>) -> sqlx::Result<T>,
     {
-        let mut tx = self.db.begin().await?;
+        let mut tx = self.pool.begin().await?;
         let result = func(&mut tx)?;
         tx.commit().await?;
         self.run_commit_hooks().await;
@@ -98,7 +98,7 @@ impl Database {
             return Ok(());
         }
         *destroyed = true;
-        drop(self.db.clone()); // Drop the pool to close connections.
+        drop(self.pool.clone()); // Drop the pool to close connections.
         Ok(())
     }
 

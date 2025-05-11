@@ -13,7 +13,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 use super::BlobReader;
-use crate::repo::types::{PreparedBlobRef, PreparedWrite, WriteOpAction};
+use crate::repo::types::{BlobStore, PreparedBlobRef, PreparedWrite, WriteOpAction};
 
 /// Blob metadata for a newly uploaded blob.
 #[derive(Debug, Clone)]
@@ -163,16 +163,17 @@ impl BlobTransactor {
 
     /// Process blobs for a repository write operation.
     pub(crate) async fn process_write_blobs(&self, writes: Vec<PreparedWrite>) -> Result<()> {
-        self.delete_dereferenced_blobs(writes)
+        self.delete_dereferenced_blobs(writes, false)
             .await
             .context("failed to delete dereferenced blobs")?;
         for write in writes {
-            if write.action == WriteOpAction::Create || write.action == WriteOpAction::Update {
-                for blob in &write.blobs {
+            if write.action() == &WriteOpAction::Create || write.action() == &WriteOpAction::Update
+            {
+                for blob in &write.blobs() {
                     self.verify_blob_and_make_permanent(blob)
                         .await
                         .context("failed to verify and make blob permanent")?;
-                    self.associate_blob(&blob.r#ref.0.to_string(), &write.uri)
+                    self.associate_blob(&blob.r#ref.0.to_string(), &write.uri())
                         .await
                         .context("failed to associate blob with record")?;
                 }

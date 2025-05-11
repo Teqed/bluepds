@@ -4,24 +4,25 @@ use anyhow::{Context as _, Result};
 use atrium_repo::Cid;
 use rsky_repo::types::WriteOpAction;
 use rsky_syntax::aturi::AtUri;
-use sqlx::SqlitePool;
 
+use crate::actor_store::ActorDb;
 use crate::actor_store::db::schema::Backlink;
 use crate::actor_store::record::reader::{RecordReader, StatusAttr, get_backlinks};
+use crate::repo::types::BlobStore as BlobStore;
 
 /// Transaction handler for record operations.
 pub(crate) struct RecordTransactor {
     /// The record reader.
     pub reader: RecordReader,
     /// The blob store.
-    pub blobstore: SqlitePool, // This will be replaced with proper BlobStore type
+    pub blobstore: BlobStore,
 }
 
 impl RecordTransactor {
     /// Create a new record transactor.
-    pub(crate) fn new(db: SqlitePool, blobstore: SqlitePool, did: String) -> Self {
+    pub(crate) fn new(db: ActorDb, blobstore: BlobStore) -> Self {
         Self {
-            reader: RecordReader::new(db, did),
+            reader: RecordReader::new(db),
             blobstore,
         }
     }
@@ -79,7 +80,7 @@ impl RecordTransactor {
             repo_rev,
             now
         )
-        .execute(&self.reader.db)
+        .execute(&self.reader.db.pool)
         .await
         .context("failed to index record")?;
 
@@ -107,7 +108,7 @@ impl RecordTransactor {
         tracing::debug!("Deleting indexed record {}", uri_str);
 
         // Delete the record and its backlinks in a transaction
-        let mut tx = self.reader.db.begin().await?;
+        let mut tx = self.reader.db.pool.begin().await?;
 
         // Delete from record table
         sqlx::query!("DELETE FROM record WHERE uri = ?", uri_str)
@@ -130,7 +131,7 @@ impl RecordTransactor {
     /// Remove backlinks for a URI.
     pub(crate) async fn remove_backlinks_by_uri(&self, uri: &str) -> Result<()> {
         sqlx::query!("DELETE FROM backlink WHERE uri = ?", uri)
-            .execute(&self.reader.db)
+            .execute(&self.reader.db.pool)
             .await
             .context("failed to remove backlinks")?;
 
@@ -165,7 +166,7 @@ impl RecordTransactor {
 
         query
             .build()
-            .execute(&self.reader.db)
+            .execute(&self.reader.db.pool)
             .await
             .context("failed to add backlinks")?;
 
@@ -192,7 +193,7 @@ impl RecordTransactor {
             takedown_ref,
             uri_str
         )
-        .execute(&self.reader.db)
+        .execute(&self.reader.db.pool)
         .await
         .context("failed to update record takedown status")?;
 

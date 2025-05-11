@@ -7,6 +7,8 @@ use atrium_api::com::atproto::admin::defs::StatusAttrData;
 use atrium_repo::Cid;
 use sqlx::{Row, SqlitePool};
 
+use crate::repo::types::{BlobStore, BlobStoreTrait};
+
 /// Reader for blob data in the actor store.
 pub(crate) struct BlobReader {
     /// Database connection.
@@ -47,7 +49,7 @@ impl BlobReader {
     /// Get a blob's full data and metadata.
     pub(crate) async fn get_blob(&self, cid: &Cid) -> Result<Option<BlobData>> {
         let metadata = self.get_blob_metadata(cid).await?;
-        let blob_stream = self.blobstore.get_stream(cid).await?;
+        let blob_stream = self.blobstore.get_stream(*cid)?;
         if blob_stream.is_none() {
             return Err(anyhow::anyhow!("Blob not found")); // InvalidRequestError('Blob not found')
         }
@@ -240,7 +242,7 @@ pub(crate) struct BlobData {
     pub size: u64,
     /// The MIME type of the blob.
     pub mime_type: Option<String>,
-    pub stream: BlobStream,
+    pub stream: BlobStream, // stream.Readable,
 }
 
 /// Options for listing blobs.

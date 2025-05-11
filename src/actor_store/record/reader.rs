@@ -3,17 +3,15 @@
 use anyhow::{Context as _, Result};
 use atrium_repo::Cid;
 use rsky_syntax::aturi::AtUri;
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 use std::str::FromStr;
 
-use crate::actor_store::db::schema::Backlink;
+use crate::actor_store::{ActorDb, db::schema::Backlink};
 
 /// Reader for record data.
 pub(crate) struct RecordReader {
     /// Database connection.
-    pub db: SqlitePool,
-    /// DID of the repository owner.
-    pub did: String,
+    pub db: ActorDb,
 }
 
 /// Record descriptor containing URI, path, and CID.
@@ -62,14 +60,14 @@ pub(crate) struct ListRecordsOptions {
 
 impl RecordReader {
     /// Create a new record reader.
-    pub(crate) fn new(db: SqlitePool, did: String) -> Self {
-        Self { db, did }
+    pub(crate) fn new(db: ActorDb) -> Self {
+        Self { db }
     }
 
     /// Count the total number of records.
     pub(crate) async fn record_count(&self) -> Result<i64> {
         let result = sqlx::query!(r#"SELECT COUNT(*) as count FROM record"#)
-            .fetch_one(&self.db)
+            .fetch_one(&self.db.pool)
             .await
             .context("failed to count records")?;
 
@@ -86,7 +84,7 @@ impl RecordReader {
                 "SELECT uri, cid FROM record WHERE uri > ? ORDER BY uri ASC LIMIT 1000",
                 current_cursor
             )
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.pool)
             .await
             .context("failed to fetch records")?;
 
@@ -116,7 +114,7 @@ impl RecordReader {
     /// List all collections in the repository.
     pub(crate) async fn list_collections(&self) -> Result<Vec<String>> {
         let rows = sqlx::query!("SELECT collection FROM record GROUP BY collection")
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.pool)
             .await
             .context("failed to list collections")?;
 
@@ -173,7 +171,7 @@ impl RecordReader {
 
         let rows = query
             .build()
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.pool)
             .await
             .context("failed to list records")?;
 
@@ -227,7 +225,7 @@ impl RecordReader {
 
         let row = query
             .build()
-            .fetch_optional(&self.db)
+            .fetch_optional(&self.db.pool)
             .await
             .context("failed to fetch record")?;
 
@@ -276,7 +274,7 @@ impl RecordReader {
 
         let result = query
             .build()
-            .fetch_optional(&self.db)
+            .fetch_optional(&self.db.pool)
             .await
             .context("failed to check record existence")?;
 
@@ -286,7 +284,7 @@ impl RecordReader {
     /// Get the takedown status of a record.
     pub(crate) async fn get_record_takedown_status(&self, uri: &str) -> Result<Option<StatusAttr>> {
         let result = sqlx::query!("SELECT takedownRef FROM record WHERE uri = ?", uri)
-            .fetch_optional(&self.db)
+            .fetch_optional(&self.db.pool)
             .await
             .context("failed to fetch takedown status")?;
 
@@ -311,7 +309,7 @@ impl RecordReader {
     /// Get the current CID for a record URI.
     pub(crate) async fn get_current_record_cid(&self, uri: &str) -> Result<Option<Cid>> {
         let result = sqlx::query!("SELECT cid FROM record WHERE uri = ?", uri)
-            .fetch_optional(&self.db)
+            .fetch_optional(&self.db.pool)
             .await
             .context("failed to fetch record CID")?;
 
@@ -344,7 +342,7 @@ impl RecordReader {
             link_to,
             collection
         )
-        .fetch_all(&self.db)
+        .fetch_all(&self.db.pool)
         .await
         .context("failed to fetch record backlinks")?;
 
@@ -358,7 +356,6 @@ impl RecordReader {
                 repo_rev: Some(row.repoRev),
                 indexed_at: row.indexedAt,
                 takedown_ref: row.takedownRef,
-                did: self.did.clone(),
             });
         }
 
@@ -392,7 +389,7 @@ impl RecordReader {
                 backlink.link_to,
                 uri_collection
             )
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.pool)
             .await
             .context("failed to fetch backlink conflicts")?;
 
@@ -414,7 +411,7 @@ impl RecordReader {
                 "SELECT cid FROM repo_block WHERE cid > ? ORDER BY cid ASC LIMIT 1000",
                 current_cursor
             )
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.pool)
             .await
             .context("failed to fetch blocks")?;
 
@@ -445,7 +442,7 @@ impl RecordReader {
             LIMIT 1
             "#
         )
-        .fetch_optional(&self.db)
+        .fetch_optional(&self.db.pool)
         .await
         .context("failed to fetch profile record")?;
 
@@ -468,7 +465,7 @@ impl RecordReader {
             r#"SELECT repoRev FROM record WHERE repoRev <= ? LIMIT 1"#,
             rev
         )
-        .fetch_optional(&self.db)
+        .fetch_optional(&self.db.pool)
         .await
         .context("failed to check revision existence")?;
 
@@ -488,7 +485,7 @@ impl RecordReader {
             "#,
             rev
         )
-        .fetch_all(&self.db)
+        .fetch_all(&self.db.pool)
         .await
         .context("failed to fetch records since revision")?;
 
@@ -527,8 +524,6 @@ pub(crate) struct Record {
     pub indexed_at: String,
     /// Reference for takedown, if any.
     pub takedown_ref: Option<String>,
-    /// DID of the repository owner.
-    pub did: String,
 }
 
 /// Status attribute for takedowns

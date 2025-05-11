@@ -1070,3 +1070,72 @@ pub struct RecordCidClaim {
     pub rkey: String,
     pub cid: Option<Cid>,
 }
+
+pub(crate) struct BlobStore;
+pub(crate) trait BlobStoreTrait {
+    fn put_temp(&self, bytes: &[u8]) -> Result<String>; // bytes: Uint8Array | stream.Readable
+    fn make_permanent(&self, key: &str, cid: Cid) -> Result<()>;
+    fn put_permanent(&self, cid: Cid, bytes: &[u8]) -> Result<()>;
+    fn quarantine(&self, cid: Cid) -> Result<()>;
+    fn unquarantine(&self, cid: Cid) -> Result<()>;
+    fn get_bytes(&self, cid: Cid) -> Result<Vec<u8>>;
+    fn get_stream(&self, cid: Cid) -> Result<Vec<u8>>; // Promise<stream.Readable>
+    fn has_temp(&self, key: &str) -> Result<bool>;
+    fn has_stored(&self, cid: Cid) -> Result<bool>;
+    fn delete(&self, cid: Cid) -> Result<()>;
+    fn delete_many(&self, cids: Vec<Cid>) -> Result<()>;
+}
+impl BlobStoreTrait for BlobStore {
+    fn put_temp(&self, bytes: &[u8]) -> Result<String> {
+        // Implementation here
+        Ok("temp_key".to_string())
+    }
+
+    fn make_permanent(&self, key: &str, cid: Cid) -> Result<()> {
+        // Implementation here
+        Ok(())
+    }
+
+    fn put_permanent(&self, cid: Cid, bytes: &[u8]) -> Result<()> {
+        // Implementation here
+        Ok(())
+    }
+
+    fn quarantine(&self, cid: Cid) -> Result<()> {
+        // Implementation here
+        Ok(())
+    }
+
+    fn unquarantine(&self, cid: Cid) -> Result<()> {
+        // Implementation here
+        Ok(())
+    }
+
+    fn get_bytes(&self, cid: Cid) -> Result<Vec<u8>> {
+        // Implementation here
+        Ok(vec![])
+    }
+
+    fn get_stream(&self, cid: Cid) -> Result<Vec<u8>> {
+        // Implementation here
+        Ok(vec![])
+    }
+
+    fn has_temp(&self, key: &str) -> Result<bool> {
+        // Implementation here
+        Ok(true)
+    }
+
+    fn has_stored(&self, cid: Cid) -> Result<bool> {
+        // Implementation here
+        Ok(true)
+    }
+    fn delete(&self, cid: Cid) -> Result<()> {
+        // Implementation here
+        Ok(())
+    }
+    fn delete_many(&self, cids: Vec<Cid>) -> Result<()> {
+        // Implementation here
+        Ok(())
+    }
+}
