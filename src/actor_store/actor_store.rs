@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use sqlx::SqlitePool;
 
+use super::ActorDb;
 use super::actor_store_reader::ActorStoreReader;
 use super::actor_store_transactor::ActorStoreTransactor;
 use super::actor_store_writer::ActorStoreWriter;
@@ -55,7 +55,7 @@ impl ActorStore {
         todo!()
     }
 
-    pub(crate) async fn open_db(&self, did: &str) -> Result<SqlitePool> {
+    pub(crate) async fn open_db(&self, did: &str) -> Result<ActorDb> {
         // const { dbLocation } = await this.getLocation(did)
         // const exists = await fileExists(dbLocation)
         // if (!exists) {

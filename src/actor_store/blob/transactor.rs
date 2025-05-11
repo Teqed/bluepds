@@ -6,14 +6,18 @@ use atrium_api::{
     types::{Blob, CidLink},
 };
 use atrium_repo::Cid;
-use sha2::Digest;
-use sqlx::{Row, SqlitePool};
-use std::path::PathBuf;
-use tokio::fs;
+use futures::FutureExt;
+use futures::future::BoxFuture;
 use uuid::Uuid;
 
-use super::BlobReader;
-use crate::repo::types::{BlobStore, PreparedBlobRef, PreparedWrite, WriteOpAction};
+use super::{BackgroundQueue, BlobReader};
+use crate::{
+    actor_store::ActorDb,
+    repo::{
+        block_map::sha256_raw_to_cid,
+        types::{BlobStore, BlobStoreTrait as _, PreparedBlobRef, PreparedWrite, WriteOpAction},
+    },
+};
 
 /// Blob metadata for a newly uploaded blob.
 #[derive(Debug, Clone)]
@@ -42,7 +46,7 @@ pub(crate) struct BlobTransactor {
 impl BlobTransactor {
     /// Create a new blob transactor.
     pub(crate) fn new(
-        db: SqlitePool,
+        db: ActorDb,
         blob_store: BlobStore,
         background_queue: BackgroundQueue,
     ) -> Self {
@@ -79,7 +83,7 @@ impl BlobTransactor {
 
         query
             .build()
-            .execute(&self.reader.db)
+            .execute(&self.reader.db.pool)
             .await
             .context("failed to insert blob references")?;
 
@@ -93,6 +97,7 @@ impl BlobTransactor {
         blob_stream: &[u8],
     ) -> Result<BlobMetadata> {
         let temp_key = self.reader.blobstore.put_temp(blob_stream).await?;
+        todo!();
         let size = stream_size(blob_stream).await?;
         let sha256 = sha256_stream(blob_stream).await?;
         let img_info = img::maybe_get_info(blob_stream).await?;
@@ -115,7 +120,7 @@ impl BlobTransactor {
 
         // Check if blob exists and is taken down
         let existing = sqlx::query!(r#"SELECT takedownRef FROM blob WHERE cid = ?"#, cid_str)
-            .fetch_optional(&self.reader.db)
+            .fetch_optional(&self.reader.db.pool)
             .await
             .context("failed to check blob existence")?;
 
@@ -149,7 +154,7 @@ impl BlobTransactor {
             metadata.height,
             now,
         )
-        .execute(&self.reader.db)
+        .execute(&self.reader.db.pool)
         .await
         .context("failed to track blob in database")?;
 
@@ -163,22 +168,28 @@ impl BlobTransactor {
 
     /// Process blobs for a repository write operation.
     pub(crate) async fn process_write_blobs(&self, writes: Vec<PreparedWrite>) -> Result<()> {
-        self.delete_dereferenced_blobs(writes, false)
+        self.delete_dereferenced_blobs(writes.clone(), false)
             .await
             .context("failed to delete dereferenced blobs")?;
-        for write in writes {
+
+        // Process blobs for creates and updates
+        let mut futures: Vec<BoxFuture<'_, Result<()>>> = Vec::new();
+        for write in writes.iter() {
             if write.action() == &WriteOpAction::Create || write.action() == &WriteOpAction::Update
             {
-                for blob in &write.blobs() {
-                    self.verify_blob_and_make_permanent(blob)
-                        .await
-                        .context("failed to verify and make blob permanent")?;
-                    self.associate_blob(&blob.r#ref.0.to_string(), &write.uri())
-                        .await
-                        .context("failed to associate blob with record")?;
+                for blob in write.blobs().unwrap().iter() {
+                    futures.push(Box::pin(self.verify_blob_and_make_permanent(blob)));
+                    futures.push(Box::pin(self.associate_blob(blob, write.uri())));
                 }
             }
         }
+
+        // Wait for all blob operations to complete
+        futures::future::join_all(futures)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+
         Ok(())
     }
 
@@ -205,7 +216,7 @@ impl BlobTransactor {
             takedown_ref,
             cid_str
         )
-        .execute(&self.reader.db)
+        .execute(&self.reader.db.pool)
         .await
         .context("failed to update blob takedown status")?;
 
@@ -237,11 +248,12 @@ impl BlobTransactor {
         }
 
         // Delete blobs from record_blob table
+        let uris = uris.join(",");
         let deleted_repo_blobs = sqlx::query!(
             r#"DELETE FROM record_blob WHERE recordUri IN (?1) RETURNING *"#,
-            uris.join(",")
+            uris
         )
-        .fetch_all(&self.reader.db)
+        .fetch_all(&self.reader.db.pool)
         .await
         .context("failed to delete dereferenced blobs")?;
 
@@ -256,11 +268,12 @@ impl BlobTransactor {
             .collect();
 
         // Check for duplicates in the record_blob table
+        let duplicate_cids = deleted_repo_blob_cids.join(",");
         let duplicate_cids = sqlx::query!(
             r#"SELECT blobCid FROM record_blob WHERE blobCid IN (?1)"#,
-            deleted_repo_blob_cids.join(",")
+            duplicate_cids
         )
-        .fetch_all(&self.reader.db)
+        .fetch_all(&self.reader.db.pool)
         .await
         .context("failed to fetch duplicate CIDs")?;
 
@@ -269,8 +282,13 @@ impl BlobTransactor {
             .iter()
             .filter_map(|w| {
                 if w.action() == &WriteOpAction::Create || w.action() == &WriteOpAction::Update {
-                    todo!()
-                    // Some(w.blobs().iter().map(|b| b.r#ref.0.to_string()).collect())
+                    Some(
+                        w.blobs()
+                            .unwrap()
+                            .iter()
+                            .map(|b| b.cid.to_string())
+                            .collect::<Vec<String>>(),
+                    )
                 } else {
                     None
                 }
@@ -291,13 +309,11 @@ impl BlobTransactor {
             return Ok(());
         }
         // Delete blobs from the blob table
-        sqlx::query!(
-            r#"DELETE FROM blob WHERE cid IN (?1)"#,
-            cids_to_delete.join(",")
-        )
-        .execute(&self.reader.db)
-        .await
-        .context("failed to delete dereferenced blobs from blob table")?;
+        let cids_to_delete = cids_to_delete.join(",");
+        sqlx::query!(r#"DELETE FROM blob WHERE cid IN (?1)"#, cids_to_delete)
+            .execute(&self.reader.db.pool)
+            .await
+            .context("failed to delete dereferenced blobs from blob table")?;
         // Optionally delete blobs from the blob store
         if !skip_blob_store {
             todo!();
@@ -312,7 +328,7 @@ impl BlobTransactor {
     ) -> Result<()> {
         let cid_str = blob.cid.to_string();
         let found = sqlx::query!(r#"SELECT * FROM blob WHERE cid = ?"#, cid_str)
-            .fetch_optional(&self.reader.db)
+            .fetch_optional(&self.reader.db.pool)
             .await
             .context("failed to fetch blob")?;
         if found.is_none() {
@@ -323,16 +339,17 @@ impl BlobTransactor {
             return Err(anyhow::anyhow!("Blob has been taken down"));
         }
         if found.tempKey.is_some() {
-            todo!("verify_blob"); // verify_blob(blob, found);
+            todo!("verify_blob");
+            verify_blob(blob, found);
             self.reader
                 .blobstore
-                .make_permanent(found.tempKey.unwrap(), cid_str)
+                .make_permanent(&found.tempKey.unwrap(), blob.cid)
                 .await?;
             sqlx::query!(
                 r#"UPDATE blob SET tempKey = NULL WHERE tempKey = ?"#,
                 found.tempKey
             )
-            .execute(&self.reader.db)
+            .execute(&self.reader.db.pool)
             .await
             .context("failed to update blob temp key")?;
         }
@@ -355,7 +372,7 @@ impl BlobTransactor {
             cid,
             record_uri
         )
-        .execute(&self.reader.db)
+        .execute(&self.reader.db.pool)
         .await
         .context("failed to associate blob with record")?;
 

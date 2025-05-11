@@ -1,6 +1,5 @@
 //! Database migrations for the actor store.
 use anyhow::{Context as _, Result};
-use sqlx::{Executor, SqlitePool};
 
 use super::ActorDb;
 
@@ -62,13 +61,13 @@ impl Migrator {
 fn _001_init(db: &ActorDb) -> Result<()> {
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(create_tables(&db.pool))
+            .block_on(create_tables(&db))
             .context("failed to create initial tables")
     })
 }
 
 /// Create the initial database tables
-pub(crate) async fn create_tables(db: &SqlitePool) -> Result<()> {
+pub(crate) async fn create_tables(db: &ActorDb) -> Result<()> {
     sqlx::query(
         "
         CREATE TABLE IF NOT EXISTS repo_root (
@@ -139,7 +138,7 @@ pub(crate) async fn create_tables(db: &SqlitePool) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_backlink_link_to ON backlink(path, linkTo);
         ",
     )
-    .execute(db)
+    .execute(&db.pool)
     .await
     .context("failed to create tables")?;
 

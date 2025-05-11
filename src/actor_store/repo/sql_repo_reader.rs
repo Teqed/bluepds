@@ -5,19 +5,22 @@ use atrium_repo::{
     Cid,
     blockstore::{AsyncBlockStoreRead, Error as BlockstoreError},
 };
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::repo::block_map::{BlockMap, BlocksAndMissing, CidSet};
+use crate::{
+    actor_store::ActorDb,
+    repo::block_map::{BlockMap, BlocksAndMissing, CidSet},
+};
 
 /// SQL-based repository reader.
 pub(crate) struct SqlRepoReader {
     /// Cache for blocks to avoid redundant database queries.
     pub cache: Arc<RwLock<BlockMap>>,
     /// Database connection.
-    pub db: SqlitePool,
+    pub db: ActorDb,
     /// DID of the repository owner.
     pub did: String,
 }
@@ -32,7 +35,7 @@ pub(crate) struct RootInfo {
 
 impl SqlRepoReader {
     /// Create a new SQL repository reader.
-    pub(crate) fn new(db: SqlitePool, did: String) -> Self {
+    pub(crate) fn new(db: ActorDb, did: String) -> Self {
         Self {
             cache: Arc::new(RwLock::new(BlockMap::new())),
             db,
@@ -59,10 +62,9 @@ impl SqlRepoReader {
 
         // Not in cache, query from database
         let cid_str = cid.to_string();
-        let did = self.did.clone();
 
         let content = sqlx::query!(r#"SELECT content FROM repo_block WHERE cid = ?"#, cid_str,)
-            .fetch_optional(&self.db)
+            .fetch_optional(&self.db.pool)
             .await
             .context("failed to fetch block content")?
             .map(|row| row.content);
@@ -80,7 +82,7 @@ impl SqlRepoReader {
     pub(crate) async fn get_root_detailed(&self) -> Result<RootInfo> {
         let did = self.did.clone();
         let row = sqlx::query!(r#"SELECT cid, rev FROM repo_root WHERE did = ?"#, did)
-            .fetch_one(&self.db)
+            .fetch_one(&self.db.pool)
             .await
             .context("failed to fetch repo root")?;
 
@@ -134,7 +136,7 @@ impl SqlRepoReader {
                         row.get::<Vec<u8>, _>("content"),
                     )
                 })
-                .fetch_all(&self.db)
+                .fetch_all(&self.db.pool)
                 .await?;
 
             for (cid_str, content) in rows {

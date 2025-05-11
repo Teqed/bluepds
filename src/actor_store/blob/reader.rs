@@ -5,21 +5,24 @@ use std::str::FromStr;
 use anyhow::{Context as _, Result};
 use atrium_api::com::atproto::admin::defs::StatusAttrData;
 use atrium_repo::Cid;
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 
-use crate::repo::types::{BlobStore, BlobStoreTrait};
+use crate::{
+    actor_store::ActorDb,
+    repo::types::{BlobStore, BlobStoreTrait, BlobStream},
+};
 
 /// Reader for blob data in the actor store.
 pub(crate) struct BlobReader {
     /// Database connection.
-    pub db: SqlitePool,
+    pub db: ActorDb,
     /// BlobStore.
     pub blobstore: BlobStore,
 }
 
 impl BlobReader {
     /// Create a new blob reader.
-    pub(crate) fn new(db: SqlitePool, blobstore: BlobStore) -> Self {
+    pub(crate) fn new(db: ActorDb, blobstore: BlobStore) -> Self {
         Self { db, blobstore }
     }
 
@@ -34,7 +37,7 @@ impl BlobReader {
             "#,
             cid_str
         )
-        .fetch_optional(&self.db)
+        .fetch_optional(&self.db.pool)
         .await
         .context("failed to fetch blob metadata")?;
         if found.is_none() {
@@ -49,8 +52,8 @@ impl BlobReader {
     /// Get a blob's full data and metadata.
     pub(crate) async fn get_blob(&self, cid: &Cid) -> Result<Option<BlobData>> {
         let metadata = self.get_blob_metadata(cid).await?;
-        let blob_stream = self.blobstore.get_stream(*cid)?;
-        if blob_stream.is_none() {
+        let blob_stream = self.blobstore.get_stream(*cid).await;
+        if blob_stream.is_err() {
             return Err(anyhow::anyhow!("Blob not found")); // InvalidRequestError('Blob not found')
         }
         let metadata = metadata.unwrap();
@@ -80,7 +83,7 @@ impl BlobReader {
         let blobs = query
             .build()
             .map(|row: sqlx::sqlite::SqliteRow| row.get::<String, _>(0))
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.pool)
             .await
             .context("failed to fetch blobs")?;
         Ok(blobs)
@@ -102,7 +105,7 @@ impl BlobReader {
         //   : { applied: false }
         let cid_str = cid.to_string();
         let result = sqlx::query!(r#"SELECT takedownRef FROM blob WHERE cid = ?"#, cid_str)
-            .fetch_optional(&self.db)
+            .fetch_optional(&self.db.pool)
             .await
             .context("failed to fetch blob takedown status")?;
 
@@ -133,7 +136,7 @@ impl BlobReader {
             r#"SELECT recordUri FROM record_blob WHERE blobCid = ?"#,
             cid_str
         )
-        .fetch_all(&self.db)
+        .fetch_all(&self.db.pool)
         .await
         .context("failed to fetch records for blob")?;
 
@@ -153,7 +156,7 @@ impl BlobReader {
             r#"SELECT blob.cid FROM blob INNER JOIN record_blob ON record_blob.blobCid = blob.cid WHERE recordUri = ?"#,
             record_uri
         )
-        .fetch_all(&self.db)
+        .fetch_all(&self.db.pool)
         .await
         .context("failed to fetch blobs for record")?;
 
@@ -163,7 +166,7 @@ impl BlobReader {
     /// Count total blobs.
     pub(crate) async fn blob_count(&self) -> Result<i64> {
         let result = sqlx::query!(r#"SELECT COUNT(*) as count FROM blob"#)
-            .fetch_one(&self.db)
+            .fetch_one(&self.db.pool)
             .await
             .context("failed to count blobs")?;
 
@@ -173,7 +176,7 @@ impl BlobReader {
     /// Count distinct blobs referenced by records.
     pub(crate) async fn record_blob_count(&self) -> Result<i64> {
         let result = sqlx::query!(r#"SELECT COUNT(DISTINCT blobCid) as count FROM record_blob"#)
-            .fetch_one(&self.db)
+            .fetch_one(&self.db.pool)
             .await
             .context("failed to count record blobs")?;
 
@@ -207,7 +210,7 @@ impl BlobReader {
                 cid: row.get::<String, _>(0),
                 record_uri: row.get::<String, _>(1),
             })
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.pool)
             .await
             .context("failed to fetch missing blobs")?;
 
@@ -216,7 +219,7 @@ impl BlobReader {
 
     pub(crate) async fn get_blod_cids(&self) -> Result<Vec<Cid>> {
         let rows = sqlx::query!("SELECT cid FROM blob")
-            .fetch_all(&self.db)
+            .fetch_all(&self.db.pool)
             .await
             .context("failed to fetch blob CIDs")?;
         Ok(rows

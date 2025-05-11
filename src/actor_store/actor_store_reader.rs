@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use super::{
     ActorStoreTransactor, db::ActorDb, preference::PreferenceReader, record::RecordReader,
     repo::RepoReader, resources::ActorStoreResources,

@@ -1,13 +1,11 @@
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
-use super::resources::ActorStoreResources;
+use super::{ActorDb, resources::ActorStoreResources};
 use crate::SigningKey;
 
 pub(crate) struct ActorStoreTransactor {
     pub(crate) did: String,
-    pub(crate) db: SqlitePool,
+    pub(crate) db: ActorDb,
     pub(crate) keypair: Arc<SigningKey>,
     pub(crate) resources: ActorStoreResources,
 }
@@ -15,7 +13,7 @@ pub(crate) struct ActorStoreTransactor {
 impl ActorStoreTransactor {
     pub(crate) fn new(
         did: String,
-        db: SqlitePool,
+        db: ActorDb,
         keypair: Arc<SigningKey>,
         resources: ActorStoreResources,
     ) -> Self {

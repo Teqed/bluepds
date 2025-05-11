@@ -2,10 +2,12 @@
 
 use anyhow::Result;
 use atrium_repo::Cid;
-use sqlx::SqlitePool;
 
 use super::sql_repo_reader::SqlRepoReader;
-use crate::{actor_store::record::RecordReader, config::BlobConfig, repo::block_map::BlockMap};
+use crate::{
+    actor_store::{blob::BlobReader, record::RecordReader},
+    repo::block_map::BlockMap,
+};
 
 /// Reader for repository data in the actor store.
 pub(crate) struct RepoReader {
@@ -17,7 +19,7 @@ pub(crate) struct RepoReader {
 
 impl RepoReader {
     /// Create a new repository reader.
-    // pub(crate) fn new(db: SqlitePool, did: String, blob_config: BlobConfig) -> Self {
+    // pub(crate) fn new(db: ActorDb, did: String, blob_config: BlobConfig) -> Self {
     //     Self {
     //         storage: SqlRepoReader::new(db.clone(), did.clone()),
     //         db,

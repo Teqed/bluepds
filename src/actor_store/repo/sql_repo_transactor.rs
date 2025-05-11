@@ -8,9 +8,11 @@ use atrium_repo::{
     blockstore::{AsyncBlockStoreWrite, Error as BlockstoreError},
 };
 use sha2::Digest;
-use sqlx::SqlitePool;
 
-use crate::repo::{block_map::BlockMap, types::CommitData};
+use crate::{
+    actor_store::ActorDb,
+    repo::{block_map::BlockMap, types::CommitData},
+};
 
 use super::sql_repo_reader::{RootInfo, SqlRepoReader};
 
@@ -26,7 +28,7 @@ pub(crate) struct SqlRepoTransactor {
 
 impl SqlRepoTransactor {
     /// Create a new SQL repository transactor.
-    pub(crate) fn new(db: SqlitePool, did: String) -> Self {
+    pub(crate) fn new(db: ActorDb, did: String) -> Self {
         let now = chrono::Utc::now().to_rfc3339();
         Self {
             reader: SqlRepoReader::new(db, did),
@@ -46,7 +48,7 @@ impl SqlRepoTransactor {
             "#,
             self.reader.did
         )
-        .fetch_one(&self.reader.db)
+        .fetch_one(&self.reader.db.pool)
         .await?;
 
         let cid = Cid::from_str(&row.cid)?;
@@ -55,7 +57,6 @@ impl SqlRepoTransactor {
 
     /// Proactively cache all blocks from a particular commit.
     pub(crate) async fn cache_rev(&mut self, rev: &str) -> Result<()> {
-        let did = self.reader.did.clone();
         let rows = sqlx::query!(
             r#"
                 SELECT cid, content
@@ -65,7 +66,7 @@ impl SqlRepoTransactor {
                 "#,
             rev
         )
-        .fetch_all(&self.reader.db)
+        .fetch_all(&self.reader.db.pool)
         .await?;
 
         for row in rows {
@@ -107,7 +108,7 @@ impl SqlRepoTransactor {
                 rev,
                 now
             )
-            .execute(&self.reader.db)
+            .execute(&self.reader.db.pool)
             .await?;
         } else {
             sqlx::query!(
@@ -121,7 +122,7 @@ impl SqlRepoTransactor {
                 now,
                 did
             )
-            .execute(&self.reader.db)
+            .execute(&self.reader.db.pool)
             .await?;
         }
 
@@ -144,7 +145,7 @@ impl SqlRepoTransactor {
             block_len,
             block
         )
-        .execute(&self.reader.db)
+        .execute(&self.reader.db.pool)
         .await?;
 
         Ok(())
@@ -186,7 +187,7 @@ impl SqlRepoTransactor {
                     .bind(content);
             }
 
-            query_builder.execute(&self.reader.db).await?;
+            query_builder.execute(&self.reader.db.pool).await?;
         }
 
         Ok(())
@@ -219,7 +220,7 @@ impl SqlRepoTransactor {
                 query_builder = query_builder.bind(cid);
             }
 
-            query_builder.execute(&self.reader.db).await?;
+            query_builder.execute(&self.reader.db.pool).await?;
         }
 
         Ok(())
@@ -261,7 +262,7 @@ impl AsyncBlockStoreWrite for SqlRepoTransactor {
                 contents_len,
                 contents
             )
-            .execute(&self.reader.db)
+            .execute(&self.reader.db.pool)
             .await
             .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
 

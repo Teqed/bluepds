@@ -5,11 +5,9 @@ use std::str::FromStr;
 use anyhow::Result;
 use atrium_repo::Cid;
 use rsky_syntax::aturi::AtUri;
-use sqlx::SqlitePool;
 
 use crate::{
-    SigningKey,
-    repo::types::{CommitAction, CommitDataWithOps, CommitOp, PreparedWrite, WriteOpAction},
+    actor_store::ActorDb, repo::types::{CommitAction, CommitDataWithOps, CommitOp, PreparedWrite, WriteOpAction}, SigningKey
 };
 
 use super::{reader::RepoReader, sql_repo_transactor::SqlRepoTransactor};
@@ -25,7 +23,7 @@ pub(crate) struct RepoTransactor {
 impl RepoTransactor {
     /// Create a new repository transactor.
     pub(crate) fn new(
-        db: SqlitePool,
+        db: ActorDb,
         did: String,
         signing_key: SigningKey,
         blob_config: crate::config::BlobConfig,
