@@ -167,7 +167,11 @@ impl BlobTransactor {
     }
 
     /// Process blobs for a repository write operation.
-    pub(crate) async fn process_write_blobs(&self, writes: Vec<PreparedWrite>) -> Result<()> {
+    pub(crate) async fn process_write_blobs(
+        &self,
+        _rev: &String, // Typescript impl declares rev but never uses it
+        writes: Vec<PreparedWrite>,
+    ) -> Result<()> {
         self.delete_dereferenced_blobs(writes.clone(), false)
             .await
             .context("failed to delete dereferenced blobs")?;

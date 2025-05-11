@@ -5,8 +5,8 @@ use atrium_repo::Cid;
 
 use super::sql_repo_reader::SqlRepoReader;
 use crate::{
-    actor_store::{blob::BlobReader, record::RecordReader},
-    repo::block_map::BlockMap,
+    actor_store::{ActorDb, blob::BlobReader, record::RecordReader},
+    repo::{block_map::BlockMap, types::BlobStore},
 };
 
 /// Reader for repository data in the actor store.
@@ -19,13 +19,17 @@ pub(crate) struct RepoReader {
 
 impl RepoReader {
     /// Create a new repository reader.
-    // pub(crate) fn new(db: ActorDb, did: String, blob_config: BlobConfig) -> Self {
-    //     Self {
-    //         storage: SqlRepoReader::new(db.clone(), did.clone()),
-    //         db,
-    //         did,
-    //     }
-    // }
+    pub(crate) fn new(db: ActorDb, blobstore: BlobStore) -> Self {
+        let blob = BlobReader::new(db.clone(), blobstore);
+        let record = RecordReader::new(db.clone());
+        let storage = SqlRepoReader::new(db);
+
+        Self {
+            blob,
+            record,
+            storage,
+        }
+    }
 
     /// Get event data for synchronization.
     pub(crate) async fn get_sync_event_data(&self) -> Result<SyncEventData> {

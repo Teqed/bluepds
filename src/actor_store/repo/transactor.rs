@@ -1,54 +1,134 @@
 //! Repository transactor for the actor store.
 
-use std::str::FromStr;
-
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use atrium_repo::Cid;
 use rsky_syntax::aturi::AtUri;
+use std::sync::Arc;
 
 use crate::{
-    actor_store::ActorDb, repo::types::{CommitAction, CommitDataWithOps, CommitOp, PreparedWrite, WriteOpAction}, SigningKey
+    SigningKey,
+    actor_store::{
+        ActorDb,
+        blob::{BackgroundQueue, BlobTransactor},
+        record::RecordTransactor,
+        repo::{reader::RepoReader, sql_repo_transactor::SqlRepoTransactor},
+        resources::ActorStoreResources,
+    },
+    repo::{
+        Repo,
+        block_map::BlockMap,
+        types::{
+            BlobStore, CommitAction, CommitDataWithOps, CommitOp, PreparedCreate, PreparedWrite,
+            WriteOpAction, format_data_key,
+        },
+    },
 };
 
-use super::{reader::RepoReader, sql_repo_transactor::SqlRepoTransactor};
-
-/// Transactor for repository operations.
+/// Repository transactor for the actor store.
 pub(crate) struct RepoTransactor {
     /// The inner reader.
-    pub(crate) reader: RepoReader,
-    ///
+    pub reader: RepoReader,
+    /// BlobTransactor for handling blobs.
+    pub blob: BlobTransactor,
+    /// RecordTransactor for handling records.
+    pub record: RecordTransactor,
+    /// SQL repository transactor.
+    pub storage: SqlRepoTransactor,
 }
-
 
 impl RepoTransactor {
     /// Create a new repository transactor.
     pub(crate) fn new(
         db: ActorDb,
+        blobstore: BlobStore,
         did: String,
-        signing_key: SigningKey,
-        blob_config: crate::config::BlobConfig,
+        signing_key: Arc<SigningKey>,
+        background_queue: BackgroundQueue,
+        now: Option<String>,
     ) -> Self {
+        // Create a new RepoReader
+        let reader = RepoReader::new(db.clone(), blobstore.clone(), did.clone(), signing_key);
+
+        // Create a new BlobTransactor
+        let blob = BlobTransactor::new(db.clone(), blobstore.clone(), background_queue);
+
+        // Create a new RecordTransactor
+        let record = RecordTransactor::new(db.clone(), blobstore);
+
+        // Create a new SQL repository transactor
+        let storage = SqlRepoTransactor::new(db, did.clone(), now);
+
         Self {
-            reader: RepoReader::new(db.clone(), did.clone(), blob_config),
-            storage: SqlRepoTransactor::new(db, did.clone()),
-            did,
-            signing_key,
+            reader,
+            blob,
+            record,
+            storage,
         }
     }
 
-    /// Load the repository if it exists.
-    // pub async fn maybe_load_repo(
-    //     &self,
-    // ) -> Result<Option<Repository<impl AsyncBlockStoreRead + AsyncBlockStoreWrite>>> {
-    //     todo!("Implement maybe_load_repo")
-    // }
+    /// Try to load a repository.
+    pub(crate) async fn maybe_load_repo(&self) -> Result<Option<Repo>> {
+        // Query the repository root
+        let root = sqlx::query!("SELECT cid FROM repo_root LIMIT 1")
+            .fetch_optional(&self.db.pool)
+            .await
+            .context("failed to query repo root")?;
 
-    /// Create a new repository.
+        // If found, load the repo
+        if let Some(row) = root {
+            let cid = Cid::try_from(&row.cid)?;
+            let repo = Repo::load(&self.storage, cid).await?;
+            Ok(Some(repo))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Create a new repository with the given writes.
     pub(crate) async fn create_repo(
         &self,
-        writes: Vec<PreparedWrite>,
+        writes: Vec<PreparedCreate>,
     ) -> Result<CommitDataWithOps> {
-        todo!("Implement create_repo")
+        // Assert we're in a transaction
+        self.db.assert_transaction()?;
+
+        // Convert writes to operations
+        let ops = writes.iter().map(|w| create_write_to_op(w)).collect();
+
+        // Format the initial commit
+        let commit =
+            Repo::format_init_commit(&self.storage, &self.did, &self.signing_key, ops).await?;
+
+        // Apply the commit, index the writes, and process blobs in parallel
+        let results = futures::future::join3(
+            self.storage.apply_commit(&commit, true),
+            self.index_writes(&writes, &commit.rev),
+            self.blob.process_write_blobs(&commit.rev, &writes),
+        )
+        .await;
+
+        // Check for errors in each parallel task
+        results.0?;
+        results.1?;
+        results.2?;
+
+        // Create commit operations
+        let ops = writes
+            .iter()
+            .map(|w| CommitOp {
+                action: CommitAction::Create,
+                path: format_data_key(&w.uri.collection, &w.uri.rkey),
+                cid: Some(w.cid),
+                prev: None,
+            })
+            .collect();
+
+        // Return the commit data with operations
+        Ok(CommitDataWithOps {
+            commit_data: commit,
+            ops,
+            prev_data: None,
+        })
     }
 
     /// Process writes to the repository.
@@ -57,163 +137,167 @@ impl RepoTransactor {
         writes: Vec<PreparedWrite>,
         swap_commit_cid: Option<Cid>,
     ) -> Result<CommitDataWithOps> {
-        // Validate parameters
+        // Assert we're in a transaction
+        self.db.assert_transaction()?;
+
+        // Check write limit
         if writes.len() > 200 {
-            return Err(anyhow::anyhow!("Too many writes. Max: 200").into());
+            return Err(anyhow::anyhow!("Too many writes. Max: 200"));
         }
 
-        // Format the commit (creates blocks and structures the operations)
-        let commit = self.format_commit(writes.clone(), swap_commit_cid).await?;
+        // Format the commit
+        let commit = self.format_commit(writes, swap_commit_cid).await?;
 
-        // Check commit size (prevent large commits)
-        if commit.commit_data.relevant_blocks.byte_size()? > 2000000 {
-            return Err(anyhow::anyhow!("Too many writes. Max event size: 2MB").into());
+        // Check commit size limit (2MB)
+        if commit.commit_data.relevant_blocks.byte_size()? > 2_000_000 {
+            return Err(anyhow::anyhow!("Too many writes. Max event size: 2MB"));
         }
 
-        // Execute these operations in parallel for better performance
-        tokio::try_join!(
-            // Persist the commit to repo storage
-            self.storage.apply_commit(commit.commit_data.clone(), true),
-            // Send to indexing
-            self.index_writes(writes.clone(), &commit.commit_data.rev),
-            // Process blobs from writes
-            self.process_write_blobs(&commit.commit_data.rev, &writes),
-        )?;
+        // Apply the commit, index the writes, and process blobs in parallel
+        let results = futures::future::join3(
+            self.storage.apply_commit(&commit.commit_data, false),
+            self.index_writes(writes, &commit.commit_data.rev),
+            self.blob
+                .process_write_blobs(&commit.commit_data.rev, writes),
+        )
+        .await;
+
+        // Check for errors in each parallel task
+        results.0?;
+        results.1?;
+        results.2?;
 
         Ok(commit)
     }
 
-    /// Format a commit for writing.
+    /// Format a commit for the given writes.
     pub(crate) async fn format_commit(
         &self,
         writes: Vec<PreparedWrite>,
         swap_commit: Option<Cid>,
     ) -> Result<CommitDataWithOps> {
-        // Get current repository root
+        // Get the current root
         let curr_root = self.storage.get_root_detailed().await?;
-        if curr_root.cid.is_nil() {
-            return Err(anyhow::anyhow!("No repo root found for {}", self.did).into());
+        if curr_root.is_none() {
+            return Err(anyhow::anyhow!("No repo root found for {}", self.did));
         }
 
-        // Check swap commit if provided
-        if let Some(swap_cid) = swap_commit {
-            if !curr_root.cid.equals(swap_cid) {
+        let curr_root = curr_root.unwrap();
+
+        // Check commit swap if requested
+        if let Some(swap) = swap_commit {
+            if curr_root.cid != swap {
                 return Err(anyhow::anyhow!(
-                    "Bad commit swap: expected {}, got {}",
-                    swap_cid,
-                    curr_root.cid
-                )
-                .into());
+                    "Bad commit swap: current={}, expected={}",
+                    curr_root.cid,
+                    swap
+                ));
             }
         }
 
-        // Cache last commit for performance
+        // Cache the revision for better performance
         self.storage.cache_rev(&curr_root.rev).await?;
 
+        // Prepare collections for tracking changes
         let mut new_record_cids = Vec::new();
         let mut del_and_update_uris = Vec::new();
         let mut commit_ops = Vec::new();
 
-        // Process each write to create commit operations
-        for write in &writes {
-            let uri_str = write.uri().clone();
-            let uri = AtUri::try_from(uri_str.as_str())?;
+        // Process each write
+        for write in writes {
+            let action = &write.action;
+            let uri = &write.uri;
+            let swap_cid = write.swap_cid;
 
-            match write.action() {
-                WriteOpAction::Create | WriteOpAction::Update => {
-                    if let Some(cid) = write.cid() {
-                        new_record_cids.push(cid);
-                    }
-                }
-                _ => {}
+            // Track new record CIDs
+            if *action != WriteOpAction::Delete {
+                new_record_cids.push(write.cid);
             }
 
-            if write.action() != &WriteOpAction::Create {
+            // Track deleted/updated URIs
+            if *action != WriteOpAction::Create {
                 del_and_update_uris.push(uri.clone());
             }
 
-            // Get current record if it exists
-            let record = self.record.get_record(&uri.to_string(), None, true).await?;
-            let curr_record = record.map(|r| Cid::from_str(&r.cid).ok()).flatten();
+            // Get the current record if it exists
+            let record = self.record.get_record(uri, None, true).await?;
+            let curr_record = record.as_ref().map(|r| Cid::try_from(&r.cid).unwrap());
 
-            // Create the operation
-            let path = format!("{}/{}", uri.get_collection(), uri.get_rkey());
+            // Create commit operation
             let mut op = CommitOp {
-                action: match write.action() {
-                    WriteOpAction::Create => CommitAction::Create,
-                    WriteOpAction::Update => CommitAction::Update,
-                    WriteOpAction::Delete => CommitAction::Delete,
+                action: action.clone(),
+                path: format_data_key(&uri.collection, &uri.rkey),
+                cid: if *action == WriteOpAction::Delete {
+                    None
+                } else {
+                    Some(write.cid)
                 },
-                path: path.clone(),
-                cid: match write.action() {
-                    WriteOpAction::Delete => None,
-                    _ => write.cid(),
-                },
-                prev: curr_record.clone(),
+                prev: curr_record,
             };
 
-            // Validate swap consistency
-            if let Some(swap_cid) = write.swap_cid() {
-                match write.action() {
-                    WriteOpAction::Create if swap_cid.is_some() => {
+            commit_ops.push(op);
+
+            // Validate swap_cid conditions
+            if swap_cid.is_some() {
+                match action {
+                    WriteOpAction::Create if swap_cid != Some(None) => {
                         return Err(anyhow::anyhow!(
-                            "Bad record swap: cannot provide swap CID for create"
-                        )
-                        .into());
+                            "Bad record swap: there should be no current record for a create"
+                        ));
                     }
-                    WriteOpAction::Update | WriteOpAction::Delete if swap_cid.is_none() => {
+                    WriteOpAction::Update if swap_cid == Some(None) => {
                         return Err(anyhow::anyhow!(
-                            "Bad record swap: must provide swap CID for update/delete"
-                        )
-                        .into());
+                            "Bad record swap: there should be a current record for an update"
+                        ));
+                    }
+                    WriteOpAction::Delete if swap_cid == Some(None) => {
+                        return Err(anyhow::anyhow!(
+                            "Bad record swap: there should be a current record for a delete"
+                        ));
                     }
                     _ => {}
                 }
 
-                if swap_cid.is_some()
-                    && curr_record.is_some()
-                    && !curr_record.unwrap().equals(swap_cid.unwrap())
-                {
-                    return Err(anyhow::anyhow!(
-                        "Bad record swap: expected {}, got {:?}",
-                        swap_cid.unwrap(),
-                        curr_record
-                    )
-                    .into());
+                if let Some(Some(swap)) = swap_cid {
+                    if curr_record.is_some() && curr_record != Some(swap) {
+                        return Err(anyhow::anyhow!(
+                            "Bad record swap: current={:?}, expected={}",
+                            curr_record,
+                            swap
+                        ));
+                    }
                 }
             }
-
-            commit_ops.push(op);
         }
 
-        // Load the current repository and prepare for modification
-        let repo = crate::storage::open_repo(&self.storage.reader.config, &self.did, curr_root.cid)
-            .await?;
-        let prev_data = repo.commit().data;
+        // Load the repo
+        let repo = Repo::load(&self.storage, curr_root.cid).await?;
+        let prev_data = repo.commit.data.clone();
 
-        // Convert PreparedWrites to RecordWriteOps
-        let write_ops = writes
-            .iter()
-            .map(|w| write_to_op(w.clone()))
-            .collect::<Result<Vec<_>>>()?;
+        // Convert writes to ops
+        let write_ops = writes.iter().map(|w| write_to_op(w)).collect();
 
-        // Format the new commit
+        // Format the commit
         let commit = repo.format_commit(write_ops, &self.signing_key).await?;
 
-        // Find blocks referenced by other records
+        // Find blocks that would be deleted but are referenced by another record
         let dupe_record_cids = self
             .get_duplicate_record_cids(&commit.removed_cids.to_list(), &del_and_update_uris)
             .await?;
 
-        // Remove duplicated CIDs from the removal list
-        for cid in dupe_record_cids {
-            commit.removed_cids.delete(cid);
+        // Remove duplicates from removed_cids
+        for cid in &dupe_record_cids {
+            commit.removed_cids.delete(*cid);
         }
 
-        // Ensure all necessary blocks are included
-        let new_record_blocks = commit.relevant_blocks.get_many(new_record_cids)?;
+        // Find blocks that are relevant to ops but not included in diff
+        let new_record_blocks = commit.relevant_blocks.get_many(&new_record_cids)?;
         if !new_record_blocks.missing.is_empty() {
-            let missing_blocks = self.storage.get_blocks(new_record_blocks.missing).await?;
+            let missing_blocks = self
+                .storage
+                .reader
+                .get_blocks(&new_record_blocks.missing)
+                .await?;
             commit.relevant_blocks.add_map(missing_blocks.blocks)?;
         }
 
@@ -224,38 +308,37 @@ impl RepoTransactor {
         })
     }
 
-    /// Index writes in the repository.
-    pub(crate) async fn index_writes(&self, writes: Vec<PreparedWrite>, rev: &str) -> Result<()> {
-        // Process each write for indexing
-        for write in writes {
-            let uri_str = write.uri().clone();
-            let uri = AtUri::try_from(uri_str.as_str())?;
+    /// Index writes to the database.
+    pub(crate) async fn index_writes(&self, writes: &[PreparedWrite], rev: &str) -> Result<()> {
+        // Assert we're in a transaction
+        self.db.assert_transaction()?;
 
-            match write.action() {
+        // Process each write in parallel
+        let futures = writes.iter().map(|write| async move {
+            match write.action {
                 WriteOpAction::Create | WriteOpAction::Update => {
-                    if let PreparedWrite::Create(w) | PreparedWrite::Update(w) = write {
-                        self.record
-                            .index_record(
-                                uri,
-                                w.cid,
-                                Some(w.record),
-                                write.action().clone(),
-                                rev,
-                                None, // Use current timestamp
-                            )
-                            .await?;
-                    }
+                    self.record
+                        .index_record(
+                            &write.uri,
+                            &write.cid,
+                            &write.record,
+                            &write.action,
+                            rev,
+                            &self.now,
+                        )
+                        .await
                 }
-                WriteOpAction::Delete => {
-                    self.record.delete_record(&uri).await?;
-                }
+                WriteOpAction::Delete => self.record.delete_record(&write.uri).await,
             }
-        }
+        });
+
+        // Wait for all indexing operations to complete
+        futures::future::try_join_all(futures).await?;
 
         Ok(())
     }
 
-    /// Get duplicate record CIDs.
+    /// Get record CIDs that are duplicated elsewhere in the repository.
     pub(crate) async fn get_duplicate_record_cids(
         &self,
         cids: &[Cid],
@@ -265,63 +348,62 @@ impl RepoTransactor {
             return Ok(Vec::new());
         }
 
+        // Convert CIDs and URIs to strings
         let cid_strs: Vec<String> = cids.iter().map(|c| c.to_string()).collect();
         let uri_strs: Vec<String> = touched_uris.iter().map(|u| u.to_string()).collect();
 
-        // Find records that have the same CIDs but weren't touched in this operation
-        let duplicates = sqlx::query_scalar!(
-            r#"
-            SELECT cid FROM record
-            WHERE cid IN (SELECT unnest($1::text[]))
-            AND uri NOT IN (SELECT unnest($2::text[]))
-            "#,
-            &cid_strs,
-            &uri_strs
+        // Query the database for duplicates
+        let rows = sqlx::query!(
+            "SELECT cid FROM record WHERE cid IN (?) AND uri NOT IN (?)",
+            cid_strs.join(","),
+            uri_strs.join(",")
         )
-        .fetch_all(&self.reader.db)
-        .await?;
+        .fetch_all(&self.db.pool)
+        .await
+        .context("failed to query duplicate record CIDs")?;
 
-        // Convert string CIDs back to Cid objects
-        let dupe_cids = duplicates
+        // Convert to CIDs
+        let result = rows
             .into_iter()
-            .filter_map(|cid_str| Cid::from_str(&cid_str).ok())
-            .collect();
+            .map(|row| Cid::try_from(&row.cid))
+            .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(dupe_cids)
+        Ok(result)
     }
+}
 
-    pub(crate) async fn process_write_blobs(
-        &self,
-        rev: &str,
-        writes: &[PreparedWrite],
-    ) -> Result<()> {
-        // First handle deletions or updates
-        let uris: Vec<String> = writes
-            .iter()
-            .filter(|w| matches!(w.action(), WriteOpAction::Delete | WriteOpAction::Update))
-            .map(|w| w.uri().clone())
-            .collect();
+// Helper functions
 
-        if !uris.is_empty() {
-            // Remove blob references for deleted/updated records
-            self.blob.delete_dereferenced_blobs(&uris).await?;
-        }
+/// Convert a PreparedCreate to an operation.
+fn create_write_to_op(write: &PreparedCreate) -> WriteOp {
+    WriteOp {
+        action: WriteOpAction::Create,
+        collection: write.uri.collection.clone(),
+        rkey: write.uri.rkey.clone(),
+        record: write.record.clone(),
+    }
+}
 
-        // Process each blob in each write
-        for write in writes {
-            if let PreparedWrite::Create(w) | PreparedWrite::Update(w) = write {
-                for blob in &w.blobs {
-                    // Verify and make permanent
-                    self.blob.verify_blob_and_make_permanent(blob).await?;
-
-                    // Associate blob with record
-                    self.blob
-                        .associate_blob(&blob.cid.to_string(), write.uri())
-                        .await?;
-                }
-            }
-        }
-
-        Ok(())
+/// Convert a PreparedWrite to an operation.
+fn write_to_op(write: &PreparedWrite) -> WriteOp {
+    match write.action {
+        WriteOpAction::Create => WriteOp {
+            action: WriteOpAction::Create,
+            collection: write.uri.collection.clone(),
+            rkey: write.uri.rkey.clone(),
+            record: write.record.clone(),
+        },
+        WriteOpAction::Update => WriteOp {
+            action: WriteOpAction::Update,
+            collection: write.uri.collection.clone(),
+            rkey: write.uri.rkey.clone(),
+            record: write.record.clone(),
+        },
+        WriteOpAction::Delete => WriteOp {
+            action: WriteOpAction::Delete,
+            collection: write.uri.collection.clone(),
+            rkey: write.uri.rkey.clone(),
+            record: None,
+        },
     }
 }

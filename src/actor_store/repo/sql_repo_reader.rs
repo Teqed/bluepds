@@ -5,6 +5,7 @@ use atrium_repo::{
     Cid,
     blockstore::{AsyncBlockStoreRead, Error as BlockstoreError},
 };
+use rsky_repo::storage::readable_blockstore::ReadableBlockstore;
 use sqlx::Row;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -21,8 +22,6 @@ pub(crate) struct SqlRepoReader {
     pub cache: Arc<RwLock<BlockMap>>,
     /// Database connection.
     pub db: ActorDb,
-    /// DID of the repository owner.
-    pub did: String,
 }
 
 /// Repository root with CID and revision.
@@ -35,23 +34,35 @@ pub(crate) struct RootInfo {
 
 impl SqlRepoReader {
     /// Create a new SQL repository reader.
-    pub(crate) fn new(db: ActorDb, did: String) -> Self {
+    pub(crate) fn new(db: ActorDb) -> Self {
         Self {
             cache: Arc::new(RwLock::new(BlockMap::new())),
             db,
-            did,
         }
     }
-
     // async getRoot(): Promise<CID> {
-    // async has(cid: CID): Promise<boolean> {
     // async getCarStream(since?: string) {
     // async *iterateCarBlocks(since?: string): AsyncIterable<CarBlock> {
     // async getBlockRange(since?: string, cursor?: RevCursor) {
     // async countBlocks(): Promise<number> {
     // async destroy(): Promise<void> {
 
-    pub(crate) async fn get_bytes(&self, cid: &Cid) -> Result<Option<Vec<u8>>> {
+    /// Get the detailed root information.
+    pub(crate) async fn get_root_detailed(&self) -> Result<RootInfo> {
+        let row = sqlx::query!(r#"SELECT cid, rev FROM repo_root"#)
+            .fetch_one(&self.db.pool)
+            .await
+            .context("failed to fetch repo root")?;
+
+        Ok(RootInfo {
+            cid: Cid::from_str(&row.cid)?,
+            rev: row.rev,
+        })
+    }
+}
+
+impl ReadableBlockstore for SqlRepoReader {
+    async fn get_bytes(&self, cid: &Cid) -> Result<Option<Vec<u8>>> {
         // First check the cache
         {
             let cache_guard = self.cache.read().await;
@@ -78,22 +89,12 @@ impl SqlRepoReader {
         Ok(content)
     }
 
-    /// Get the detailed root information.
-    pub(crate) async fn get_root_detailed(&self) -> Result<RootInfo> {
-        let did = self.did.clone();
-        let row = sqlx::query!(r#"SELECT cid, rev FROM repo_root WHERE did = ?"#, did)
-            .fetch_one(&self.db.pool)
-            .await
-            .context("failed to fetch repo root")?;
-
-        Ok(RootInfo {
-            cid: Cid::from_str(&row.cid)?,
-            rev: row.rev,
-        })
+    async fn has(&self, cid: &Cid) -> Result<bool> {
+        self.get_bytes(cid).await.map(|bytes| bytes.is_some())
     }
 
     /// Get blocks from the database.
-    pub(crate) async fn get_blocks(&self, cids: Vec<Cid>) -> Result<BlocksAndMissing> {
+    async fn get_blocks(&self, cids: Vec<Cid>) -> Result<BlocksAndMissing> {
         let cached = { self.cache.write().await.get_many(cids)? }; // TODO: use read lock?
 
         if cached.missing.is_empty() {
@@ -118,13 +119,12 @@ impl SqlRepoReader {
 
             let query = format!(
                 "SELECT cid, content FROM repo_block
-                     WHERE did = ? AND cid IN ({})
+                     WHERE cid IN ({})
                      ORDER BY cid",
                 placeholders
             );
 
             let mut query_builder = sqlx::query(&query);
-            query_builder = query_builder.bind(&self.did);
             for cid in chunk {
                 query_builder = query_builder.bind(cid);
             }

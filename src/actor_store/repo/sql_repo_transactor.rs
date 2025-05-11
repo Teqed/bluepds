@@ -23,13 +23,12 @@ pub(crate) struct SqlRepoTransactor {
     /// Cache for blocks.
     pub cache: BlockMap,
     /// Current timestamp.
-    pub now: String,
+    pub now: Option<String>,
 }
 
 impl SqlRepoTransactor {
     /// Create a new SQL repository transactor.
-    pub(crate) fn new(db: ActorDb, did: String) -> Self {
-        let now = chrono::Utc::now().to_rfc3339();
+    pub(crate) fn new(db: ActorDb, did: String, now: Option<String>) -> Self {
         Self {
             reader: SqlRepoReader::new(db, did),
             cache: BlockMap::new(),
@@ -77,7 +76,7 @@ impl SqlRepoTransactor {
     }
 
     /// Apply a commit to the repository.
-    pub(crate) async fn apply_commit(&self, commit: CommitData, is_create: bool) -> Result<()> {
+    pub(crate) async fn apply_commit(&self, commit: &CommitData, is_create: bool) -> Result<()> {
         let is_create = is_create || false;
         let removed_cids_list = commit.removed_cids.to_list();
 
