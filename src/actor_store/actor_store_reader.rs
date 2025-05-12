@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::{
     ActorStoreTransactor, actor_store_resources::ActorStoreResources, db::ActorDb,
-    preference::PreferenceReader, record::RecordReader,
+    preference::PreferenceReader, record::RecordReader, repo::RepoReader,
 };
 use crate::SigningKey;
 
@@ -15,8 +15,8 @@ pub(crate) struct ActorStoreReader {
     pub(crate) record: RecordReader,
     /// Preference reader.
     pub(crate) pref: PreferenceReader,
-    /// RepoReader placeholder - will be implemented later.
-    pub(crate) repo: (), // Placeholder for RepoReader
+    /// RepoReader
+    pub(crate) repo: RepoReader,
     /// Function to get keypair.
     keypair_fn: Box<dyn Fn() -> Result<Arc<SigningKey>> + Send + Sync>,
     /// Database connection.
@@ -43,9 +43,8 @@ impl ActorStoreReader {
         // Initial keypair call as in TypeScript implementation
         let _ = keypair_fn();
 
-        // For now, we use a placeholder for RepoReader
-        // Real implementation will need to be added later
-        let repo = ();
+        // Create repo reader
+        let repo = RepoReader::new(db.clone(), resources.blobstore(did.clone()));
 
         Self {
             did,

@@ -11,7 +11,6 @@ mod metrics;
 mod mmap;
 mod oauth;
 mod plc;
-mod repo;
 mod storage;
 #[cfg(test)]
 mod tests;

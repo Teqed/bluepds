@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::resources::ActorStoreResources;
+use super::{ActorDb, ActorStoreResources};
 use crate::SigningKey;
 
 pub(crate) struct ActorStoreWriter {

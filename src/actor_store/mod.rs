@@ -8,6 +8,7 @@ mod actor_store_writer;
 mod blob;
 mod db;
 mod preference;
+mod prepared_write;
 mod record;
 mod repo;
 
@@ -17,3 +18,4 @@ pub(crate) use actor_store_resources::ActorStoreResources;
 pub(crate) use actor_store_transactor::ActorStoreTransactor;
 pub(crate) use actor_store_writer::ActorStoreWriter;
 pub(crate) use db::ActorDb;
+pub(crate) use prepared_write::PreparedWrite;

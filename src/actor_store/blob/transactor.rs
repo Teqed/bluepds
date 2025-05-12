@@ -8,16 +8,11 @@ use atrium_api::{
 use atrium_repo::Cid;
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use rsky_repo::types::{PreparedBlobRef, WriteOpAction};
 use uuid::Uuid;
 
-use super::{BackgroundQueue, BlobReader};
-use crate::{
-    actor_store::ActorDb,
-    repo::{
-        block_map::sha256_raw_to_cid,
-        types::{BlobStore, BlobStoreTrait as _, PreparedBlobRef, PreparedWrite, WriteOpAction},
-    },
-};
+use super::{BackgroundQueue, BlobReader, BlobStore};
+use crate::actor_store::{ActorDb, PreparedWrite, blob::BlobStore as _};
 
 /// Blob metadata for a newly uploaded blob.
 #[derive(Debug, Clone)]

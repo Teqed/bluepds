@@ -7,22 +7,21 @@ use atrium_api::com::atproto::admin::defs::StatusAttrData;
 use atrium_repo::Cid;
 use sqlx::Row;
 
-use crate::{
-    actor_store::ActorDb,
-    repo::types::{BlobStore, BlobStoreTrait, BlobStream},
-};
+use crate::actor_store::ActorDb;
+
+use super::{BlobStore, BlobStorePlaceholder, BlobStream};
 
 /// Reader for blob data in the actor store.
 pub(crate) struct BlobReader {
     /// Database connection.
     pub db: ActorDb,
     /// BlobStore.
-    pub blobstore: BlobStore,
+    pub blobstore: BlobStorePlaceholder,
 }
 
 impl BlobReader {
     /// Create a new blob reader.
-    pub(crate) fn new(db: ActorDb, blobstore: BlobStore) -> Self {
+    pub(crate) fn new(db: ActorDb, blobstore: BlobStorePlaceholder) -> Self {
         Self { db, blobstore }
     }
 
@@ -94,15 +93,6 @@ impl BlobReader {
         &self,
         cid: &Cid,
     ) -> Result<Option<StatusAttrData>> {
-        // const res = await this.db.db
-        //   .selectFrom('blob')
-        //   .select('takedownRef')
-        //   .where('cid', '=', cid.toString())
-        //   .executeTakeFirst()
-        // if (!res) return null
-        // return res.takedownRef
-        //   ? { applied: true, ref: res.takedownRef }
-        //   : { applied: false }
         let cid_str = cid.to_string();
         let result = sqlx::query!(r#"SELECT takedownRef FROM blob WHERE cid = ?"#, cid_str)
             .fetch_optional(&self.db.pool)
@@ -145,13 +135,6 @@ impl BlobReader {
 
     /// Get blobs referenced by a record.
     pub(crate) async fn get_blobs_for_record(&self, record_uri: &str) -> Result<Vec<String>> {
-        // const res = await this.db.db
-        //   .selectFrom('blob')
-        //   .innerJoin('record_blob', 'record_blob.blobCid', 'blob.cid')
-        //   .where('recordUri', '=', recordUri)
-        //   .select('blob.cid')
-        //   .execute()
-        // return res.map((row) => row.cid)
         let blobs = sqlx::query!(
             r#"SELECT blob.cid FROM blob INNER JOIN record_blob ON record_blob.blobCid = blob.cid WHERE recordUri = ?"#,
             record_uri

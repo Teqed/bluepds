@@ -34,7 +34,14 @@ impl ActorStoreTransactor {
 
         let record = RecordTransactor::new(db.clone(), blobstore.clone());
         let pref = PreferenceTransactor::new(db.clone());
-        let repo = RepoTransactor::new(db, blobstore, did, keypair, resources.background_queue);
+        let repo = RepoTransactor::new(
+            db,
+            blobstore,
+            did,
+            keypair,
+            resources.background_queue,
+            None,
+        );
 
         Self { record, repo, pref }
     }

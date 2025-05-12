@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use atrium_repo::Cid;
+use rsky_repo::storage::readable_blockstore::ReadableBlockstore as _;
 
 use super::sql_repo_reader::SqlRepoReader;
 use crate::{
