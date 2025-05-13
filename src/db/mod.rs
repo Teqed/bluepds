@@ -69,8 +69,10 @@ impl DatabaseConnection {
             .pool
             .get()
             .context("Failed to get connection for migrations")?;
+
         conn.run_pending_migrations(MIGRATIONS)
-            .context("Failed to run migrations")?;
+            .map_err(|e| anyhow::anyhow!("Failed to run migrations: {}", e))?;
+
         Ok(())
     }
 
@@ -97,27 +99,26 @@ impl DatabaseConnection {
             let mut conn = self.pool.get().context("Failed to get connection")?;
             match operation(&mut conn) {
                 Ok(result) => return Ok(result),
-                Err(diesel::result::Error::DatabaseError(
-                    diesel::result::DatabaseErrorKind::DatabaseIsLocked,
-                    _,
-                )) => {
-                    retries += 1;
-                    let backoff_ms = 10 * (1 << retries); // Exponential backoff
-                    last_error = Some(diesel::result::Error::DatabaseError(
-                        diesel::result::DatabaseErrorKind::DatabaseIsLocked,
-                        Box::new("Database is locked".to_string()),
-                    ));
-                    tokio::time::sleep(std::time::Duration::from_millis(backoff_ms)).await;
-                }
+                // TODO: Busy error handling
+                // Err(diesel::result::Error::DatabaseError(
+                //     diesel::result::DatabaseErrorKind::DatabaseIsLocked,
+                //     _,
+                // )) => {
+                //     retries += 1;
+                //     let backoff_ms = 10 * (1 << retries); // Exponential backoff
+                //     last_error = Some(diesel::result::Error::DatabaseError(
+                //         diesel::result::DatabaseErrorKind::DatabaseIsLocked,
+                //         Box::new("Database is locked".to_string()),
+                //     ));
+                //     tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                // }
                 Err(e) => return Err(e.into()),
             }
         }
 
         Err(anyhow::anyhow!(
             "Max retries exceeded: {}",
-            last_error.unwrap_or(diesel::result::Error::RollbackTransaction(Box::new(
-                "Unknown error"
-            )))
+            last_error.unwrap_or_else(|| diesel::result::Error::RollbackTransaction)
         ))
     }
 
@@ -135,9 +136,7 @@ impl DatabaseConnection {
         T: Send + 'static,
     {
         self.run(|conn| {
-            conn.transaction(|tx| {
-                f(tx).map_err(|e| diesel::result::Error::RollbackTransaction(Box::new(e)))
-            })
+            conn.transaction(|tx| f(tx).map_err(|e| diesel::result::Error::RollbackTransaction))
         })
         .await
     }
@@ -148,12 +147,12 @@ impl DatabaseConnection {
         F: FnOnce(&mut SqliteConnection) -> std::result::Result<T, diesel::result::Error> + Send,
         T: Send + 'static,
     {
-        let conn = &mut self
+        let mut conn = self
             .pool
             .get()
             .context("Failed to get connection for transaction")?;
 
-        conn.transaction(f)
+        conn.transaction(|tx| f(tx))
             .map_err(|e| anyhow::anyhow!("Transaction error: {:?}", e))
     }
 }

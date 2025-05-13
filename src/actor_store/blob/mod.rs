@@ -96,18 +96,8 @@ pub struct BlobHandler {
 }
 
 impl BlobHandler {
-    /// Create a new blob handler for read operations
-    pub fn new_reader(db: ActorDb, blobstore: impl BlobStore + 'static, did: String) -> Self {
-        Self {
-            db,
-            did,
-            blobstore: Box::new(blobstore),
-            background_queue: None,
-        }
-    }
-
     /// Create a new blob handler with background queue for write operations
-    pub fn new_writer(
+    pub fn new(
         db: ActorDb,
         blobstore: impl BlobStore + 'static,
         background_queue: background::BackgroundQueue,

@@ -11,7 +11,7 @@ use rsky_repo::{
     block_map::BlockMap,
     cid_set::CidSet,
     repo::Repo,
-    storage::{readable_blockstore::ReadableBlockstore as _, types::RepoStorage as _},
+    storage::{readable_blockstore::ReadableBlockstore as _, types::RepoStorage},
     types::{
         CommitAction, CommitData, CommitDataWithOps, CommitOp, PreparedBlobRef, PreparedWrite,
         WriteOpAction, write_to_op,
@@ -19,10 +19,11 @@ use rsky_repo::{
     util::format_data_key,
 };
 use rsky_syntax::aturi::AtUri;
+use tokio::sync::RwLock;
 
 use super::{
     ActorDb,
-    blob::{BackgroundQueue, BlobReader, BlobStorePlaceholder, BlobTransactor},
+    blob::{BackgroundQueue, BlobHandler, BlobStorePlaceholder},
     record::RecordHandler,
 };
 use crate::SigningKey;
@@ -44,13 +45,13 @@ pub(crate) struct RepoHandler {
     /// Actor DID
     pub did: String,
     /// Backend storage
-    pub storage: SqlRepoStorage,
+    pub storage: Arc<RwLock<dyn RepoStorage>>,
     /// BlobReader for handling blob operations
-    pub blob: BlobReader,
+    pub blob: BlobHandler,
     /// RecordHandler for handling record operations
     pub record: RecordHandler,
     /// BlobTransactor for handling blob writes
-    pub blob_transactor: BlobTransactor,
+    pub blob_transactor: BlobHandler,
     /// RecordHandler for handling record writes
     pub record_transactor: RecordHandler,
     /// Signing keypair
@@ -69,7 +70,7 @@ impl RepoHandler {
         background_queue: BackgroundQueue,
     ) -> Self {
         // Create readers
-        let blob = BlobReader::new(db.clone(), blobstore.clone());
+        let blob = BlobHandler::new(db.clone(), blobstore.clone());
         let record = RecordHandler::new(db.clone(), did.clone());
 
         // Create storage backend with current timestamp
@@ -78,7 +79,7 @@ impl RepoHandler {
 
         // Create transactors
         let blob_transactor =
-            BlobTransactor::new(db.clone(), blobstore.clone(), background_queue.clone());
+            BlobHandler::new(db.clone(), blobstore.clone(), background_queue.clone());
         let record_transactor = RecordHandler::new(db.clone(), blobstore);
 
         Self {
