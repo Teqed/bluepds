@@ -1,14 +1,12 @@
-use crate::repo::types::BlobStore;
-
-use super::blob::BackgroundQueue;
+use super::blob::{BackgroundQueue, BlobStorePlaceholder};
 pub(crate) struct ActorStoreResources {
-    pub(crate) blobstore: fn(did: String) -> BlobStore,
+    pub(crate) blobstore: fn(did: String) -> BlobStorePlaceholder,
     pub(crate) background_queue: BackgroundQueue,
     pub(crate) reserved_key_dir: Option<String>,
 }
 impl ActorStoreResources {
     pub(crate) fn new(
-        blobstore: fn(did: String) -> BlobStore,
+        blobstore: fn(did: String) -> BlobStorePlaceholder,
         background_queue: BackgroundQueue,
         reserved_key_dir: Option<String>,
     ) -> Self {
@@ -19,7 +17,7 @@ impl ActorStoreResources {
         }
     }
 
-    pub(crate) fn blobstore(&self, did: String) -> BlobStore {
+    pub(crate) fn blobstore(&self, did: String) -> BlobStorePlaceholder {
         (self.blobstore)(did)
     }
 }

@@ -1,10 +1,13 @@
+use std::future::Future;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::{self, JoinHandle};
 use tracing::error;
 
-/// Background Queue
+/// Background Queue for asynchronous processing tasks
+///
 /// A simple queue for in-process, out-of-band/backgrounded work
+#[derive(Clone)]
 pub struct BackgroundQueue {
     semaphore: Arc<Semaphore>,
     tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
@@ -22,7 +25,7 @@ impl BackgroundQueue {
     }
 
     /// Add a task to the queue
-    pub async fn add<F>(&self, fut: F)
+    pub async fn add<F>(&self, future: F)
     where
         F: Future<Output = ()> + Send + 'static,
     {
@@ -31,17 +34,29 @@ impl BackgroundQueue {
             return;
         }
 
-        let permit = self.semaphore.clone().acquire_owned().await.unwrap();
+        let permit = match self.semaphore.clone().acquire_owned().await {
+            Ok(p) => p,
+            Err(_) => {
+                error!("Failed to acquire semaphore permit for background task");
+                return;
+            }
+        };
+
         let tasks = self.tasks.clone();
 
         let handle = task::spawn(async move {
-            _ = fut.await;
+            future.await;
+
+            // Catch any panics to prevent task failures from propagating
             if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {})) {
-                error!("background queue task panicked: {:?}", e);
+                error!("Background queue task panicked: {:?}", e);
             }
+
+            // Release the semaphore permit
             drop(permit);
         });
 
+        // Store the handle for later cleanup
         tasks.lock().await.push(handle);
     }
 

@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use cidv10::Cid as CidV10;
 use rsky_repo::types::{
     CommitAction, PreparedBlobRef, PreparedCreateOrUpdate, PreparedDelete, WriteOpAction,
 };
@@ -19,19 +22,28 @@ impl PreparedWrite {
         }
     }
 
-    pub fn cid(&self) -> Option<Cid> {
+    pub fn cid(&self) -> Option<CidV10> {
         match self {
-            PreparedWrite::Create(w) => Some(w.cid),
-            PreparedWrite::Update(w) => Some(w.cid),
+            PreparedWrite::Create(w) => Some(CidV10::from_str(w.cid.to_string().as_str()).unwrap()),
+            PreparedWrite::Update(w) => Some(CidV10::from_str(w.cid.to_string().as_str()).unwrap()),
             PreparedWrite::Delete(_) => None,
         }
     }
 
-    pub fn swap_cid(&self) -> &Option<Cid> {
+    pub fn swap_cid(&self) -> Option<CidV10> {
         match self {
-            PreparedWrite::Create(w) => &w.swap_cid,
-            PreparedWrite::Update(w) => &w.swap_cid,
-            PreparedWrite::Delete(w) => &w.swap_cid,
+            PreparedWrite::Create(w) => w
+                .swap_cid
+                .as_ref()
+                .map(|cid| CidV10::from_str(cid.to_string().as_str()).unwrap()),
+            PreparedWrite::Update(w) => w
+                .swap_cid
+                .as_ref()
+                .map(|cid| CidV10::from_str(cid.to_string().as_str()).unwrap()),
+            PreparedWrite::Delete(w) => w
+                .swap_cid
+                .as_ref()
+                .map(|cid| CidV10::from_str(cid.to_string().as_str()).unwrap()),
         }
     }
 

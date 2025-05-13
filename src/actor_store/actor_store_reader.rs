@@ -1,4 +1,5 @@
 use anyhow::Result;
+use diesel::prelude::*;
 use std::sync::Arc;
 
 use super::{
@@ -20,7 +21,7 @@ pub(crate) struct ActorStoreReader {
     /// Function to get keypair.
     keypair_fn: Box<dyn Fn() -> Result<Arc<SigningKey>> + Send + Sync>,
     /// Database connection.
-    db: ActorDb,
+    pub(crate) db: ActorDb,
     /// Actor store resources.
     resources: ActorStoreResources,
 }
@@ -34,8 +35,8 @@ impl ActorStoreReader {
         keypair: impl Fn() -> Result<Arc<SigningKey>> + Send + Sync + 'static,
     ) -> Self {
         // Create readers
-        let record = RecordReader::new(db.clone());
-        let pref = PreferenceReader::new(db.clone());
+        let record = RecordReader::new(db.clone(), did.clone());
+        let pref = PreferenceReader::new(db.clone(), did.clone());
 
         // Store keypair function for later use
         let keypair_fn = Box::new(keypair);
@@ -44,7 +45,7 @@ impl ActorStoreReader {
         let _ = keypair_fn();
 
         // Create repo reader
-        let repo = RepoReader::new(db.clone(), resources.blobstore(did.clone()));
+        let repo = RepoReader::new(db.clone(), resources.blobstore(did.clone()), did.clone());
 
         Self {
             did,
@@ -65,26 +66,26 @@ impl ActorStoreReader {
     /// Execute a transaction with the actor store.
     pub(crate) async fn transact<T, F>(&self, f: F) -> Result<T>
     where
-        F: FnOnce(ActorStoreTransactor) -> Result<T>,
+        F: FnOnce(ActorStoreTransactor) -> Result<T> + Send,
+        T: Send + 'static,
     {
         let keypair = self.keypair()?;
         let did = self.did.clone();
         let resources = self.resources.clone();
 
         self.db
-            .transaction_no_retry(move |tx| {
+            .transaction(move |conn| {
                 // Create a transactor with the transaction
-                let store = ActorStoreTransactor::new_with_transaction(
-                    did,
-                    tx, // Pass the transaction directly
-                    keypair.clone(),
-                    resources,
-                );
+                // We'll create a temporary ActorDb with the same pool
+                let db = ActorDb {
+                    pool: self.db.pool.clone(),
+                };
+
+                let store = ActorStoreTransactor::new(did, db, keypair.clone(), resources);
 
                 // Execute user function
-                f(store).map_err(|e| sqlx::Error::Custom(Box::new(e))) // Convert anyhow::Error to sqlx::Error
+                f(store)
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Transaction error: {:?}", e))
     }
 }

@@ -11,6 +11,7 @@ mod preference;
 mod prepared_write;
 mod record;
 mod repo;
+mod sql_repo;
 
 pub(crate) use actor_store::ActorStore;
 pub(crate) use actor_store_reader::ActorStoreReader;

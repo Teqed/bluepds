@@ -5,9 +5,9 @@ use anyhow::Result;
 
 use super::ActorDb;
 use super::actor_store_reader::ActorStoreReader;
+use super::actor_store_resources::ActorStoreResources;
 use super::actor_store_transactor::ActorStoreTransactor;
 use super::actor_store_writer::ActorStoreWriter;
-use super::resources::ActorStoreResources;
 use crate::SigningKey;
 
 pub(crate) struct ActorStore {
