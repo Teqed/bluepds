@@ -1,744 +1,436 @@
 //! Record storage and retrieval for the actor store.
+//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/actor_store/record/mod.rs
+//! blacksky-algorithms/rsky is licensed under the Apache License 2.0
+//!
+//! Modified for SQLite backend
 
-use anyhow::{Context as _, Result, bail};
-use atrium_api::com::atproto::admin::defs::StatusAttr;
-use atrium_repo::Cid;
-use diesel::associations::HasTable;
-use diesel::prelude::*;
+use anyhow::{Error, Result, bail};
+use cidv10::Cid;
+use diesel::*;
+use futures::stream::{self, StreamExt};
+use rsky_lexicon::com::atproto::admin::StatusAttr;
+use rsky_pds::actor_store::record::{GetRecord, RecordsForCollection, get_backlinks};
 use rsky_pds::models::{Backlink, Record};
-use rsky_pds::schema::pds::repo_block::dsl::repo_block;
-use rsky_pds::schema::pds::{backlink, record};
-use rsky_repo::types::WriteOpAction;
+use rsky_repo::types::{RepoRecord, WriteOpAction};
+use rsky_repo::util::cbor_to_lex_record;
 use rsky_syntax::aturi::AtUri;
+use std::env;
 use std::str::FromStr;
 
-use crate::actor_store::blob::BlobStorePlaceholder;
 use crate::actor_store::db::ActorDb;
 
 /// Combined handler for record operations with both read and write capabilities.
-pub(crate) struct RecordHandler {
+pub(crate) struct RecordReader {
     /// Database connection.
     pub db: ActorDb,
     /// DID of the actor.
     pub did: String,
-    /// Blob store for handling blobs.
-    pub blobstore: Option<BlobStorePlaceholder>,
 }
 
-/// Record descriptor containing URI, path, and CID.
-pub(crate) struct RecordDescript {
-    /// Record URI.
-    pub uri: String,
-    /// Record path.
-    pub path: String,
-    /// Record CID.
-    pub cid: Cid,
-}
-
-/// Record data with values.
-#[derive(Debug, Clone)]
-pub(crate) struct RecordData {
-    /// Record URI.
-    pub uri: String,
-    /// Record CID.
-    pub cid: String,
-    /// Record value as JSON.
-    pub value: serde_json::Value,
-    /// When the record was indexed.
-    pub indexedAt: String,
-    /// Reference for takedown, if any.
-    pub takedownRef: Option<String>,
-}
-
-/// Options for listing records in a collection.
-#[derive(Debug, Clone)]
-pub(crate) struct ListRecordsOptions {
-    /// Collection to list records from.
-    pub collection: String,
-    /// Maximum number of records to return.
-    pub limit: i64,
-    /// Whether to reverse the sort order.
-    pub reverse: bool,
-    /// Cursor for pagination.
-    pub cursor: Option<String>,
-    /// Start key (deprecated).
-    pub rkey_start: Option<String>,
-    /// End key (deprecated).
-    pub rkey_end: Option<String>,
-    /// Whether to include soft-deleted records.
-    pub include_soft_deleted: bool,
-}
-
-impl RecordHandler {
+impl RecordReader {
     /// Create a new record handler.
-    pub(crate) fn new(db: ActorDb, did: String) -> Self {
-        Self {
-            db,
-            did,
-            blobstore: None,
-        }
-    }
-
-    /// Create a new record handler with blobstore support.
-    pub(crate) fn new_with_blobstore(
-        db: ActorDb,
-        blobstore: BlobStorePlaceholder,
-        did: String,
-    ) -> Self {
-        Self {
-            db,
-            did,
-            blobstore: Some(blobstore),
-        }
+    pub(crate) fn new(did: String, db: ActorDb) -> Self {
+        Self { did, db }
     }
 
     /// Count the total number of records.
-    pub(crate) async fn record_count(&self) -> Result<i64> {
-        let did = self.did.clone();
+    pub(crate) async fn record_count(&mut self) -> Result<i64> {
+        use rsky_pds::schema::pds::record::dsl::*;
 
+        let other_did = self.did.clone();
         self.db
             .run(move |conn| {
-                use rsky_pds::schema::pds::record::dsl::*;
-
-                record.filter(did.eq(&did)).count().get_result(conn)
+                let res: i64 = record.filter(did.eq(&other_did)).count().get_result(conn)?;
+                Ok(res)
             })
             .await
     }
 
-    /// List all records.
-    pub(crate) async fn list_all(&self) -> Result<Vec<RecordDescript>> {
-        let did = self.did.clone();
-        let mut records = Vec::new();
-        let mut current_cursor = Some("".to_string());
-
-        while let Some(cursor) = current_cursor.take() {
-            let cursor_clone = cursor.clone();
-            let did_clone = did.clone();
-
-            let rows = self
-                .db
-                .run(move |conn| {
-                    use rsky_pds::schema::pds::record::dsl::*;
-
-                    record
-                        .filter(did.eq(&did_clone))
-                        .filter(uri.gt(&cursor_clone))
-                        .order(uri.asc())
-                        .limit(1000)
-                        .select((uri, cid))
-                        .load::<(String, String)>(conn)
-                })
-                .await?;
-
-            for (uri_str, cid_str) in &rows {
-                let uri = uri_str.clone();
-                let parts: Vec<&str> = uri.rsplitn(2, '/').collect();
-                let path = if parts.len() == 2 {
-                    format!("{}/{}", parts[1], parts[0])
-                } else {
-                    uri.clone()
-                };
-
-                match Cid::from_str(&cid_str) {
-                    Ok(cid) => records.push(RecordDescript { uri, path, cid }),
-                    Err(e) => tracing::warn!("Invalid CID in database: {}", e),
-                }
-            }
-
-            if let Some(last) = rows.last() {
-                current_cursor = Some(last.0.clone());
-            } else {
-                break;
-            }
-        }
-
-        Ok(records)
-    }
-
     /// List all collections in the repository.
     pub(crate) async fn list_collections(&self) -> Result<Vec<String>> {
-        let did = self.did.clone();
+        use rsky_pds::schema::pds::record::dsl::*;
 
+        let other_did = self.did.clone();
         self.db
             .run(move |conn| {
-                use rsky_pds::schema::pds::record::dsl::*;
-
-                record
-                    .filter(did.eq(&did))
-                    .group_by(collection)
+                let collections = record
+                    .filter(did.eq(&other_did))
                     .select(collection)
-                    .load::<String>(conn)
+                    .group_by(collection)
+                    .load::<String>(conn)?
+                    .into_iter()
+                    .collect::<Vec<String>>();
+                Ok(collections)
             })
             .await
     }
 
     /// List records for a specific collection.
     pub(crate) async fn list_records_for_collection(
-        &self,
-        opts: ListRecordsOptions,
-    ) -> Result<Vec<RecordData>> {
-        let did = self.did.clone();
+        &mut self,
+        collection: String,
+        limit: i64,
+        reverse: bool,
+        cursor: Option<String>,
+        rkey_start: Option<String>,
+        rkey_end: Option<String>,
+        include_soft_deleted: Option<bool>,
+    ) -> Result<Vec<RecordsForCollection>> {
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-        self.db
-            .run(move |conn| {
-                // Start building the query
-                let mut query = record::table
-                    .inner_join(repo_block::table.on(repo_block::cid.eq(record::cid)))
-                    .filter(record::did.eq(&did))
-                    .filter(record::collection.eq(&opts.collection))
-                    .into_boxed();
+        let include_soft_deleted: bool = if let Some(include_soft_deleted) = include_soft_deleted {
+            include_soft_deleted
+        } else {
+            false
+        };
+        let mut builder = RecordSchema::record
+            .inner_join(RepoBlockSchema::repo_block.on(RepoBlockSchema::cid.eq(RecordSchema::cid)))
+            .limit(limit)
+            .select((
+                rsky_pds::models::Record::as_select(),
+                rsky_pds::models::RepoBlock::as_select(),
+            ))
+            .filter(RecordSchema::did.eq(self.did.clone()))
+            .filter(RecordSchema::collection.eq(collection))
+            .into_boxed();
+        if !include_soft_deleted {
+            builder = builder.filter(RecordSchema::takedownRef.is_null());
+        }
+        if reverse {
+            builder = builder.order(RecordSchema::rkey.asc());
+        } else {
+            builder = builder.order(RecordSchema::rkey.desc());
+        }
 
-                // Handle soft-deleted records
-                if !opts.include_soft_deleted {
-                    query = query.filter(record::takedownRef.is_null());
-                }
-
-                // Handle cursor-based pagination first
-                if let Some(cursor) = &opts.cursor {
-                    if opts.reverse {
-                        query = query.filter(record::rkey.gt(cursor));
-                    } else {
-                        query = query.filter(record::rkey.lt(cursor));
-                    }
-                } else {
-                    // Fall back to deprecated rkey-based pagination
-                    if let Some(start) = &opts.rkey_start {
-                        query = query.filter(record::rkey.gt(start));
-                    }
-                    if let Some(end) = &opts.rkey_end {
-                        query = query.filter(record::rkey.lt(end));
-                    }
-                }
-
-                // Add order and limit
-                if opts.reverse {
-                    query = query.order(record::rkey.asc());
-                } else {
-                    query = query.order(record::rkey.desc());
-                }
-
-                query = query.limit(opts.limit);
-
-                // Execute the query
-                let results = query
-                    .select((
-                        record::uri,
-                        record::cid,
-                        record::indexedAt,
-                        record::takedownRef,
-                        repo_block::content,
-                    ))
-                    .load::<(String, String, String, Option<String>, Vec<u8>)>(conn)?;
-
-                // Convert results to RecordData
-                let records = results
-                    .into_iter()
-                    .map(|(uri, cid, indexedAt, takedownRef, content)| {
-                        let value = serde_json::from_slice(&content)
-                            .with_context(|| format!("Failed to decode record {}", cid))?;
-
-                        Ok(RecordData {
-                            uri,
-                            cid,
-                            value,
-                            indexedAt,
-                            takedownRef,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-
-                Ok(records)
+        if let Some(cursor) = cursor {
+            if reverse {
+                builder = builder.filter(RecordSchema::rkey.gt(cursor));
+            } else {
+                builder = builder.filter(RecordSchema::rkey.lt(cursor));
+            }
+        } else {
+            if let Some(rkey_start) = rkey_start {
+                builder = builder.filter(RecordSchema::rkey.gt(rkey_start));
+            }
+            if let Some(rkey_end) = rkey_end {
+                builder = builder.filter(RecordSchema::rkey.lt(rkey_end));
+            }
+        }
+        let res: Vec<(rsky_pds::models::Record, rsky_pds::models::RepoBlock)> =
+            self.db.run(move |conn| builder.load(conn)).await?;
+        res.into_iter()
+            .map(|row| {
+                Ok(RecordsForCollection {
+                    uri: row.0.uri,
+                    cid: row.0.cid,
+                    value: cbor_to_lex_record(row.1.content)?,
+                })
             })
-            .await
+            .collect::<Result<Vec<RecordsForCollection>>>()
     }
 
     /// Get a specific record by URI.
     pub(crate) async fn get_record(
-        &self,
+        &mut self,
         uri: &AtUri,
-        cid: Option<&str>,
-        include_soft_deleted: bool,
-    ) -> Result<Option<RecordData>> {
-        let did = self.did.clone();
-        let uri_str = uri.to_string();
-        let cid_opt = cid.map(|c| c.to_string());
+        cid: Option<String>,
+        include_soft_deleted: Option<bool>,
+    ) -> Result<Option<GetRecord>> {
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-        self.db
-            .run(move |conn| {
-                let mut query = record::table
-                    .inner_join(repo_block::table.on(repo_block::cid.eq(record::cid)))
-                    .filter(record::did.eq(&did))
-                    .filter(record::uri.eq(&uri_str))
-                    .into_boxed();
-
-                if !include_soft_deleted {
-                    query = query.filter(record::takedownRef.is_null());
-                }
-
-                if let Some(cid_val) = cid_opt {
-                    query = query.filter(record::cid.eq(cid_val));
-                }
-
-                let result = query
-                    .select((
-                        record::uri,
-                        record::cid,
-                        record::indexedAt,
-                        record::takedownRef,
-                        repo_block::content,
-                    ))
-                    .first::<(String, String, String, Option<String>, Vec<u8>)>(conn)
-                    .optional()?;
-
-                if let Some((uri, cid, indexedAt, takedownRef, content)) = result {
-                    let value = serde_json::from_slice(&content)
-                        .with_context(|| format!("Failed to decode record {}", cid))?;
-
-                    Ok(Some(RecordData {
-                        uri,
-                        cid,
-                        value,
-                        indexedAt,
-                        takedownRef,
-                    }))
-                } else {
-                    Ok(None)
-                }
-            })
-            .await
+        let include_soft_deleted: bool = if let Some(include_soft_deleted) = include_soft_deleted {
+            include_soft_deleted
+        } else {
+            false
+        };
+        let mut builder = RecordSchema::record
+            .inner_join(RepoBlockSchema::repo_block.on(RepoBlockSchema::cid.eq(RecordSchema::cid)))
+            .select((
+                rsky_pds::models::Record::as_select(),
+                rsky_pds::models::RepoBlock::as_select(),
+            ))
+            .filter(RecordSchema::uri.eq(uri.to_string()))
+            .into_boxed();
+        if !include_soft_deleted {
+            builder = builder.filter(RecordSchema::takedownRef.is_null());
+        }
+        if let Some(cid) = cid {
+            builder = builder.filter(RecordSchema::cid.eq(cid));
+        }
+        let record: Option<(rsky_pds::models::Record, rsky_pds::models::RepoBlock)> = self
+            .db
+            .run(move |conn| builder.first(conn).optional())
+            .await?;
+        if let Some(record) = record {
+            Ok(Some(GetRecord {
+                uri: record.0.uri,
+                cid: record.0.cid,
+                value: cbor_to_lex_record(record.1.content)?,
+                indexed_at: record.0.indexed_at,
+                takedown_ref: record.0.takedown_ref,
+            }))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Check if a record exists.
     pub(crate) async fn has_record(
-        &self,
-        uri: &str,
-        cid: Option<&str>,
-        include_soft_deleted: bool,
+        &mut self,
+        uri: String,
+        cid: Option<String>,
+        include_soft_deleted: Option<bool>,
     ) -> Result<bool> {
-        let did = self.did.clone();
-        let uri_str = uri.to_string();
-        let cid_opt = cid.map(|c| c.to_string());
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
-        self.db
-            .run(move |conn| {
-                let mut query = record::table
-                    .filter(record::did.eq(&did))
-                    .filter(record::uri.eq(&uri_str))
-                    .into_boxed();
-
-                if !include_soft_deleted {
-                    query = query.filter(record::takedownRef.is_null());
-                }
-
-                if let Some(cid_val) = cid_opt {
-                    query = query.filter(record::cid.eq(cid_val));
-                }
-
-                let exists = query
-                    .select(record::uri)
-                    .first::<String>(conn)
-                    .optional()?
-                    .is_some();
-
-                Ok(exists)
-            })
-            .await
+        let include_soft_deleted: bool = if let Some(include_soft_deleted) = include_soft_deleted {
+            include_soft_deleted
+        } else {
+            false
+        };
+        let mut builder = RecordSchema::record
+            .select(RecordSchema::uri)
+            .filter(RecordSchema::uri.eq(uri))
+            .into_boxed();
+        if !include_soft_deleted {
+            builder = builder.filter(RecordSchema::takedownRef.is_null());
+        }
+        if let Some(cid) = cid {
+            builder = builder.filter(RecordSchema::cid.eq(cid));
+        }
+        let record_uri = self
+            .db
+            .run(move |conn| builder.first::<String>(conn).optional())
+            .await?;
+        Ok(!!record_uri.is_some())
     }
 
     /// Get the takedown status of a record.
-    pub(crate) async fn get_record_takedown_status(&self, uri: &str) -> Result<Option<StatusAttr>> {
-        let did = self.did.clone();
-        let uri_str = uri.to_string();
+    pub(crate) async fn get_record_takedown_status(
+        &self,
+        uri: String,
+    ) -> Result<Option<StatusAttr>> {
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
-        self.db
+        let res = self
+            .db
             .run(move |conn| {
-                let result = record::table
-                    .filter(record::did.eq(&did))
-                    .filter(record::uri.eq(&uri_str))
-                    .select(record::takedownRef)
+                RecordSchema::record
+                    .select(RecordSchema::takedownRef)
+                    .filter(RecordSchema::uri.eq(uri))
                     .first::<Option<String>>(conn)
-                    .optional()?;
-
-                match result {
-                    Some(takedown) => match takedown {
-                        Some(takedownRef) => Ok(Some(StatusAttr {
-                            applied: true,
-                            r#ref: Some(takedownRef),
-                        })),
-                        None => Ok(Some(StatusAttr {
-                            applied: false,
-                            r#ref: None,
-                        })),
-                    },
-                    None => Ok(None),
-                }
+                    .optional()
             })
-            .await
+            .await?;
+        if let Some(res) = res {
+            if let Some(takedown_ref) = res {
+                Ok(Some(StatusAttr {
+                    applied: true,
+                    r#ref: Some(takedown_ref),
+                }))
+            } else {
+                Ok(Some(StatusAttr {
+                    applied: false,
+                    r#ref: None,
+                }))
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get the current CID for a record URI.
-    pub(crate) async fn get_current_record_cid(&self, uri: &str) -> Result<Option<Cid>> {
-        let did = self.did.clone();
-        let uri_str = uri.to_string();
+    pub(crate) async fn get_current_record_cid(&self, uri: String) -> Result<Option<Cid>> {
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
-        self.db
+        let res = self
+            .db
             .run(move |conn| {
-                let result = record::table
-                    .filter(record::did.eq(&did))
-                    .filter(record::uri.eq(&uri_str))
-                    .select(record::cid)
+                RecordSchema::record
+                    .select(RecordSchema::cid)
+                    .filter(RecordSchema::uri.eq(uri))
                     .first::<String>(conn)
-                    .optional()?;
-
-                match result {
-                    Some(cid_str) => {
-                        let cid = Cid::from_str(&cid_str)?;
-                        Ok(Some(cid))
-                    }
-                    None => Ok(None),
-                }
+                    .optional()
             })
-            .await
+            .await?;
+        if let Some(res) = res {
+            Ok(Some(Cid::from_str(&res)?))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Get backlinks for a record.
     pub(crate) async fn get_record_backlinks(
         &self,
-        collection: &str,
-        path: &str,
-        linkTo: &str,
+        collection: String,
+        path: String,
+        link_to: String,
     ) -> Result<Vec<Record>> {
-        let did = self.did.clone();
-        let collection_str = collection.to_string();
-        let path_str = path.to_string();
-        let linkTo_str = linkTo.to_string();
+        use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
-        self.db
+        let res = self
+            .db
             .run(move |conn| {
-                backlink::table
-                    .inner_join(record::table.on(backlink::uri.eq(record::uri)))
-                    .filter(backlink::path.eq(&path_str))
-                    .filter(backlink::linkTo.eq(&linkTo_str))
-                    .filter(record::collection.eq(&collection_str))
-                    .filter(record::did.eq(&did))
+                RecordSchema::record
+                    .inner_join(
+                        BacklinkSchema::backlink.on(BacklinkSchema::uri.eq(RecordSchema::uri)),
+                    )
                     .select(Record::as_select())
+                    .filter(BacklinkSchema::path.eq(path))
+                    .filter(BacklinkSchema::linkTo.eq(link_to))
+                    .filter(RecordSchema::collection.eq(collection))
                     .load::<Record>(conn)
             })
-            .await
+            .await?;
+        Ok(res)
     }
 
     /// Get backlink conflicts for a record.
     pub(crate) async fn get_backlink_conflicts(
         &self,
         uri: &AtUri,
-        record: &serde_json::Value,
-    ) -> Result<Vec<String>> {
-        let backlinks = get_backlinks(uri, record)?;
-        if backlinks.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let did = self.did.clone();
-        let uri_collection = uri.get_collection().to_string();
-        let mut conflicts = Vec::new();
-
-        for backlink in backlinks {
-            let path_str = backlink.path.clone();
-            let linkTo_str = backlink.linkTo.clone();
-
-            let results = self
-                .db
-                .run(move |conn| {
-                    backlink::table
-                        .inner_join(record::table.on(backlink::uri.eq(record::uri)))
-                        .filter(backlink::path.eq(&path_str))
-                        .filter(backlink::linkTo.eq(&linkTo_str))
-                        .filter(record::collection.eq(&uri_collection))
-                        .filter(record::did.eq(&did))
-                        .select(record::uri)
-                        .load::<String>(conn)
-                })
-                .await?;
-
-            conflicts.extend(results);
-        }
-
-        Ok(conflicts)
-    }
-
-    /// List existing blocks in the repository.
-    pub(crate) async fn list_existing_blocks(&self) -> Result<Vec<Cid>> {
-        let did = self.did.clone();
-        let mut blocks = Vec::new();
-        let mut current_cursor = Some("".to_string());
-
-        while let Some(cursor) = current_cursor.take() {
-            let cursor_clone = cursor.clone();
-            let did_clone = did.clone();
-
-            let rows = self
-                .db
-                .run(move |conn| {
-                    use rsky_pds::schema::pds::repo_block::dsl::*;
-
-                    repo_block
-                        .filter(did.eq(&did_clone))
-                        .filter(cid.gt(&cursor_clone))
-                        .order(cid.asc())
-                        .limit(1000)
-                        .select(cid)
-                        .load::<String>(conn)
-                })
-                .await?;
-
-            for cid_str in &rows {
-                match Cid::from_str(cid_str) {
-                    Ok(cid) => blocks.push(cid),
-                    Err(e) => tracing::warn!("Invalid CID in database: {}", e),
-                }
-            }
-
-            if let Some(last) = rows.last() {
-                current_cursor = Some(last.clone());
-            } else {
-                break;
-            }
-        }
-
-        Ok(blocks)
-    }
-
-    /// Get the profile record for this repository
-    pub(crate) async fn get_profile_record(&self) -> Result<Option<serde_json::Value>> {
-        let did = self.did.clone();
-
-        self.db
-            .run(move |conn| {
-                let result = record::table
-                    .inner_join(repo_block::table.on(repo_block::cid.eq(record::cid)))
-                    .filter(record::did.eq(&did))
-                    .filter(record::collection.eq("app.bsky.actor.profile"))
-                    .filter(record::rkey.eq("self"))
-                    .select(repo_block::content)
-                    .first::<Vec<u8>>(conn)
-                    .optional()?;
-
-                if let Some(content) = result {
-                    let value = serde_json::from_slice(&content)
-                        .context("Failed to decode profile record")?;
-                    Ok(Some(value))
-                } else {
-                    Ok(None)
-                }
+        record: &RepoRecord,
+    ) -> Result<Vec<AtUri>> {
+        let record_backlinks = get_backlinks(uri, record)?;
+        let conflicts: Vec<Vec<Record>> = stream::iter(record_backlinks)
+            .then(|backlink| async move {
+                Ok::<Vec<Record>, anyhow::Error>(
+                    self.get_record_backlinks(
+                        uri.get_collection(),
+                        backlink.path,
+                        backlink.link_to,
+                    )
+                    .await?,
+                )
             })
+            .collect::<Vec<_>>()
             .await
-    }
-
-    /// Get records created or updated since a specific revision
-    pub(crate) async fn get_records_since_rev(&self, rev: &str) -> Result<Vec<RecordData>> {
-        let did = self.did.clone();
-        let rev_str = rev.to_string();
-
-        // First check if the revision exists
-        let exists = self
-            .db
-            .run({
-                let did_clone = did.clone();
-                let rev_clone = rev_str.clone();
-
-                move |conn| {
-                    record::table
-                        .filter(record::did.eq(&did_clone))
-                        .filter(record::repoRev.le(&rev_clone))
-                        .count()
-                        .get_result::<i64>(conn)
-                        .map(|count| count > 0)
-                }
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(conflicts
+            .into_iter()
+            .flatten()
+            .filter_map(|record| {
+                AtUri::make(
+                    env::var("BLUEPDS_HOST_NAME").unwrap_or("localhost".to_owned()),
+                    Some(String::from(uri.get_collection())),
+                    Some(record.rkey),
+                )
+                .ok()
             })
-            .await?;
-
-        if !exists {
-            // No records before this revision - possible account migration case
-            return Ok(Vec::new());
-        }
-
-        // Get records since the revision
-        self.db
-            .run(move |conn| {
-                let results = record::table
-                    .inner_join(repo_block::table.on(repo_block::cid.eq(record::cid)))
-                    .filter(record::did.eq(&did))
-                    .filter(record::repoRev.gt(&rev_str))
-                    .order(record::repoRev.asc())
-                    .limit(10)
-                    .select((
-                        record::uri,
-                        record::cid,
-                        record::indexedAt,
-                        repo_block::content,
-                    ))
-                    .load::<(String, String, String, Vec<u8>)>(conn)?;
-
-                let records = results
-                    .into_iter()
-                    .map(|(uri, cid, indexedAt, content)| {
-                        let value = serde_json::from_slice(&content)
-                            .with_context(|| format!("Failed to decode record {}", cid))?;
-
-                        Ok(RecordData {
-                            uri,
-                            cid,
-                            value,
-                            indexedAt,
-                            takedownRef: None, // Not included in the query
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-
-                Ok(records)
-            })
-            .await
+            .collect::<Vec<AtUri>>())
     }
 
     // Transactor methods
     // -----------------
 
     /// Index a record in the database.
+    #[tracing::instrument(skip_all)]
     pub(crate) async fn index_record(
         &self,
         uri: AtUri,
         cid: Cid,
-        record: Option<&serde_json::Value>,
-        action: WriteOpAction,
-        repoRev: &str,
+        record: Option<RepoRecord>,
+        action: Option<WriteOpAction>, // Create or update with a default of create
+        repo_rev: String,
         timestamp: Option<String>,
     ) -> Result<()> {
-        let uri_str = uri.to_string();
-        tracing::debug!("Indexing record {}", uri_str);
+        tracing::debug!("@LOG DEBUG RecordReader::index_record, indexing record {uri}");
 
-        if !uri_str.starts_with("at://did:") {
-            return Err(anyhow::anyhow!("Expected indexed URI to contain DID"));
-        }
+        let collection = uri.get_collection();
+        let rkey = uri.get_rkey();
+        let hostname = uri.get_hostname().to_string();
+        let action = action.unwrap_or(WriteOpAction::Create);
+        let indexed_at = timestamp.unwrap_or_else(|| rsky_common::now());
+        let row = Record {
+            did: self.did.clone(),
+            uri: uri.to_string(),
+            cid: cid.to_string(),
+            collection: collection.clone(),
+            rkey: rkey.to_string(),
+            repo_rev: Some(repo_rev.clone()),
+            indexed_at: indexed_at.clone(),
+            takedown_ref: None,
+        };
 
-        let collection = uri.get_collection().to_string();
-        let rkey = uri.get_rkey().to_string();
-
-        if collection.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Expected indexed URI to contain a collection"
-            ));
+        if !hostname.starts_with("did:") {
+            bail!("Expected indexed URI to contain DID")
+        } else if collection.is_empty() {
+            bail!("Expected indexed URI to contain a collection")
         } else if rkey.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Expected indexed URI to contain a record key"
-            ));
+            bail!("Expected indexed URI to contain a record key")
         }
 
-        let cid_str = cid.to_string();
-        let now = timestamp.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-        let did = self.did.clone();
-        let repoRev = repoRev.to_string();
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
-        // Create the record for database insertion
-        let record_values = (
-            record::did.eq(&did),
-            record::uri.eq(&uri_str),
-            record::cid.eq(&cid_str),
-            record::collection.eq(&collection),
-            record::rkey.eq(&rkey),
-            record::repoRev.eq(&repoRev),
-            record::indexedAt.eq(&now),
-        );
-
-        self.db
-            .transaction(move |conn| {
-                // Track current version of record
-                diesel::insert_into(record::table)
-                    .values(&record_values)
-                    .on_conflict(record::uri)
+        // Track current version of record
+        let (record, uri) = self
+            .db
+            .run(move |conn| {
+                insert_into(RecordSchema::record)
+                    .values(row)
+                    .on_conflict(RecordSchema::uri)
                     .do_update()
                     .set((
-                        record::cid.eq(&cid_str),
-                        record::repoRev.eq(&repoRev),
-                        record::indexedAt.eq(&now),
+                        RecordSchema::cid.eq(cid.to_string()),
+                        RecordSchema::repoRev.eq(&repo_rev),
+                        RecordSchema::indexedAt.eq(&indexed_at),
                     ))
-                    .execute(conn)
-                    .context("Failed to insert/update record")?;
-
-                // Maintain backlinks if record is provided
-                if let Some(record_value) = record {
-                    let backlinks = get_backlinks(&uri, record_value)?;
-
-                    if action == WriteOpAction::Update {
-                        // On update, clear old backlinks first
-                        diesel::delete(backlink::table)
-                            .filter(backlink::uri.eq(&uri_str))
-                            .execute(conn)
-                            .context("Failed to delete existing backlinks")?;
-                    }
-
-                    if !backlinks.is_empty() {
-                        // Insert all backlinks at once
-                        let backlink_values: Vec<_> = backlinks
-                            .into_iter()
-                            .map(|backlink| {
-                                (
-                                    backlink::uri.eq(&uri_str),
-                                    backlink::path.eq(&backlink.path),
-                                    backlink::linkTo.eq(&backlink.linkTo),
-                                )
-                            })
-                            .collect();
-
-                        diesel::insert_into(backlink::table)
-                            .values(&backlink_values)
-                            .on_conflict_do_nothing()
-                            .execute(conn)
-                            .context("Failed to insert backlinks")?;
-                    }
-                }
-
-                tracing::info!("Indexed record {}", uri_str);
-                Ok(())
+                    .execute(conn)?;
+                Ok::<_, Error>((record, uri))
             })
-            .await
+            .await?;
+
+        if let Some(record) = record {
+            // Maintain backlinks
+            let backlinks = get_backlinks(&uri, &record)?;
+            if let WriteOpAction::Update = action {
+                // On update just recreate backlinks from scratch for the record, so we can clear out
+                // the old ones. E.g. for weird cases like updating a follow to be for a different did.
+                self.remove_backlinks_by_uri(&uri).await?;
+            }
+            self.add_backlinks(backlinks).await?;
+        }
+        tracing::debug!("@LOG DEBUG RecordReader::index_record, indexed record {uri}");
+        Ok(())
     }
 
     /// Delete a record from the database.
+    #[tracing::instrument(skip_all)]
     pub(crate) async fn delete_record(&self, uri: &AtUri) -> Result<()> {
-        let uri_str = uri.to_string();
-        tracing::debug!("Deleting indexed record {}", uri_str);
-
+        tracing::debug!("@LOG DEBUG RecordReader::delete_record, deleting indexed record {uri}");
+        use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        let uri = uri.to_string();
         self.db
-            .transaction(move |conn| {
-                // Delete from record table
-                diesel::delete(record::table)
-                    .filter(record::uri.eq(&uri_str))
-                    .execute(conn)
-                    .context("Failed to delete record")?;
-
-                // Delete from backlink table
-                diesel::delete(backlink::table)
-                    .filter(backlink::uri.eq(&uri_str))
-                    .execute(conn)
-                    .context("Failed to delete record backlinks")?;
-
-                tracing::info!("Deleted indexed record {}", uri_str);
+            .run(move |conn| {
+                delete(RecordSchema::record)
+                    .filter(RecordSchema::uri.eq(&uri))
+                    .execute(conn)?;
+                delete(BacklinkSchema::backlink)
+                    .filter(BacklinkSchema::uri.eq(&uri))
+                    .execute(conn)?;
+                tracing::debug!(
+                    "@LOG DEBUG RecordReader::delete_record, deleted indexed record {uri}"
+                );
                 Ok(())
             })
             .await
     }
 
     /// Remove backlinks for a URI.
-    pub(crate) async fn remove_backlinks_by_uri(&self, uri: &str) -> Result<()> {
-        let uri_str = uri.to_string();
-
+    pub(crate) async fn remove_backlinks_by_uri(&self, uri: &AtUri) -> Result<()> {
+        use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
+        let uri = uri.to_string();
         self.db
             .run(move |conn| {
-                diesel::delete(backlink::table)
-                    .filter(backlink::uri.eq(&uri_str))
-                    .execute(conn)
-                    .context("Failed to remove backlinks")?;
-
+                delete(BacklinkSchema::backlink)
+                    .filter(BacklinkSchema::uri.eq(uri))
+                    .execute(conn)?;
                 Ok(())
             })
             .await
@@ -746,32 +438,20 @@ impl RecordHandler {
 
     /// Add backlinks to the database.
     pub(crate) async fn add_backlinks(&self, backlinks: Vec<Backlink>) -> Result<()> {
-        if backlinks.is_empty() {
-            return Ok(());
+        if backlinks.len() == 0 {
+            Ok(())
+        } else {
+            use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
+            self.db
+                .run(move |conn| {
+                    insert_into(BacklinkSchema::backlink)
+                        .values(&backlinks)
+                        .on_conflict_do_nothing()
+                        .execute(conn)?;
+                    Ok(())
+                })
+                .await
         }
-
-        self.db
-            .run(move |conn| {
-                let backlink_values: Vec<_> = backlinks
-                    .into_iter()
-                    .map(|backlink| {
-                        (
-                            backlink::uri.eq(&backlink.uri),
-                            backlink::path.eq(&backlink.path),
-                            backlink::linkTo.eq(&backlink.linkTo),
-                        )
-                    })
-                    .collect();
-
-                diesel::insert_into(backlink::table)
-                    .values(&backlink_values)
-                    .on_conflict_do_nothing()
-                    .execute(conn)
-                    .context("Failed to add backlinks")?;
-
-                Ok(())
-            })
-            .await
     }
 
     /// Update the takedown status of a record.
@@ -780,66 +460,25 @@ impl RecordHandler {
         uri: &AtUri,
         takedown: StatusAttr,
     ) -> Result<()> {
-        let uri_str = uri.to_string();
-        let did = self.did.clone();
-        let takedownRef = if takedown.applied {
-            takedown
-                .r#ref
-                .or_else(|| Some(chrono::Utc::now().to_rfc3339()))
-        } else {
-            None
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+
+        let takedown_ref: Option<String> = match takedown.applied {
+            true => match takedown.r#ref {
+                Some(takedown_ref) => Some(takedown_ref),
+                None => Some(rsky_common::now()),
+            },
+            false => None,
         };
+        let uri_string = uri.to_string();
 
         self.db
             .run(move |conn| {
-                diesel::update(record::table)
-                    .filter(record::did.eq(&did))
-                    .filter(record::uri.eq(&uri_str))
-                    .set(record::takedownRef.eq(takedownRef))
-                    .execute(conn)
-                    .context("Failed to update record takedown status")?;
-
+                update(RecordSchema::record)
+                    .filter(RecordSchema::uri.eq(uri_string))
+                    .set(RecordSchema::takedownRef.eq(takedown_ref))
+                    .execute(conn)?;
                 Ok(())
             })
             .await
     }
-}
-
-/// Extract backlinks from a record.
-pub(super) fn get_backlinks(uri: &AtUri, record: &serde_json::Value) -> Result<Vec<Backlink>> {
-    let mut backlinks = Vec::new();
-
-    // Check for record type
-    if let Some(record_type) = record.get("$type").and_then(|t| t.as_str()) {
-        // Handle follow and block records
-        if record_type == "app.bsky.graph.follow" || record_type == "app.bsky.graph.block" {
-            if let Some(subject) = record.get("subject").and_then(|s| s.as_str()) {
-                // Verify it's a valid DID
-                if subject.starts_with("did:") {
-                    backlinks.push(Backlink {
-                        uri: uri.to_string(),
-                        path: "subject".to_string(),
-                        linkTo: subject.to_string(),
-                    });
-                }
-            }
-        }
-        // Handle like and repost records
-        else if record_type == "app.bsky.feed.like" || record_type == "app.bsky.feed.repost" {
-            if let Some(subject) = record.get("subject") {
-                if let Some(subject_uri) = subject.get("uri").and_then(|u| u.as_str()) {
-                    // Verify it's a valid AT URI
-                    if subject_uri.starts_with("at://") {
-                        backlinks.push(Backlink {
-                            uri: uri.to_string(),
-                            path: "subject.uri".to_string(),
-                            linkTo: subject_uri.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(backlinks)
 }

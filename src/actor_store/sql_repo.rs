@@ -1,13 +1,17 @@
-use anyhow::{Context as _, Result};
-use atrium_repo::Cid;
-use atrium_repo::blockstore::{
-    AsyncBlockStoreRead, AsyncBlockStoreWrite, Error as BlockstoreError,
-};
+//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/actor_store/repo/sql_repo.rs
+//! blacksky-algorithms/rsky is licensed under the Apache License 2.0
+//!
+//! Modified for SQLite backend
+
+use anyhow::Result;
+use cidv10::Cid;
+use diesel::dsl::sql;
 use diesel::prelude::*;
-use diesel::r2d2::{self, ConnectionManager};
-use diesel::sqlite::SqliteConnection;
+use diesel::sql_types::{Bool, Text};
+use diesel::*;
 use futures::{StreamExt, TryStreamExt, stream};
-use rsky_pds::models::{RepoBlock, RepoRoot};
+use rsky_pds::models;
+use rsky_pds::models::RepoBlock;
 use rsky_repo::block_map::{BlockMap, BlocksAndMissing};
 use rsky_repo::car::blocks_to_car_file;
 use rsky_repo::cid_set::CidSet;
@@ -16,243 +20,62 @@ use rsky_repo::storage::RepoRootError::RepoRootNotFoundError;
 use rsky_repo::storage::readable_blockstore::ReadableBlockstore;
 use rsky_repo::storage::types::RepoStorage;
 use rsky_repo::types::CommitData;
-use sha2::{Digest, Sha256};
-use std::future::Future;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::actor_store::db::ActorDb;
+use super::ActorDb;
 
 #[derive(Clone, Debug)]
-pub struct SqlRepoStorage {
-    /// In-memory cache for blocks
+pub struct SqlRepoReader {
     pub cache: Arc<RwLock<BlockMap>>,
-    /// Database connection
     pub db: ActorDb,
-    /// DID of the actor
-    pub did: String,
-    /// Current timestamp
+    pub root: Option<Cid>,
+    pub rev: Option<String>,
     pub now: String,
+    pub did: String,
 }
 
-impl SqlRepoStorage {
-    /// Create a new SQL repository storage
-    pub fn new(did: String, db: ActorDb, now: Option<String>) -> Self {
-        let now = now.unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-
-        Self {
-            cache: Arc::new(RwLock::new(BlockMap::new())),
-            db,
-            did,
-            now,
-        }
-    }
-
-    /// Get the CAR stream for the repository
-    pub async fn get_car_stream(&self, since: Option<String>) -> Result<Vec<u8>> {
-        match self.get_root().await {
-            None => Err(anyhow::Error::new(RepoRootNotFoundError)),
-            Some(root) => {
-                let mut car = BlockMap::new();
-                let mut cursor: Option<CidAndRev> = None;
-
-                loop {
-                    let blocks = self.get_block_range(&since, &cursor).await?;
-                    if blocks.is_empty() {
-                        break;
-                    }
-
-                    // Add blocks to car
-                    for block in &blocks {
-                        car.set(Cid::from_str(&block.cid)?, block.content.clone());
-                    }
-
-                    if let Some(last_block) = blocks.last() {
-                        cursor = Some(CidAndRev {
-                            cid: Cid::from_str(&last_block.cid)?,
-                            rev: last_block.repoRev.clone(),
-                        });
-                    } else {
-                        break;
-                    }
-                }
-
-                blocks_to_car_file(Some(&root), car).await
-            }
-        }
-    }
-
-    /// Get a range of blocks from the database
-    pub async fn get_block_range(
-        &self,
-        since: &Option<String>,
-        cursor: &Option<CidAndRev>,
-    ) -> Result<Vec<RepoBlock>> {
-        let did = self.did.clone();
-
-        self.db
-            .run(move |conn| {
-                use rsky_pds::schema::pds::repo_block::dsl::*;
-
-                let mut query = repo_block.filter(did.eq(&did)).limit(500).into_boxed();
-
-                if let Some(c) = cursor {
-                    query = query.filter(
-                        repoRev
-                            .lt(&c.rev)
-                            .or(repoRev.eq(&c.rev).and(cid.lt(&c.cid.to_string()))),
-                    );
-                }
-
-                if let Some(s) = since {
-                    query = query.filter(repoRev.gt(s));
-                }
-
-                query
-                    .order((repoRev.desc(), cid.desc()))
-                    .load::<RepoBlock>(conn)
-            })
-            .await
-    }
-
-    /// Count total blocks for this repository
-    pub async fn count_blocks(&self) -> Result<i64> {
-        let did = self.did.clone();
-
-        self.db
-            .run(move |conn| {
-                use rsky_pds::schema::pds::repo_block::dsl::*;
-
-                repo_block.filter(did.eq(&did)).count().get_result(conn)
-            })
-            .await
-    }
-
-    /// Proactively cache blocks from a specific revision
-    pub async fn cache_rev(&mut self, rev: &str) -> Result<()> {
-        let did = self.did.clone();
-        let rev_string = rev.to_string();
-
-        let blocks = self
-            .db
-            .run(move |conn| {
-                use rsky_pds::schema::pds::repo_block::dsl::*;
-
-                repo_block
-                    .filter(did.eq(&did))
-                    .filter(repoRev.eq(&rev_string))
-                    .select((cid, content))
-                    .limit(15)
-                    .load::<(String, Vec<u8>)>(conn)
-            })
-            .await?;
-
-        let mut cache_guard = self.cache.write().await;
-        for (cid_str, content) in blocks {
-            let cid = Cid::from_str(&cid_str)?;
-            cache_guard.set(cid, content);
-        }
-
-        Ok(())
-    }
-
-    /// Delete multiple blocks by their CIDs
-    pub async fn delete_many(&self, cids: Vec<Cid>) -> Result<()> {
-        if cids.is_empty() {
-            return Ok(());
-        }
-
-        let did = self.did.clone();
-        let cid_strings: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();
-
-        // Process in chunks to avoid too many parameters
-        for chunk in cid_strings.chunks(100) {
-            let chunk_vec = chunk.to_vec();
-            let did_clone = did.clone();
-
-            self.db
-                .run(move |conn| {
-                    use rsky_pds::schema::pds::repo_block::dsl::*;
-
-                    diesel::delete(repo_block)
-                        .filter(did.eq(&did_clone))
-                        .filter(cid.eq_any(&chunk_vec))
-                        .execute(conn)
-                })
-                .await?;
-        }
-
-        Ok(())
-    }
-
-    /// Get the detailed root information
-    pub async fn get_root_detailed(&self) -> Result<CidAndRev> {
-        let did = self.did.clone();
-
-        let root = self
-            .db
-            .run(move |conn| {
-                use rsky_pds::schema::pds::repo_root::dsl::*;
-
-                repo_root
-                    .filter(did.eq(&did))
-                    .first::<RepoRoot>(conn)
-                    .optional()
-            })
-            .await?;
-
-        match root {
-            Some(r) => Ok(CidAndRev {
-                cid: Cid::from_str(&r.cid)?,
-                rev: r.rev,
-            }),
-            None => Err(anyhow::Error::new(RepoRootNotFoundError)),
-        }
-    }
-}
-
-impl ReadableBlockstore for SqlRepoStorage {
+impl ReadableBlockstore for SqlRepoReader {
     fn get_bytes<'a>(
         &'a self,
         cid: &'a Cid,
     ) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>>> + Send + Sync + 'a>> {
-        let did = self.did.clone();
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
         let cid = cid.clone();
 
         Box::pin(async move {
-            // Check cache first
-            {
+            use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+            let cached = {
                 let cache_guard = self.cache.read().await;
-                if let Some(cached) = cache_guard.get(cid) {
-                    return Ok(Some(cached.clone()));
-                }
+                cache_guard.get(cid).map(|v| v.clone())
+            };
+            if let Some(cached_result) = cached {
+                return Ok(Some(cached_result.clone()));
             }
 
-            // Not in cache, query database
-            let cid_str = cid.to_string();
-            let result = self
-                .db
+            let found: Option<Vec<u8>> = db
                 .run(move |conn| {
-                    use rsky_pds::schema::pds::repo_block::dsl::*;
-
-                    repo_block
-                        .filter(did.eq(&did))
-                        .filter(cid.eq(&cid_str))
-                        .select(content)
-                        .first::<Vec<u8>>(conn)
+                    RepoBlockSchema::repo_block
+                        .filter(RepoBlockSchema::cid.eq(cid.to_string()))
+                        .filter(RepoBlockSchema::did.eq(did))
+                        .select(RepoBlockSchema::content)
+                        .first(conn)
                         .optional()
                 })
                 .await?;
-
-            // Update cache if found
-            if let Some(content) = &result {
-                let mut cache_guard = self.cache.write().await;
-                cache_guard.set(cid, content.clone());
+            match found {
+                None => Ok(None),
+                Some(result) => {
+                    {
+                        let mut cache_guard = self.cache.write().await;
+                        cache_guard.set(cid, result.clone());
+                    }
+                    Ok(Some(result))
+                }
             }
-
-            Ok(result)
         })
     }
 
@@ -261,8 +84,8 @@ impl ReadableBlockstore for SqlRepoStorage {
         cid: Cid,
     ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + Sync + 'a>> {
         Box::pin(async move {
-            let bytes = self.get_bytes(&cid).await?;
-            Ok(bytes.is_some())
+            let got = <Self as ReadableBlockstore>::get_bytes(self, &cid).await?;
+            Ok(got.is_some())
         })
     }
 
@@ -270,69 +93,86 @@ impl ReadableBlockstore for SqlRepoStorage {
         &'a self,
         cids: Vec<Cid>,
     ) -> Pin<Box<dyn Future<Output = Result<BlocksAndMissing>> + Send + Sync + 'a>> {
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
+
         Box::pin(async move {
-            // Check cache first
+            use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
             let cached = {
                 let mut cache_guard = self.cache.write().await;
-                cache_guard.get_many(cids.clone())?
+                cache_guard.get_many(cids)?
             };
 
             if cached.missing.is_empty() {
                 return Ok(cached);
             }
-
-            // Prepare data structures for missing blocks
             let missing = CidSet::new(Some(cached.missing.clone()));
             let missing_strings: Vec<String> =
-                cached.missing.iter().map(|c| c.to_string()).collect();
-            let did = self.did.clone();
+                cached.missing.into_iter().map(|c| c.to_string()).collect();
 
-            // Create block map for results
-            let mut blocks = BlockMap::new();
-            let mut missing_set = CidSet::new(Some(cached.missing.clone()));
+            let blocks = Arc::new(tokio::sync::Mutex::new(BlockMap::new()));
+            let missing_set = Arc::new(tokio::sync::Mutex::new(missing));
 
-            // Query database in chunks
-            for chunk in missing_strings.chunks(100) {
-                let chunk_vec = chunk.to_vec();
-                let did_clone = did.clone();
+            let _: Vec<_> = stream::iter(missing_strings.chunks(500))
+                .then(|batch| {
+                    let this_db = db.clone();
+                    let this_did = did.clone();
+                    let blocks = Arc::clone(&blocks);
+                    let missing = Arc::clone(&missing_set);
+                    let batch = batch.to_vec(); // Convert to owned Vec
 
-                let rows = self
-                    .db
-                    .run(move |conn| {
-                        use rsky_pds::schema::pds::repo_block::dsl::*;
+                    async move {
+                        // Database query
+                        let rows: Vec<(String, Vec<u8>)> = this_db
+                            .run(move |conn| {
+                                RepoBlockSchema::repo_block
+                                    .filter(RepoBlockSchema::cid.eq_any(batch))
+                                    .filter(RepoBlockSchema::did.eq(this_did))
+                                    .select((RepoBlockSchema::cid, RepoBlockSchema::content))
+                                    .load(conn)
+                            })
+                            .await?;
 
-                        repo_block
-                            .filter(did.eq(&did_clone))
-                            .filter(cid.eq_any(&chunk_vec))
-                            .select((cid, content))
-                            .load::<(String, Vec<u8>)>(conn)
-                    })
-                    .await?;
+                        // Process rows with locked access
+                        let mut blocks = blocks.lock().await;
+                        let mut missing = missing.lock().await;
 
-                // Process results
-                for (cid_str, content) in rows {
-                    let block_cid = Cid::from_str(&cid_str)?;
-                    blocks.set(block_cid, content.clone());
-                    missing_set.delete(block_cid);
+                        for row in rows {
+                            let cid = Cid::from_str(&row.0)?; // Proper error handling
+                            blocks.set(cid, row.1);
+                            missing.delete(cid);
+                        }
 
-                    // Update cache
-                    let mut cache_guard = self.cache.write().await;
-                    cache_guard.set(block_cid, content);
-                }
+                        Ok::<(), anyhow::Error>(())
+                    }
+                })
+                .try_collect()
+                .await?;
+
+            // Extract values from synchronization primitives
+            let mut blocks = Arc::try_unwrap(blocks)
+                .expect("Arc still has owners")
+                .into_inner();
+            let missing = Arc::try_unwrap(missing_set)
+                .expect("Arc still has owners")
+                .into_inner();
+
+            {
+                let mut cache_guard = self.cache.write().await;
+                cache_guard.add_map(blocks.clone())?;
             }
 
-            // Combine with cached blocks
             blocks.add_map(cached.blocks)?;
 
             Ok(BlocksAndMissing {
                 blocks,
-                missing: missing_set.to_list(),
+                missing: missing.to_list(),
             })
         })
     }
 }
 
-impl RepoStorage for SqlRepoStorage {
+impl RepoStorage for SqlRepoReader {
     fn get_root<'a>(&'a self) -> Pin<Box<dyn Future<Output = Option<Cid>> + Send + Sync + 'a>> {
         Box::pin(async move {
             match self.get_root_detailed().await {
@@ -348,34 +188,28 @@ impl RepoStorage for SqlRepoStorage {
         bytes: Vec<u8>,
         rev: String,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
-        let did = self.did.clone();
-        let bytes_clone = bytes.clone();
-
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
+        let bytes_cloned = bytes.clone();
         Box::pin(async move {
-            let cid_str = cid.to_string();
-            let size = bytes.len() as i32;
+            use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-            self.db
-                .run(move |conn| {
-                    use rsky_pds::schema::pds::repo_block::dsl::*;
-
-                    diesel::insert_into(repo_block)
-                        .values((
-                            did.eq(&did),
-                            cid.eq(&cid_str),
-                            repoRev.eq(&rev),
-                            size.eq(size),
-                            content.eq(&bytes),
-                        ))
-                        .on_conflict_do_nothing()
-                        .execute(conn)
-                })
-                .await?;
-
-            // Update cache
-            let mut cache_guard = self.cache.write().await;
-            cache_guard.set(cid, bytes_clone);
-
+            db.run(move |conn| {
+                insert_into(RepoBlockSchema::repo_block)
+                    .values((
+                        RepoBlockSchema::did.eq(did),
+                        RepoBlockSchema::cid.eq(cid.to_string()),
+                        RepoBlockSchema::repoRev.eq(rev),
+                        RepoBlockSchema::size.eq(bytes.len() as i32),
+                        RepoBlockSchema::content.eq(bytes),
+                    ))
+                    .execute(conn)
+            })
+            .await?;
+            {
+                let mut cache_guard = self.cache.write().await;
+                cache_guard.set(cid, bytes_cloned);
+            }
             Ok(())
         })
     }
@@ -385,112 +219,89 @@ impl RepoStorage for SqlRepoStorage {
         to_put: BlockMap,
         rev: String,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
-        let did = self.did.clone();
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
 
         Box::pin(async move {
-            if to_put.size() == 0 {
-                return Ok(());
-            }
+            use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-            // Prepare blocks for insertion
-            let blocks: Vec<(String, String, String, i32, Vec<u8>)> = to_put
+            let blocks: Vec<RepoBlock> = to_put
                 .map
                 .iter()
-                .map(|(cid, bytes)| {
-                    (
-                        did.clone(),
-                        cid.to_string(),
-                        rev.clone(),
-                        bytes.0.len() as i32,
-                        bytes.0.clone(),
-                    )
+                .map(|(cid, bytes)| RepoBlock {
+                    cid: cid.to_string(),
+                    did: did.clone(),
+                    repo_rev: rev.clone(),
+                    size: bytes.0.len() as i32,
+                    content: bytes.0.clone(),
                 })
                 .collect();
 
-            // Process in chunks
-            for chunk in blocks.chunks(50) {
-                let chunk_vec = chunk.to_vec();
+            let chunks: Vec<Vec<RepoBlock>> =
+                blocks.chunks(50).map(|chunk| chunk.to_vec()).collect();
 
-                self.db
-                    .run(move |conn| {
-                        use rsky_pds::schema::pds::repo_block::dsl::*;
-
-                        let values: Vec<_> = chunk_vec
-                            .iter()
-                            .map(|(did_val, cid_val, rev_val, size_val, content_val)| {
-                                (
-                                    did.eq(did_val),
-                                    cid.eq(cid_val),
-                                    repoRev.eq(rev_val),
-                                    size.eq(*size_val),
-                                    content.eq(content_val),
-                                )
-                            })
-                            .collect();
-
-                        diesel::insert_into(repo_block)
-                            .values(&values)
-                            .on_conflict_do_nothing()
-                            .execute(conn)
-                    })
-                    .await?;
-            }
-
-            // Update cache with all blocks
-            {
-                let mut cache_guard = self.cache.write().await;
-                for (cid, bytes) in &to_put.map {
-                    cache_guard.set(*cid, bytes.0.clone());
-                }
-            }
+            let _: Vec<_> = stream::iter(chunks)
+                .then(|batch| {
+                    let db = db.clone();
+                    async move {
+                        db.run(move |conn| {
+                            insert_into(RepoBlockSchema::repo_block)
+                                .values(batch)
+                                .on_conflict_do_nothing()
+                                .execute(conn)
+                                .map(|_| ())
+                        })
+                        .await
+                        .map_err(anyhow::Error::from)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<()>>>()?;
 
             Ok(())
         })
     }
-
     fn update_root<'a>(
         &'a self,
         cid: Cid,
         rev: String,
         is_create: Option<bool>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
-        let did = self.did.clone();
-        let now = self.now.clone();
-        let is_create = is_create.unwrap_or(false);
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
+        let now: String = self.now.clone();
 
         Box::pin(async move {
-            let cid_str = cid.to_string();
+            use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
 
+            let is_create = is_create.unwrap_or(false);
             if is_create {
-                // Insert new root
-                self.db
-                    .run(move |conn| {
-                        use rsky_pds::schema::pds::repo_root::dsl::*;
-
-                        diesel::insert_into(repo_root)
-                            .values((
-                                did.eq(&did),
-                                cid.eq(&cid_str),
-                                rev.eq(&rev),
-                                indexedAt.eq(&now),
-                            ))
-                            .execute(conn)
-                    })
-                    .await?;
+                db.run(move |conn| {
+                    insert_into(RepoRootSchema::repo_root)
+                        .values((
+                            RepoRootSchema::did.eq(did),
+                            RepoRootSchema::cid.eq(cid.to_string()),
+                            RepoRootSchema::rev.eq(rev),
+                            RepoRootSchema::indexedAt.eq(now),
+                        ))
+                        .execute(conn)
+                })
+                .await?;
             } else {
-                // Update existing root
-                self.db
-                    .run(move |conn| {
-                        use rsky_pds::schema::pds::repo_root::dsl::*;
-
-                        diesel::update(repo_root)
-                            .filter(did.eq(&did))
-                            .set((cid.eq(&cid_str), rev.eq(&rev), indexedAt.eq(&now)))
-                            .execute(conn)
-                    })
-                    .await?;
+                db.run(move |conn| {
+                    update(RepoRootSchema::repo_root)
+                        .filter(RepoRootSchema::did.eq(did))
+                        .set((
+                            RepoRootSchema::cid.eq(cid.to_string()),
+                            RepoRootSchema::rev.eq(rev),
+                            RepoRootSchema::indexedAt.eq(now),
+                        ))
+                        .execute(conn)
+                })
+                .await?;
             }
-
             Ok(())
         })
     }
@@ -501,74 +312,178 @@ impl RepoStorage for SqlRepoStorage {
         is_create: Option<bool>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
         Box::pin(async move {
-            // Apply commit in three steps
             self.update_root(commit.cid, commit.rev.clone(), is_create)
                 .await?;
             self.put_many(commit.new_blocks, commit.rev).await?;
             self.delete_many(commit.removed_cids.to_list()).await?;
-
             Ok(())
         })
     }
 }
 
-#[async_trait::async_trait]
-impl AsyncBlockStoreRead for SqlRepoStorage {
-    async fn read_block(&mut self, cid: Cid) -> Result<Vec<u8>, BlockstoreError> {
-        let bytes = self
-            .get_bytes(&cid)
-            .await
-            .map_err(|e| BlockstoreError::Other(Box::new(e)))?
-            .ok_or(BlockstoreError::CidNotFound)?;
-
-        Ok(bytes)
-    }
-
-    fn read_block_into(
-        &mut self,
-        cid: Cid,
-        contents: &mut Vec<u8>,
-    ) -> impl Future<Output = Result<(), BlockstoreError>> + Send {
-        async move {
-            let bytes = self.read_block(cid).await?;
-            contents.clear();
-            contents.extend_from_slice(&bytes);
-            Ok(())
+// Basically handles getting ipld blocks from db
+impl SqlRepoReader {
+    pub fn new(did: String, now: Option<String>, db: ActorDb) -> Self {
+        let now = now.unwrap_or_else(rsky_common::now);
+        SqlRepoReader {
+            cache: Arc::new(RwLock::new(BlockMap::new())),
+            root: None,
+            rev: None,
+            db,
+            now,
+            did,
         }
     }
-}
 
-#[async_trait::async_trait]
-impl AsyncBlockStoreWrite for SqlRepoStorage {
-    fn write_block(
-        &mut self,
-        codec: u64,
-        hash: u64,
-        contents: &[u8],
-    ) -> impl Future<Output = Result<Cid, BlockstoreError>> + Send {
-        let contents = contents.to_vec();
-        let rev = self.now.clone();
-
-        async move {
-            // Calculate digest based on hash algorithm
-            let digest = match hash {
-                atrium_repo::blockstore::SHA2_256 => sha2::Sha256::digest(&contents),
-                _ => return Err(BlockstoreError::UnsupportedHash(hash)),
-            };
-
-            // Create multihash
-            let multihash = atrium_repo::Multihash::wrap(hash, &digest)
-                .map_err(|_| BlockstoreError::UnsupportedHash(hash))?;
-
-            // Create CID
-            let cid = Cid::new_v1(codec, multihash);
-
-            // Store the block
-            self.put_block(cid, contents, rev)
-                .await
-                .map_err(|e| BlockstoreError::Other(Box::new(e)))?;
-
-            Ok(cid)
+    pub async fn get_car_stream(&self, since: Option<String>) -> Result<Vec<u8>> {
+        match self.get_root().await {
+            None => Err(anyhow::Error::new(RepoRootNotFoundError)),
+            Some(root) => {
+                let mut car = BlockMap::new();
+                let mut cursor: Option<CidAndRev> = None;
+                let mut write_rows = |rows: Vec<RepoBlock>| -> Result<()> {
+                    for row in rows {
+                        car.set(Cid::from_str(&row.cid)?, row.content);
+                    }
+                    Ok(())
+                };
+                loop {
+                    let res = self.get_block_range(&since, &cursor).await?;
+                    write_rows(res.clone())?;
+                    if let Some(last_row) = res.last() {
+                        cursor = Some(CidAndRev {
+                            cid: Cid::from_str(&last_row.cid)?,
+                            rev: last_row.repo_rev.clone(),
+                        });
+                    } else {
+                        break;
+                    }
+                }
+                blocks_to_car_file(Some(&root), car).await
+            }
         }
+    }
+
+    pub async fn get_block_range(
+        &self,
+        since: &Option<String>,
+        cursor: &Option<CidAndRev>,
+    ) -> Result<Vec<RepoBlock>> {
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
+        let since = since.clone();
+        let cursor = cursor.clone();
+        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+
+        Ok(db
+            .run(move |conn| {
+                let mut builder = RepoBlockSchema::repo_block
+                    .select(RepoBlock::as_select())
+                    .order((RepoBlockSchema::repoRev.desc(), RepoBlockSchema::cid.desc()))
+                    .filter(RepoBlockSchema::did.eq(did))
+                    .limit(500)
+                    .into_boxed();
+
+                if let Some(cursor) = cursor {
+                    // use this syntax to ensure we hit the index
+                    builder = builder.filter(
+                        sql::<Bool>("((")
+                            .bind(RepoBlockSchema::repoRev)
+                            .sql(", ")
+                            .bind(RepoBlockSchema::cid)
+                            .sql(") < (")
+                            .bind::<Text, _>(cursor.rev.clone())
+                            .sql(", ")
+                            .bind::<Text, _>(cursor.cid.to_string())
+                            .sql("))"),
+                    );
+                }
+                if let Some(since) = since {
+                    builder = builder.filter(RepoBlockSchema::repoRev.gt(since));
+                }
+                builder.load(conn)
+            })
+            .await?)
+    }
+
+    pub async fn count_blocks(&self) -> Result<i64> {
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
+        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+
+        let res = db
+            .run(move |conn| {
+                RepoBlockSchema::repo_block
+                    .filter(RepoBlockSchema::did.eq(did))
+                    .count()
+                    .get_result(conn)
+            })
+            .await?;
+        Ok(res)
+    }
+
+    // Transactors
+    // -------------------
+
+    /// Proactively cache all blocks from a particular commit (to prevent multiple roundtrips)
+    pub async fn cache_rev(&mut self, rev: String) -> Result<()> {
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
+        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+
+        let res: Vec<(String, Vec<u8>)> = db
+            .run(move |conn| {
+                RepoBlockSchema::repo_block
+                    .filter(RepoBlockSchema::did.eq(did))
+                    .filter(RepoBlockSchema::repoRev.eq(rev))
+                    .select((RepoBlockSchema::cid, RepoBlockSchema::content))
+                    .limit(15)
+                    .get_results::<(String, Vec<u8>)>(conn)
+            })
+            .await?;
+        for row in res {
+            let mut cache_guard = self.cache.write().await;
+            cache_guard.set(Cid::from_str(&row.0)?, row.1)
+        }
+        Ok(())
+    }
+
+    pub async fn delete_many(&self, cids: Vec<Cid>) -> Result<()> {
+        if cids.is_empty() {
+            return Ok(());
+        }
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
+        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+
+        let cid_strings: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();
+        db.run(move |conn| {
+            delete(RepoBlockSchema::repo_block)
+                .filter(RepoBlockSchema::did.eq(did))
+                .filter(RepoBlockSchema::cid.eq_any(cid_strings))
+                .execute(conn)
+        })
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_root_detailed(&self) -> Result<CidAndRev> {
+        let did: String = self.did.clone();
+        let db: ActorDb = self.db.clone();
+        use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
+
+        let res = db
+            .run(move |conn| {
+                RepoRootSchema::repo_root
+                    .filter(RepoRootSchema::did.eq(did))
+                    .select(models::RepoRoot::as_select())
+                    .first(conn)
+            })
+            .await?;
+
+        Ok(CidAndRev {
+            cid: Cid::from_str(&res.cid)?,
+            rev: res.rev,
+        })
     }
 }

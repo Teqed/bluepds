@@ -1,31 +1,30 @@
 //! Preference handling for actor store.
+//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/actor_store/preference/mod.rs
+//! blacksky-algorithms/rsky is licensed under the Apache License 2.0
+//!
+//! Modified for SQLite backend
 
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_lexicon::app::bsky::actor::RefPreferences;
-use rsky_pds::{
-    actor_store::preference::{pref_match_namespace, util::pref_in_scope},
-    auth_verifier::AuthScope,
-    models::AccountPref,
-};
+use rsky_pds::actor_store::preference::pref_match_namespace;
+use rsky_pds::actor_store::preference::util::pref_in_scope;
+use rsky_pds::auth_verifier::AuthScope;
+use rsky_pds::db::DbConn;
+use rsky_pds::models;
+use rsky_pds::models::AccountPref;
+use std::sync::Arc;
 
-use crate::actor_store::db::ActorDb;
-
-/// Handler for preference operations with both read and write capabilities.
-pub(crate) struct PreferenceHandler {
-    /// Database connection.
-    pub db: ActorDb,
-    /// DID of the actor.
+pub struct PreferenceReader {
     pub did: String,
+    pub db: Arc<DbConn>,
 }
 
-impl PreferenceHandler {
-    /// Create a new preference handler.
-    pub(crate) fn new(did: String, db: ActorDb) -> Self {
-        Self { db, did }
+impl PreferenceReader {
+    pub fn new(did: String, db: Arc<DbConn>) -> Self {
+        PreferenceReader { did, db }
     }
 
-    /// Get preferences for a namespace.
     pub async fn get_preferences(
         &self,
         namespace: Option<String>,
@@ -64,7 +63,6 @@ impl PreferenceHandler {
             .await
     }
 
-    /// Put preferences for a namespace.
     #[tracing::instrument(skip_all)]
     pub async fn put_preferences(
         &self,
@@ -97,7 +95,7 @@ impl PreferenceHandler {
                         use rsky_pds::schema::pds::account_pref::dsl as AccountPrefSchema;
                         let all_prefs = AccountPrefSchema::account_pref
                             .filter(AccountPrefSchema::did.eq(&did))
-                            .select(AccountPref::as_select())
+                            .select(models::AccountPref::as_select())
                             .load(conn)?;
                         let put_prefs = values
                             .into_iter()

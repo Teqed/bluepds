@@ -1,364 +1,472 @@
-use std::path::PathBuf;
+//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/actor_store/mod.rs
+//! Which is based on https://github.com/bluesky-social/atproto/blob/main/packages/repo/src/repo.ts
+//! and also adds components from https://github.com/bluesky-social/atproto/blob/main/packages/pds/src/actor-store/repo/transactor.ts
+//! blacksky-algorithms/rsky is licensed under the Apache License 2.0
+//!
+//! Modified for SQLite backend
+
+use anyhow::Result;
+use cidv10::Cid;
+use diesel::*;
+use futures::stream::{self, StreamExt};
+use rsky_common;
+use rsky_pds::actor_store::repo::types::SyncEvtData;
+use rsky_repo::repo::Repo;
+use rsky_repo::storage::readable_blockstore::ReadableBlockstore;
+use rsky_repo::storage::types::RepoStorage;
+use rsky_repo::types::{
+    CommitAction, CommitData, CommitDataWithOps, CommitOp, PreparedCreateOrUpdate, PreparedWrite,
+    RecordCreateOrUpdateOp, RecordWriteEnum, RecordWriteOp, WriteOpAction, write_to_op,
+};
+use rsky_repo::util::format_data_key;
+use rsky_syntax::aturi::AtUri;
+use secp256k1::{Keypair, Secp256k1, SecretKey};
+use std::env;
+use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
-use anyhow::{Context as _, Result, anyhow, bail};
-use atrium_crypto::keypair::{Did as _, Export as _, Secp256k1Keypair};
-use atrium_repo::Cid;
-use diesel::prelude::*;
-use sha2::Digest as _;
-use tokio::fs;
+use super::ActorDb;
+use super::blob::BlobReader;
+use super::preference::PreferenceReader;
+use super::record::RecordReader;
+use super::sql_blob::BlobStoreSql;
+use super::sql_repo::SqlRepoReader;
 
-use super::PreparedWrite;
-use super::actor_store_handler::ActorStoreHandler;
-use super::actor_store_resources::ActorStoreResources;
-use super::blob::{BlobStore as _, BlobStorePlaceholder};
-use super::db::{ActorDb, get_db};
-use crate::SigningKey;
-
-/// Central manager for actor stores
-pub(crate) struct ActorStore {
-    /// Base directory for actor data
-    pub directory: PathBuf,
-    /// Resources shared between actor stores
-    pub resources: ActorStoreResources,
+#[derive(Debug)]
+enum FormatCommitError {
+    BadRecordSwap(String),
+    RecordSwapMismatch(String),
+    BadCommitSwap(String),
+    MissingRepoRoot(String),
 }
 
-struct ActorLocation {
-    /// Actor's directory path
-    directory: PathBuf,
-    /// Database path
-    db_location: PathBuf,
-    /// Key path
-    key_location: PathBuf,
+pub struct ActorStore {
+    pub did: String,
+    pub storage: Arc<RwLock<SqlRepoReader>>, // get ipld blocks from db
+    pub record: RecordReader,                // get lexicon records from db
+    pub blob: BlobReader,                    // get blobs
+    pub pref: PreferenceReader,              // get preferences
 }
 
+// Combination of RepoReader/Transactor, BlobReader/Transactor, SqlRepoReader/Transactor
 impl ActorStore {
-    /// Create a new actor store manager
-    pub(crate) fn new(directory: impl Into<PathBuf>, resources: ActorStoreResources) -> Self {
-        Self {
-            directory: directory.into(),
-            resources,
+    /// Concrete reader of an individual repo (hence BlobStoreSql which takes `did` param)
+    pub fn new(did: String, blobstore: BlobStoreSql, db: ActorDb) -> Self {
+        let db = Arc::new(db);
+        ActorStore {
+            storage: Arc::new(RwLock::new(SqlRepoReader::new(
+                did.clone(),
+                None,
+                db.clone(),
+            ))),
+            record: RecordReader::new(did.clone(), db.clone()),
+            pref: PreferenceReader::new(did.clone(), db.clone()),
+            did,
+            blob: BlobReader::new(blobstore, db.clone()), // Unlike TS impl, just use blob reader vs generator
         }
     }
 
-    /// Get the location information for an actor
-    pub(crate) async fn get_location(&self, did: &str) -> Result<ActorLocation> {
-        // Hash the DID for directory organization
-        let did_hash = sha2::Sha256::digest(did.as_bytes());
-        let hash_prefix = format!("{:02x}", did_hash[0]);
+    pub async fn get_repo_root(&self) -> Option<Cid> {
+        let storage_guard = self.storage.read().await;
+        storage_guard.get_root().await
+    }
 
-        // Create paths
-        let directory = self.directory.join(hash_prefix).join(did);
-        let db_location = directory.join("store.sqlite");
-        let key_location = directory.join("key");
+    // Transactors
+    // -------------------
 
-        Ok(ActorLocation {
-            directory,
-            db_location,
-            key_location,
+    #[deprecated]
+    pub async fn create_repo_legacy(
+        &self,
+        keypair: Keypair,
+        writes: Vec<PreparedCreateOrUpdate>,
+    ) -> Result<CommitData> {
+        let write_ops = writes
+            .clone()
+            .into_iter()
+            .map(|prepare| {
+                let at_uri: AtUri = prepare.uri.try_into()?;
+                Ok(RecordCreateOrUpdateOp {
+                    action: WriteOpAction::Create,
+                    collection: at_uri.get_collection(),
+                    rkey: at_uri.get_rkey(),
+                    record: prepare.record,
+                })
+            })
+            .collect::<Result<Vec<RecordCreateOrUpdateOp>>>()?;
+        let commit = Repo::format_init_commit(
+            self.storage.clone(),
+            self.did.clone(),
+            keypair,
+            Some(write_ops),
+        )
+        .await?;
+        let storage_guard = self.storage.read().await;
+        storage_guard.apply_commit(commit.clone(), None).await?;
+        let writes = writes
+            .into_iter()
+            .map(PreparedWrite::Create)
+            .collect::<Vec<PreparedWrite>>();
+        self.blob.process_write_blobs(writes).await?;
+        Ok(commit)
+    }
+
+    pub async fn create_repo(
+        &self,
+        keypair: Keypair,
+        writes: Vec<PreparedCreateOrUpdate>,
+    ) -> Result<CommitDataWithOps> {
+        let write_ops = writes
+            .clone()
+            .into_iter()
+            .map(|prepare| {
+                let at_uri: AtUri = prepare.uri.try_into()?;
+                Ok(RecordCreateOrUpdateOp {
+                    action: WriteOpAction::Create,
+                    collection: at_uri.get_collection(),
+                    rkey: at_uri.get_rkey(),
+                    record: prepare.record,
+                })
+            })
+            .collect::<Result<Vec<RecordCreateOrUpdateOp>>>()?;
+        let commit = Repo::format_init_commit(
+            self.storage.clone(),
+            self.did.clone(),
+            keypair,
+            Some(write_ops),
+        )
+        .await?;
+        let storage_guard = self.storage.read().await;
+        storage_guard.apply_commit(commit.clone(), None).await?;
+        let write_commit_ops = writes.iter().try_fold(
+            Vec::with_capacity(writes.len()),
+            |mut acc, w| -> Result<Vec<CommitOp>> {
+                let aturi: AtUri = w.uri.clone().try_into()?;
+                acc.push(CommitOp {
+                    action: CommitAction::Create,
+                    path: format_data_key(aturi.get_collection(), aturi.get_rkey()),
+                    cid: Some(w.cid.clone()),
+                    prev: None,
+                });
+                Ok(acc)
+            },
+        )?;
+        let writes = writes
+            .into_iter()
+            .map(PreparedWrite::Create)
+            .collect::<Vec<PreparedWrite>>();
+        self.blob.process_write_blobs(writes).await?;
+        Ok(CommitDataWithOps {
+            commit_data: commit,
+            ops: write_commit_ops,
+            prev_data: None,
         })
     }
 
-    /// Check if an actor store exists
-    pub(crate) async fn exists(&self, did: &str) -> Result<bool> {
-        let location = self.get_location(did).await?;
-        Ok(location.db_location.exists())
-    }
-
-    /// Get the signing keypair for an actor
-    pub(crate) async fn keypair(&self, did: &str) -> Result<Arc<SigningKey>> {
-        let location = self.get_location(did).await?;
-        let priv_key = fs::read(&location.key_location)
-            .await
-            .context("Failed to read key file")?;
-
-        let keypair = SigningKey::import(&priv_key).context("Failed to import signing key")?;
-
-        Ok(Arc::new(keypair))
-    }
-
-    /// Open the database for an actor
-    pub(crate) async fn open_db(&self, did: &str) -> Result<ActorDb> {
-        let location = self.get_location(did).await?;
-
-        if !location.db_location.exists() {
-            bail!("Repo not found");
+    pub async fn process_import_repo(
+        &mut self,
+        commit: CommitData,
+        writes: Vec<PreparedWrite>,
+    ) -> Result<()> {
+        {
+            let immutable_borrow = &self;
+            // & send to indexing
+            immutable_borrow
+                .index_writes(writes.clone(), &commit.rev)
+                .await?;
         }
-
-        // Convert path to string for SQLite connection
-        let db_path = location
-            .db_location
-            .to_str()
-            .ok_or_else(|| anyhow!("Invalid path encoding"))?;
-
-        // Open database with WAL mode enabled
-        let db = get_db(db_path, false)
-            .await
-            .context("Failed to open actor database")?;
-
-        // Run a simple query to ensure the database is ready
-        db.run(|conn| diesel::sql_query("SELECT 1 FROM repo_root LIMIT 1").execute(conn))
-            .await
-            .context("Database not ready")?;
-
-        Ok(db)
-    }
-
-    /// Execute read operations on an actor store
-    pub(crate) async fn read<T, F>(&self, did: &str, f: F) -> Result<T>
-    where
-        F: FnOnce(ActorStoreHandler) -> Result<T>,
-    {
-        let db = self.open_db(did).await?;
-        let blobstore = self.resources.blobstore(did.to_string());
-
-        // Create a read-only handler
-        let handler = ActorStoreHandler::new_reader(db.clone(), did.to_string(), blobstore);
-
-        // Execute the function
-        f(handler)
-    }
-
-    /// Execute read-write operations with a transaction
-    pub(crate) async fn transact<T, F>(&self, did: &str, f: F) -> Result<T>
-    where
-        F: FnOnce(ActorStoreHandler) -> Result<T>,
-    {
-        let db = self.open_db(did).await?;
-        let keypair = self.keypair(did).await?;
-        let blobstore = self.resources.blobstore(did.to_string());
-        let background_queue = self.resources.background_queue();
-
-        // Create a read-write handler with transaction support
-        let handler = ActorStoreHandler::new_writer(
-            db,
-            did.to_string(),
-            blobstore,
-            keypair,
-            background_queue.as_ref().clone(),
-        );
-
-        // Execute the function (will handle transactions internally)
-        f(handler)
-    }
-
-    /// Execute read-write operations without a transaction
-    pub(crate) async fn write_no_transaction<T, F>(&self, did: &str, f: F) -> Result<T>
-    where
-        F: FnOnce(ActorStoreHandler) -> Result<T>,
-    {
-        let db = self.open_db(did).await?;
-        let keypair = self.keypair(did).await?;
-        let blobstore = self.resources.blobstore(did.to_string());
-        let background_queue = self.resources.background_queue();
-
-        // Create a read-write handler without automatic transaction
-        let handler = ActorStoreHandler::new_writer(
-            db,
-            did.to_string(),
-            blobstore,
-            keypair,
-            background_queue.as_ref().clone(),
-        );
-
-        // Execute the function
-        f(handler)
-    }
-
-    /// Create a new actor store
-    pub(crate) async fn create(&self, did: &str, keypair: SigningKey) -> Result<()> {
-        let location = self.get_location(did).await?;
-
-        // Ensure directory exists
-        fs::create_dir_all(&location.directory)
-            .await
-            .context("Failed to create directory")?;
-
-        // Check if repo already exists
-        if location.db_location.exists() {
-            bail!("Repo already exists");
-        }
-
-        // Export and save private key
-        let priv_key = keypair.export();
-        fs::write(&location.key_location, priv_key)
-            .await
-            .context("Failed to write key file")?;
-
-        // Initialize the database
-        let db_path = location
-            .db_location
-            .to_str()
-            .ok_or_else(|| anyhow!("Invalid path encoding"))?;
-
-        let db = get_db(db_path, false)
-            .await
-            .context("Failed to create actor database")?;
-
-        // Ensure WAL mode and run migrations
-        db.ensure_wal().await?;
-        db.run_migrations()?;
-
+        // persist the commit to repo storage
+        let storage_guard = self.storage.read().await;
+        storage_guard.apply_commit(commit.clone(), None).await?;
+        // process blobs
+        self.blob.process_write_blobs(writes).await?;
         Ok(())
     }
 
-    /// Destroy an actor store
-    pub(crate) async fn destroy(&self, did: &str) -> Result<()> {
-        // Get all blob CIDs first
-        let cids = self
-            .read(did, |handler| async move {
-                handler.repo.blob.get_blob_cids().await
+    pub async fn process_writes(
+        &mut self,
+        writes: Vec<PreparedWrite>,
+        swap_commit_cid: Option<Cid>,
+    ) -> Result<CommitDataWithOps> {
+        // NOTE: In the typescript PR on sync v1.1
+        // there are some safeguards added for adding
+        // very large commits and very many commits
+        // for which I'm sure we could safeguard on
+        // but may not be necessary.
+        // https://github.com/bluesky-social/atproto/pull/3585/files#diff-7627844a4a6b50190014e947d1331a96df3c64d4c5273fa0ce544f85c3c1265f
+        let commit = self.format_commit(writes.clone(), swap_commit_cid).await?;
+        {
+            let immutable_borrow = &self;
+            // & send to indexing
+            immutable_borrow
+                .index_writes(writes.clone(), &commit.commit_data.rev)
+                .await?;
+        }
+        // persist the commit to repo storage
+        let storage_guard = self.storage.read().await;
+        storage_guard
+            .apply_commit(commit.commit_data.clone(), None)
+            .await?;
+        // process blobs
+        self.blob.process_write_blobs(writes).await?;
+        Ok(commit)
+    }
+
+    pub async fn get_sync_event_data(&mut self) -> Result<SyncEvtData> {
+        let storage_guard = self.storage.read().await;
+        let current_root = storage_guard.get_root_detailed().await?;
+        let blocks_and_missing = storage_guard.get_blocks(vec![current_root.cid]).await?;
+        Ok(SyncEvtData {
+            cid: current_root.cid,
+            rev: current_root.rev,
+            blocks: blocks_and_missing.blocks,
+        })
+    }
+
+    pub async fn format_commit(
+        &mut self,
+        writes: Vec<PreparedWrite>,
+        swap_commit: Option<Cid>,
+    ) -> Result<CommitDataWithOps> {
+        let current_root = {
+            let storage_guard = self.storage.read().await;
+            storage_guard.get_root_detailed().await
+        };
+        if let Ok(current_root) = current_root {
+            if let Some(swap_commit) = swap_commit {
+                if !current_root.cid.eq(&swap_commit) {
+                    return Err(
+                        FormatCommitError::BadCommitSwap(current_root.cid.to_string()).into(),
+                    );
+                }
+            }
+            {
+                let mut storage_guard = self.storage.write().await;
+                storage_guard.cache_rev(current_root.rev).await?;
+            }
+            let mut new_record_cids: Vec<Cid> = vec![];
+            let mut delete_and_update_uris = vec![];
+            let mut commit_ops = vec![];
+            for write in &writes {
+                let commit_action: CommitAction = write.action().into();
+                match write.clone() {
+                    PreparedWrite::Create(c) => new_record_cids.push(c.cid),
+                    PreparedWrite::Update(u) => {
+                        new_record_cids.push(u.cid);
+                        let u_at_uri: AtUri = u.uri.try_into()?;
+                        delete_and_update_uris.push(u_at_uri);
+                    }
+                    PreparedWrite::Delete(d) => {
+                        let d_at_uri: AtUri = d.uri.try_into()?;
+                        delete_and_update_uris.push(d_at_uri)
+                    }
+                }
+                if write.swap_cid().is_none() {
+                    continue;
+                }
+                let write_at_uri: &AtUri = &write.uri().try_into()?;
+                let record = self
+                    .record
+                    .get_record(write_at_uri, None, Some(true))
+                    .await?;
+                let current_record = match record {
+                    Some(record) => Some(Cid::from_str(&record.cid)?),
+                    None => None,
+                };
+                let cid = match &write {
+                    &PreparedWrite::Delete(_) => None,
+                    &PreparedWrite::Create(w) | &PreparedWrite::Update(w) => Some(w.cid),
+                };
+                let mut op = CommitOp {
+                    action: commit_action,
+                    path: format_data_key(write_at_uri.get_collection(), write_at_uri.get_rkey()),
+                    cid,
+                    prev: None,
+                };
+                if let Some(_) = current_record {
+                    op.prev = current_record;
+                };
+                commit_ops.push(op);
+                match write {
+                    // There should be no current record for a create
+                    PreparedWrite::Create(_) if write.swap_cid().is_some() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    // There should be a current record for an update
+                    PreparedWrite::Update(_) if write.swap_cid().is_none() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    // There should be a current record for a delete
+                    PreparedWrite::Delete(_) if write.swap_cid().is_none() => {
+                        Err::<(), anyhow::Error>(
+                            FormatCommitError::BadRecordSwap(format!("{:?}", current_record))
+                                .into(),
+                        )
+                    }
+                    _ => Ok::<(), anyhow::Error>(()),
+                }?;
+                match (current_record, write.swap_cid()) {
+                    (Some(current_record), Some(swap_cid)) if current_record.eq(swap_cid) => {
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    _ => Err::<(), anyhow::Error>(
+                        FormatCommitError::RecordSwapMismatch(format!("{:?}", current_record))
+                            .into(),
+                    ),
+                }?;
+            }
+            let mut repo = Repo::load(self.storage.clone(), Some(current_root.cid)).await?;
+            let previous_data = repo.commit.data;
+            let write_ops: Vec<RecordWriteOp> = writes
+                .into_iter()
+                .map(write_to_op)
+                .collect::<Result<Vec<RecordWriteOp>>>()?;
+            // @TODO: Use repo signing key global config
+            let secp = Secp256k1::new();
+            let repo_private_key = env::var("PDS_REPO_SIGNING_KEY_K256_PRIVATE_KEY_HEX").unwrap();
+            let repo_secret_key =
+                SecretKey::from_slice(&hex::decode(repo_private_key.as_bytes()).unwrap()).unwrap();
+            let repo_signing_key = Keypair::from_secret_key(&secp, &repo_secret_key);
+
+            let mut commit = repo
+                .format_commit(RecordWriteEnum::List(write_ops), repo_signing_key)
+                .await?;
+
+            // find blocks that would be deleted but are referenced by another record
+            let duplicate_record_cids = self
+                .get_duplicate_record_cids(commit.removed_cids.to_list(), delete_and_update_uris)
+                .await?;
+            for cid in duplicate_record_cids {
+                commit.removed_cids.delete(cid)
+            }
+
+            // find blocks that are relevant to ops but not included in diff
+            // (for instance a record that was moved but cid stayed the same)
+            let new_record_blocks = commit.relevant_blocks.get_many(new_record_cids)?;
+            if !new_record_blocks.missing.is_empty() {
+                let missing_blocks = {
+                    let storage_guard = self.storage.read().await;
+                    storage_guard.get_blocks(new_record_blocks.missing).await?
+                };
+                commit.relevant_blocks.add_map(missing_blocks.blocks)?;
+            }
+            let commit_with_data_ops = CommitDataWithOps {
+                ops: commit_ops,
+                commit_data: commit,
+                prev_data: Some(previous_data),
+            };
+            Ok(commit_with_data_ops)
+        } else {
+            Err(FormatCommitError::MissingRepoRoot(self.did.clone()).into())
+        }
+    }
+
+    pub async fn index_writes(&self, writes: Vec<PreparedWrite>, rev: &str) -> Result<()> {
+        let now: &str = &rsky_common::now();
+
+        let _ = stream::iter(writes)
+            .then(|write| async move {
+                Ok::<(), anyhow::Error>(match write {
+                    PreparedWrite::Create(write) => {
+                        let write_at_uri: AtUri = write.uri.try_into()?;
+                        self.record
+                            .index_record(
+                                write_at_uri.clone(),
+                                write.cid,
+                                Some(write.record),
+                                Some(write.action),
+                                rev.to_owned(),
+                                Some(now.to_string()),
+                            )
+                            .await?
+                    }
+                    PreparedWrite::Update(write) => {
+                        let write_at_uri: AtUri = write.uri.try_into()?;
+                        self.record
+                            .index_record(
+                                write_at_uri.clone(),
+                                write.cid,
+                                Some(write.record),
+                                Some(write.action),
+                                rev.to_owned(),
+                                Some(now.to_string()),
+                            )
+                            .await?
+                    }
+                    PreparedWrite::Delete(write) => {
+                        let write_at_uri: AtUri = write.uri.try_into()?;
+                        self.record.delete_record(&write_at_uri).await?
+                    }
+                })
+            })
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(())
+    }
+
+    pub async fn destroy(&mut self) -> Result<()> {
+        let did: String = self.did.clone();
+        let storage_guard = self.storage.read().await;
+        let db: Arc<ActorDb> = storage_guard.db.clone();
+        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
+
+        let blob_rows: Vec<String> = db
+            .run(move |conn| {
+                BlobSchema::blob
+                    .filter(BlobSchema::did.eq(did))
+                    .select(BlobSchema::cid)
+                    .get_results(conn)
             })
             .await?;
-
-        // Delete all blobs
-        let blobstore = self.resources.blobstore(did.to_string());
-        if !cids.is_empty() {
-            // Process in chunks of 500
-            for chunk in cids.chunks(500) {
-                let _ = blobstore.delete_many(chunk.to_vec()).await;
-            }
-        }
-
-        // Remove directory and all files
-        let location = self.get_location(did).await?;
-        if location.directory.exists() {
-            fs::remove_dir_all(&location.directory)
-                .await
-                .context("Failed to remove actor directory")?;
-        }
-
+        let cids = blob_rows
+            .into_iter()
+            .map(|row| Ok(Cid::from_str(&row)?))
+            .collect::<Result<Vec<Cid>>>()?;
+        let _ = stream::iter(cids.chunks(500))
+            .then(|chunk| async { self.blob.blobstore.delete_many(chunk.to_vec()).await })
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(())
     }
 
-    /// Reserve a keypair for future use
-    pub(crate) async fn reserve_keypair(&self, did: Option<&str>) -> Result<String> {
-        let reserved_dir = self
-            .resources
-            .reserved_key_dir()
-            .ok_or_else(|| anyhow!("No reserved key directory configured"))?;
-
-        // If DID is provided, check if key already exists
-        let mut key_path = None;
-        if let Some(did_str) = did {
-            assert_safe_path_part(did_str)?;
-            key_path = Some(reserved_dir.join(did_str));
-
-            if key_path.as_ref().unwrap().exists() {
-                let key_data = fs::read(key_path.as_ref().unwrap()).await?;
-                let keypair = Secp256k1Keypair::import(&key_data)
-                    .context("Failed to import existing reserved key")?;
-                return Ok(keypair.did());
-            }
-        }
-
-        // Create a new keypair
-        let keypair = Secp256k1Keypair::create(&mut rand::thread_rng());
-        let key_did = keypair.did();
-
-        // Set path if not already set
-        let final_path = key_path.unwrap_or_else(|| reserved_dir.join(&key_did));
-
-        // Ensure directory exists
-        fs::create_dir_all(reserved_dir).await?;
-
-        // Save key
-        fs::write(&final_path, keypair.export()).await?;
-
-        Ok(key_did)
-    }
-
-    /// Get a reserved keypair
-    pub(crate) async fn get_reserved_keypair(
+    pub async fn get_duplicate_record_cids(
         &self,
-        key_did: &str,
-    ) -> Result<Option<Arc<SigningKey>>> {
-        let reserved_dir = self
-            .resources
-            .reserved_key_dir()
-            .ok_or_else(|| anyhow!("No reserved key directory configured"))?;
-
-        let key_path = reserved_dir.join(key_did);
-        if !key_path.exists() {
-            return Ok(None);
+        cids: Vec<Cid>,
+        touched_uris: Vec<AtUri>,
+    ) -> Result<Vec<Cid>> {
+        if touched_uris.is_empty() || cids.is_empty() {
+            return Ok(vec![]);
         }
+        let did: String = self.did.clone();
+        let storage_guard = self.storage.read().await;
+        let db: Arc<ActorDb> = storage_guard.db.clone();
+        use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
-        let key_data = fs::read(key_path).await?;
-        let keypair = SigningKey::import(&key_data).context("Failed to import reserved key")?;
-
-        Ok(Some(Arc::new(keypair)))
+        let cid_strs: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();
+        let touched_uri_strs: Vec<String> = touched_uris.iter().map(|t| t.to_string()).collect();
+        let res: Vec<String> = db
+            .run(move |conn| {
+                RecordSchema::record
+                    .filter(RecordSchema::did.eq(did))
+                    .filter(RecordSchema::cid.eq_any(cid_strs))
+                    .filter(RecordSchema::uri.ne_all(touched_uri_strs))
+                    .select(RecordSchema::cid)
+                    .get_results(conn)
+            })
+            .await?;
+        res.into_iter()
+            .map(|row| Cid::from_str(&row).map_err(|error| anyhow::Error::new(error)))
+            .collect::<Result<Vec<Cid>>>()
     }
-
-    /// Clear a reserved keypair
-    pub(crate) async fn clear_reserved_keypair(
-        &self,
-        key_did: &str,
-        did: Option<&str>,
-    ) -> Result<()> {
-        let reserved_dir = self
-            .resources
-            .reserved_key_dir()
-            .ok_or_else(|| anyhow!("No reserved key directory configured"))?;
-
-        // Remove key by DID
-        let key_path = reserved_dir.join(key_did);
-        if key_path.exists() {
-            fs::remove_file(key_path).await?;
-        }
-
-        // If DID mapping provided, remove that too
-        if let Some(did_str) = did {
-            let did_path = reserved_dir.join(did_str);
-            if did_path.exists() {
-                fs::remove_file(did_path).await?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Store a PLC operation
-    pub(crate) async fn store_plc_op(&self, did: &str, op: &[u8]) -> Result<()> {
-        let location = self.get_location(did).await?;
-        let op_path = location.directory.join("did-op");
-
-        fs::write(op_path, op).await?;
-        Ok(())
-    }
-
-    /// Get a stored PLC operation
-    pub(crate) async fn get_plc_op(&self, did: &str) -> Result<Vec<u8>> {
-        let location = self.get_location(did).await?;
-        let op_path = location.directory.join("did-op");
-
-        let data = fs::read(op_path).await?;
-        Ok(data)
-    }
-
-    /// Clear a stored PLC operation
-    pub(crate) async fn clear_plc_op(&self, did: &str) -> Result<()> {
-        let location = self.get_location(did).await?;
-        let op_path = location.directory.join("did-op");
-
-        if op_path.exists() {
-            fs::remove_file(op_path).await?;
-        }
-
-        Ok(())
-    }
-}
-
-/// Ensure a path part is safe to use in a filename
-fn assert_safe_path_part(part: &str) -> Result<()> {
-    let normalized = std::path::Path::new(part)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| anyhow!("Invalid path"))?;
-
-    if part != normalized || part.starts_with('.') || part.contains('/') || part.contains('\\') {
-        bail!("Unsafe path part: {}", part);
-    }
-
-    Ok(())
 }

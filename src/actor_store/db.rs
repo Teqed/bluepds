@@ -2,7 +2,6 @@
 
 use crate::db::DatabaseConnection;
 use anyhow::{Context as _, Result};
-use diesel::prelude::*;
 
 /// Type alias for the actor database.
 pub(crate) type ActorDb = DatabaseConnection;

@@ -1,11 +1,10 @@
 use anyhow::{Context, Result};
 use diesel::connection::SimpleConnection;
-use diesel::prelude::*;
-use diesel::r2d2::{self, ConnectionManager, Pool, PooledConnection};
-use diesel::sqlite::{Sqlite, SqliteConnection};
+use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
+use diesel::sqlite::Sqlite;
+use diesel::*;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Duration;
 
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
@@ -40,7 +39,7 @@ impl DatabaseConnection {
         let manager = ConnectionManager::<SqliteConnection>::new(database_url);
 
         // Create the connection pool with SQLite-specific configurations
-        let pool = r2d2::Pool::builder()
+        let pool = Pool::builder()
             .max_size(10)
             .connection_timeout(Duration::from_secs(30))
             .test_on_check_out(true)
@@ -118,7 +117,7 @@ impl DatabaseConnection {
 
         Err(anyhow::anyhow!(
             "Max retries exceeded: {}",
-            last_error.unwrap_or_else(|| diesel::result::Error::RollbackTransaction)
+            last_error.unwrap_or_else(|| result::Error::RollbackTransaction)
         ))
     }
 
@@ -136,7 +135,7 @@ impl DatabaseConnection {
         T: Send + 'static,
     {
         self.run(|conn| {
-            conn.transaction(|tx| f(tx).map_err(|e| diesel::result::Error::RollbackTransaction))
+            conn.transaction(|tx| f(tx).map_err(|e| result::Error::RollbackTransaction))
         })
         .await
     }
@@ -144,7 +143,7 @@ impl DatabaseConnection {
     /// Run a transaction with no retry logic
     pub async fn transaction_no_retry<T, F>(&self, f: F) -> Result<T>
     where
-        F: FnOnce(&mut SqliteConnection) -> std::result::Result<T, diesel::result::Error> + Send,
+        F: FnOnce(&mut SqliteConnection) -> std::result::Result<T, result::Error> + Send,
         T: Send + 'static,
     {
         let mut conn = self
