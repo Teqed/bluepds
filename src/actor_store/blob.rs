@@ -1,4 +1,8 @@
-use std::sync::Arc;
+//! Blob operations for the actor store
+//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/actor_store/blob/mod.rs
+//! blacksky-algorithms/rsky is licensed under the Apache License 2.0
+//!
+//! Modified for SQLite backend
 
 use anyhow::{Result, bail};
 use cidv10::Cid;
@@ -9,7 +13,6 @@ use futures::{
     stream::{self, StreamExt},
     try_join,
 };
-// use rocket::data::{Data, ToByteUnit};
 use rsky_common::ipld::sha256_raw_to_cid;
 use rsky_common::now;
 use rsky_lexicon::blob_refs::BlobRef;
@@ -23,6 +26,7 @@ use rsky_pds::image;
 use rsky_pds::models::models;
 use rsky_repo::error::BlobError;
 use rsky_repo::types::{PreparedBlobRef, PreparedWrite};
+use std::sync::Arc;
 
 use super::sql_blob::{BlobStoreSql, ByteStream};
 use crate::db::DbConn;

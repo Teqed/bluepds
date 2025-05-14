@@ -1,3 +1,4 @@
+//! SQL-based blob storage implementation
 #![expect(
     clippy::pub_use,
     clippy::single_char_lifetime_names,
