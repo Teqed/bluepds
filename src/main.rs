@@ -1,4 +1,5 @@
 //! PDS implementation.
+mod account_manager;
 mod actor_store;
 mod auth;
 mod config;
@@ -11,7 +12,6 @@ mod metrics;
 mod mmap;
 mod oauth;
 mod plc;
-mod storage;
 #[cfg(test)]
 mod tests;
 
@@ -19,76 +19,7 @@ mod tests;
 ///
 /// We shouldn't have to know about any bsky endpoints to store private user data.
 /// This will _very likely_ be changed in the future.
-mod actor_endpoints {
-    use atrium_api::app::bsky::actor;
-    use axum::{Json, routing::post};
-    use constcat::concat;
-
-    use super::*;
-
-    async fn put_preferences(
-        user: AuthenticatedUser,
-        State(db): State<Db>,
-        Json(input): Json<actor::put_preferences::Input>,
-    ) -> Result<()> {
-        let did = user.did();
-        let prefs = sqlx::types::Json(input.preferences.clone());
-        _ = sqlx::query!(
-            r#"UPDATE accounts SET private_prefs = ? WHERE did = ?"#,
-            prefs,
-            did
-        )
-        .execute(&db)
-        .await
-        .context("failed to update user preferences")?;
-
-        Ok(())
-    }
-
-    async fn get_preferences(
-        user: AuthenticatedUser,
-        State(db): State<Db>,
-    ) -> Result<Json<actor::get_preferences::Output>> {
-        let did = user.did();
-        let json: Option<sqlx::types::Json<actor::defs::Preferences>> =
-            sqlx::query_scalar("SELECT private_prefs FROM accounts WHERE did = ?")
-                .bind(did)
-                .fetch_one(&db)
-                .await
-                .context("failed to fetch preferences")?;
-
-        if let Some(prefs) = json {
-            Ok(Json(
-                actor::get_preferences::OutputData {
-                    preferences: prefs.0,
-                }
-                .into(),
-            ))
-        } else {
-            Ok(Json(
-                actor::get_preferences::OutputData {
-                    preferences: Vec::new(),
-                }
-                .into(),
-            ))
-        }
-    }
-
-    /// Register all actor endpoints.
-    pub(crate) fn routes() -> Router<AppState> {
-        // AP /xrpc/app.bsky.actor.putPreferences
-        // AG /xrpc/app.bsky.actor.getPreferences
-        Router::new()
-            .route(
-                concat!("/", actor::put_preferences::NSID),
-                post(put_preferences),
-            )
-            .route(
-                concat!("/", actor::get_preferences::NSID),
-                get(get_preferences),
-            )
-    }
-}
+mod actor_endpoints;
 
 use anyhow::{Context as _, anyhow};
 use atrium_api::types::string::Did;
@@ -106,6 +37,9 @@ use azure_core::credentials::TokenCredential;
 use clap::Parser;
 use clap_verbosity_flag::{InfoLevel, Verbosity, log::LevelFilter};
 use config::AppConfig;
+use diesel::prelude::*;
+use diesel::r2d2::{self, ConnectionManager};
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 #[expect(clippy::pub_use, clippy::useless_attribute)]
 pub use error::Error;
 use figment::{Figment, providers::Format as _};
@@ -113,7 +47,6 @@ use firehose::FirehoseProducer;
 use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
 use rand::Rng as _;
 use serde::{Deserialize, Serialize};
-use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
@@ -128,12 +61,15 @@ use uuid::Uuid;
 /// The application user agent. Concatenates the package name and version. e.g. `bluepds/0.0.0`.
 pub const APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
+/// Embedded migrations
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("./migrations");
+
 /// The application-wide result type.
 pub type Result<T> = std::result::Result<T, Error>;
 /// The reqwest client type with middleware.
 pub type Client = reqwest_middleware::ClientWithMiddleware;
 /// The database connection pool.
-pub type Db = SqlitePool;
+pub type Db = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 /// The Azure credential type.
 pub type Cred = Arc<dyn TokenCredential>;
 
@@ -451,15 +387,19 @@ async fn run() -> anyhow::Result<()> {
 
     let cred = azure_identity::DefaultAzureCredential::new()
         .context("failed to create Azure credential")?;
-    let opts = SqliteConnectOptions::from_str(&config.db)
-        .context("failed to parse database options")?
-        .create_if_missing(true);
-    let db = SqlitePool::connect_with(opts).await?;
 
-    sqlx::migrate!()
-        .run(&db)
-        .await
-        .context("failed to apply migrations")?;
+    // Create a database connection manager and pool
+    let manager = ConnectionManager::<SqliteConnection>::new(&config.db);
+    let db = r2d2::Pool::builder()
+        .build(manager)
+        .context("failed to create database connection pool")?;
+
+    // Apply pending migrations
+    let conn = &mut db
+        .get()
+        .context("failed to get database connection for migrations")?;
+    conn.run_pending_migrations(MIGRATIONS)
+        .expect("should be able to run migrations");
 
     let (_fh, fhp) = firehose::spawn(client.clone(), config.clone());
 
@@ -495,30 +435,31 @@ async fn run() -> anyhow::Result<()> {
 
     // Determine whether or not this was the first startup (i.e. no accounts exist and no invite codes were created).
     // If so, create an invite code and share it via the console.
-    let c = sqlx::query_scalar!(
-        r#"
-        SELECT
-            (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites)
-            AS total_count
-        "#
+    let conn = &mut db.get().context("failed to get database connection")?;
+
+    #[derive(QueryableByName)]
+    struct TotalCount {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        total_count: i32,
+    }
+
+    let result = diesel::sql_query(
+        "SELECT (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites) AS total_count",
     )
-    .fetch_one(&db)
-    .await
+    .get_result::<TotalCount>(conn)
     .context("failed to query database")?;
+
+    let c = result.total_count;
 
     #[expect(clippy::print_stdout)]
     if c == 0 {
         let uuid = Uuid::new_v4().to_string();
 
-        _ = sqlx::query!(
-            r#"
-            INSERT INTO invites (id, did, count, created_at)
-                VALUES (?, NULL, 1, datetime('now'))
-            "#,
-            uuid,
+        diesel::sql_query(
+            "INSERT INTO invites (id, did, count, created_at) VALUES (?, NULL, 1, datetime('now'))",
         )
-        .execute(&db)
-        .await
+        .bind::<diesel::sql_types::Text, _>(uuid.clone())
+        .execute(conn)
         .context("failed to create new invite code")?;
 
         // N.B: This is a sensitive message, so we're bypassing `tracing` here and

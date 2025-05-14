@@ -9,7 +9,7 @@
 mod blob;
 mod preference;
 mod record;
-mod sql_blob;
+pub(crate) mod sql_blob;
 mod sql_repo;
 
 use anyhow::Result;
