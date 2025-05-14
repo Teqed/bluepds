@@ -1,56 +1,59 @@
-//! Blob storage and retrieval for the actor store.
-//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/actor_store/blob/mod.rs
-//! blacksky-algorithms/rsky is licensed under the Apache License 2.0
-//!
-//! Modified for SQLite backend
-
 use std::sync::Arc;
 
-use anyhow::{Error, Result, bail};
+use anyhow::{Result, bail};
 use cidv10::Cid;
 use diesel::dsl::{count_distinct, exists, not};
 use diesel::sql_types::{Integer, Nullable, Text};
 use diesel::*;
-use futures::stream::{self, StreamExt};
-use futures::try_join;
-use rsky_pds::actor_store::blob::sha256_stream;
+use futures::{
+    stream::{self, StreamExt},
+    try_join,
+};
 // use rocket::data::{Data, ToByteUnit};
-// use rocket::form::validate::Contains;
 use rsky_common::ipld::sha256_raw_to_cid;
 use rsky_common::now;
 use rsky_lexicon::blob_refs::BlobRef;
 use rsky_lexicon::com::atproto::admin::StatusAttr;
 use rsky_lexicon::com::atproto::repo::ListMissingBlobsRefRecordBlob;
 use rsky_pds::actor_store::blob::{
-    BlobMetadata, GetBlobMetadataOutput, GetBlobOutput, ListBlobsOpts, ListMissingBlobsOpts,
+    BlobMetadata, GetBlobMetadataOutput, ListBlobsOpts, ListMissingBlobsOpts, sha256_stream,
     verify_blob,
 };
 use rsky_pds::image;
 use rsky_pds::models::models;
 use rsky_repo::error::BlobError;
 use rsky_repo::types::{PreparedBlobRef, PreparedWrite};
-use sha2::Digest;
 
-use super::sql_blob::BlobStoreSql;
+use super::sql_blob::{BlobStoreSql, ByteStream};
 use crate::db::DbConn;
 
+pub struct GetBlobOutput {
+    pub size: i32,
+    pub mime_type: Option<String>,
+    pub stream: ByteStream,
+}
+
+/// Handles blob operations for an actor store
 pub struct BlobReader {
+    /// SQL-based blob storage
     pub blobstore: BlobStoreSql,
+    /// DID of the actor
     pub did: String,
+    /// Database connection
     pub db: Arc<DbConn>,
 }
 
-// Basically handles getting blob records from db
 impl BlobReader {
+    /// Create a new blob reader
     pub fn new(blobstore: BlobStoreSql, db: Arc<DbConn>) -> Self {
-        // BlobReader {
-        //     did: blobstore.bucket.clone(),
-        //     blobstore,
-        //     db,
-        // }
-        todo!();
+        BlobReader {
+            did: blobstore.did.clone(),
+            blobstore,
+            db,
+        }
     }
 
+    /// Get metadata for a blob by CID
     pub async fn get_blob_metadata(&self, cid: Cid) -> Result<GetBlobMetadataOutput> {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
@@ -77,27 +80,22 @@ impl BlobReader {
         }
     }
 
+    /// Get a blob by CID with metadata and content
     pub async fn get_blob(&self, cid: Cid) -> Result<GetBlobOutput> {
         let metadata = self.get_blob_metadata(cid).await?;
-        // let blob_stream = match self.blobstore.get_stream(cid).await {
-        //     Ok(res) => res,
-        //     Err(e) => {
-        //         return match e.downcast_ref() {
-        //             Some(GetObjectError::NoSuchKey(key)) => {
-        //                 Err(anyhow::Error::new(GetObjectError::NoSuchKey(key.clone())))
-        //             }
-        //             _ => bail!(e.to_string()),
-        //         };
-        //     }
-        // };
-        // Ok(GetBlobOutput {
-        //     size: metadata.size,
-        //     mime_type: metadata.mime_type,
-        //     stream: blob_stream,
-        // })
-        todo!();
+        let blob_stream = match self.blobstore.get_stream(cid).await {
+            Ok(stream) => stream,
+            Err(e) => bail!("Failed to get blob: {}", e),
+        };
+
+        Ok(GetBlobOutput {
+            size: metadata.size,
+            mime_type: metadata.mime_type,
+            stream: blob_stream,
+        })
     }
 
+    /// Get all records that reference a specific blob
     pub async fn get_records_for_blob(&self, cid: Cid) -> Result<Vec<String>> {
         use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
 
@@ -110,7 +108,7 @@ impl BlobReader {
                     .filter(RecordBlobSchema::did.eq(did))
                     .select(models::RecordBlob::as_select())
                     .get_results(conn)?;
-                Ok::<_, Error>(results.into_iter().map(|row| row.record_uri))
+                Ok::<_, result::Error>(results.into_iter().map(|row| row.record_uri))
             })
             .await?
             .collect::<Vec<String>>();
@@ -118,16 +116,15 @@ impl BlobReader {
         Ok(res)
     }
 
+    /// Upload a blob and get its metadata
     pub async fn upload_blob_and_get_metadata(
         &self,
         user_suggested_mime: String,
-        blob: Data<'_>, // Type representing the body data of a request.
+        blob: Vec<u8>,
     ) -> Result<BlobMetadata> {
-        todo!();
-        let blob_stream = blob.open(100.mebibytes());
-        let bytes = blob_stream.into_bytes().await?;
-        let size = bytes.n.written;
-        let bytes = bytes.into_inner();
+        let bytes = blob;
+        let size = bytes.len() as i64;
+
         let (temp_key, sha256, img_info, sniffed_mime) = try_join!(
             self.blobstore.put_temp(bytes.clone()),
             sha256_stream(bytes.clone()),
@@ -140,7 +137,7 @@ impl BlobReader {
 
         Ok(BlobMetadata {
             temp_key,
-            size: size as i64,
+            size,
             cid,
             mime_type,
             width: if let Some(ref info) = img_info {
@@ -156,6 +153,7 @@ impl BlobReader {
         })
     }
 
+    /// Track a blob that hasn't been associated with any records yet
     pub async fn track_untethered_blob(&self, metadata: BlobMetadata) -> Result<BlobRef> {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
@@ -190,6 +188,7 @@ impl BlobReader {
         ON CONFLICT (cid, did) DO UPDATE \
         SET \"tempKey\" = EXCLUDED.\"tempKey\" \
             WHERE pds.blob.\"tempKey\" is not null;");
+            #[expect(trivial_casts)]
             upsert
                 .bind::<Text, _>(&cid.to_string())
                 .bind::<Text, _>(&did)
@@ -206,8 +205,10 @@ impl BlobReader {
         }).await
     }
 
+    /// Process blobs associated with writes
     pub async fn process_write_blobs(&self, writes: Vec<PreparedWrite>) -> Result<()> {
         self.delete_dereferenced_blobs(writes.clone()).await?;
+
         let _ = stream::iter(writes)
             .then(|write| async move {
                 Ok::<(), anyhow::Error>(match write {
@@ -230,9 +231,11 @@ impl BlobReader {
             .await
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?;
+
         Ok(())
     }
 
+    /// Delete blobs that are no longer referenced by any records
     pub async fn delete_dereferenced_blobs(&self, writes: Vec<PreparedWrite>) -> Result<()> {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
         use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
@@ -246,6 +249,7 @@ impl BlobReader {
                 _ => None,
             })
             .collect();
+
         if uris.is_empty() {
             return Ok(());
         }
@@ -260,6 +264,7 @@ impl BlobReader {
             .await?
             .into_iter()
             .collect::<Vec<models::RecordBlob>>();
+
         if deleted_repo_blobs.is_empty() {
             return Ok(());
         }
@@ -293,6 +298,7 @@ impl BlobReader {
             .into_iter()
             .flat_map(|v: Vec<PreparedBlobRef>| v.into_iter().map(|b| b.cid.to_string()))
             .collect();
+
         let mut cids_to_keep = Vec::new();
         cids_to_keep.append(&mut new_blob_cids);
         cids_to_keep.append(&mut duplicated_cids);
@@ -300,10 +306,11 @@ impl BlobReader {
         let cids_to_delete = deleted_repo_blob_cids
             .into_iter()
             .filter_map(|cid: String| match cids_to_keep.contains(&cid) {
-                true => Some(cid),
-                false => None,
+                true => None,
+                false => Some(cid),
             })
             .collect::<Vec<String>>();
+
         if cids_to_delete.is_empty() {
             return Ok(());
         }
@@ -317,16 +324,18 @@ impl BlobReader {
             })
             .await?;
 
-        // Original code queues a background job to delete by CID from S3 compatible blobstore
+        // Delete from blob storage
         let _ = stream::iter(cids_to_delete)
             .then(|cid| async { self.blobstore.delete(cid).await })
             .collect::<Vec<_>>()
             .await
             .into_iter()
             .collect::<Result<Vec<_>, _>>()?;
+
         Ok(())
     }
 
+    /// Verify a blob and make it permanent
     pub async fn verify_blob_and_make_permanent(&self, blob: PreparedBlobRef) -> Result<()> {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
@@ -344,6 +353,7 @@ impl BlobReader {
                     .optional()
             })
             .await?;
+
         if let Some(found) = found {
             verify_blob(&blob, &found).await?;
             if let Some(ref temp_key) = found.temp_key {
@@ -361,16 +371,17 @@ impl BlobReader {
                 .await?;
             Ok(())
         } else {
-            bail!("Cound not find blob: {:?}", blob.cid.to_string())
+            bail!("Could not find blob: {:?}", blob.cid.to_string())
         }
     }
 
-    pub async fn associate_blob(&self, blob: PreparedBlobRef, _record_uri: String) -> Result<()> {
+    /// Associate a blob with a record
+    pub async fn associate_blob(&self, blob: PreparedBlobRef, record_uri: String) -> Result<()> {
         use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
 
         let cid = blob.cid.to_string();
-        let record_uri = _record_uri;
         let did = self.did.clone();
+
         self.db
             .run(move |conn| {
                 insert_into(RecordBlobSchema::record_blob)
@@ -383,9 +394,11 @@ impl BlobReader {
                     .execute(conn)
             })
             .await?;
+
         Ok(())
     }
 
+    /// Count all blobs for this actor
     pub async fn blob_count(&self) -> Result<i64> {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
@@ -401,6 +414,7 @@ impl BlobReader {
             .await
     }
 
+    /// Count blobs associated with records
     pub async fn record_blob_count(&self) -> Result<i64> {
         use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
 
@@ -416,6 +430,7 @@ impl BlobReader {
             .await
     }
 
+    /// List blobs that are referenced but missing
     pub async fn list_missing_blobs(
         &self,
         opts: ListMissingBlobsOpts,
@@ -474,9 +489,11 @@ impl BlobReader {
             .await
     }
 
+    /// List all blobs with optional filtering
     pub async fn list_blobs(&self, opts: ListBlobsOpts) -> Result<Vec<String>> {
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
         use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
+
         let ListBlobsOpts {
             since,
             cursor,
@@ -512,9 +529,11 @@ impl BlobReader {
             }
             self.db.run(move |conn| builder.load(conn)).await?
         };
+
         Ok(res)
     }
 
+    /// Get the takedown status of a blob
     pub async fn get_blob_takedown_status(&self, cid: Cid) -> Result<Option<StatusAttr>> {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
@@ -525,6 +544,7 @@ impl BlobReader {
                     .select(models::Blob::as_select())
                     .first(conn)
                     .optional()?;
+
                 match res {
                     None => Ok(None),
                     Some(res) => match res.takedown_ref {
@@ -542,9 +562,7 @@ impl BlobReader {
             .await
     }
 
-    // Transactors
-    // -------------------
-
+    /// Update the takedown status of a blob
     pub async fn update_blob_takedown_status(&self, blob: Cid, takedown: StatusAttr) -> Result<()> {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
@@ -556,14 +574,17 @@ impl BlobReader {
             false => None,
         };
 
-        let blob = self
-            .db
+        let blob_cid = blob.to_string();
+        let did_clone = self.did.clone();
+
+        self.db
             .run(move |conn| {
                 update(BlobSchema::blob)
-                    .filter(BlobSchema::cid.eq(blob.to_string()))
+                    .filter(BlobSchema::cid.eq(blob_cid))
+                    .filter(BlobSchema::did.eq(did_clone))
                     .set(BlobSchema::takedownRef.eq(takedown_ref))
                     .execute(conn)?;
-                Ok::<_, Error>(blob)
+                Ok::<_, result::Error>(blob)
             })
             .await?;
 
@@ -571,6 +592,7 @@ impl BlobReader {
             true => self.blobstore.quarantine(blob).await,
             false => self.blobstore.unquarantine(blob).await,
         };
+
         match res {
             Ok(_) => Ok(()),
             Err(e) => match e.downcast_ref() {

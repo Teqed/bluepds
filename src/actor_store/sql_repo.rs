@@ -38,10 +38,10 @@ pub struct SqlRepoReader {
 }
 
 impl ReadableBlockstore for SqlRepoReader {
-    fn get_bytes<'a>(
-        &'a self,
-        cid: &'a Cid,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>>> + Send + Sync + 'a>> {
+    fn get_bytes<'life>(
+        &'life self,
+        cid: &'life Cid,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
         let db: Arc<DbConn> = self.db.clone();
         let cid = cid.clone();
@@ -79,20 +79,20 @@ impl ReadableBlockstore for SqlRepoReader {
         })
     }
 
-    fn has<'a>(
-        &'a self,
+    fn has<'life>(
+        &'life self,
         cid: Cid,
-    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + Sync + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<bool>> + Send + Sync + 'life>> {
         Box::pin(async move {
             let got = <Self as ReadableBlockstore>::get_bytes(self, &cid).await?;
             Ok(got.is_some())
         })
     }
 
-    fn get_blocks<'a>(
-        &'a self,
+    fn get_blocks<'life>(
+        &'life self,
         cids: Vec<Cid>,
-    ) -> Pin<Box<dyn Future<Output = Result<BlocksAndMissing>> + Send + Sync + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<BlocksAndMissing>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
         let db: Arc<DbConn> = self.db.clone();
 
@@ -173,7 +173,9 @@ impl ReadableBlockstore for SqlRepoReader {
 }
 
 impl RepoStorage for SqlRepoReader {
-    fn get_root<'a>(&'a self) -> Pin<Box<dyn Future<Output = Option<Cid>> + Send + Sync + 'a>> {
+    fn get_root<'life>(
+        &'life self,
+    ) -> Pin<Box<dyn Future<Output = Option<Cid>> + Send + Sync + 'life>> {
         Box::pin(async move {
             match self.get_root_detailed().await {
                 Ok(root) => Some(root.cid),
@@ -182,12 +184,12 @@ impl RepoStorage for SqlRepoReader {
         })
     }
 
-    fn put_block<'a>(
-        &'a self,
+    fn put_block<'life>(
+        &'life self,
         cid: Cid,
         bytes: Vec<u8>,
         rev: String,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
         let db: Arc<DbConn> = self.db.clone();
         let bytes_cloned = bytes.clone();
@@ -214,11 +216,11 @@ impl RepoStorage for SqlRepoReader {
         })
     }
 
-    fn put_many<'a>(
-        &'a self,
+    fn put_many<'life>(
+        &'life self,
         to_put: BlockMap,
         rev: String,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
         let db: Arc<DbConn> = self.db.clone();
 
@@ -263,12 +265,12 @@ impl RepoStorage for SqlRepoReader {
             Ok(())
         })
     }
-    fn update_root<'a>(
-        &'a self,
+    fn update_root<'life>(
+        &'life self,
         cid: Cid,
         rev: String,
         is_create: Option<bool>,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
         let db: Arc<DbConn> = self.db.clone();
         let now: String = self.now.clone();
@@ -306,11 +308,11 @@ impl RepoStorage for SqlRepoReader {
         })
     }
 
-    fn apply_commit<'a>(
-        &'a self,
+    fn apply_commit<'life>(
+        &'life self,
         commit: CommitData,
         is_create: Option<bool>,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'life>> {
         Box::pin(async move {
             self.update_root(commit.cid, commit.rev.clone(), is_create)
                 .await?;
