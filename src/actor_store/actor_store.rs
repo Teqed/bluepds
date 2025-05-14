@@ -9,7 +9,6 @@ use anyhow::Result;
 use cidv10::Cid;
 use diesel::*;
 use futures::stream::{self, StreamExt};
-use rsky_common;
 use rsky_pds::actor_store::repo::types::SyncEvtData;
 use rsky_repo::repo::Repo;
 use rsky_repo::storage::readable_blockstore::ReadableBlockstore;
@@ -22,7 +21,6 @@ use rsky_repo::util::format_data_key;
 use rsky_syntax::aturi::AtUri;
 use secp256k1::{Keypair, Secp256k1, SecretKey};
 use std::env;
-use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -416,7 +414,7 @@ impl ActorStore {
     pub async fn destroy(&mut self) -> Result<()> {
         let did: String = self.did.clone();
         let storage_guard = self.storage.read().await;
-        let db: Arc<ActorDb> = storage_guard.db.clone();
+        let db: ActorDb = storage_guard.db.clone();
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
         let blob_rows: Vec<String> = db
@@ -450,7 +448,7 @@ impl ActorStore {
         }
         let did: String = self.did.clone();
         let storage_guard = self.storage.read().await;
-        let db: Arc<ActorDb> = storage_guard.db.clone();
+        let db: ActorDb = storage_guard.db.clone();
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
         let cid_strs: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();

@@ -16,8 +16,25 @@ pub(crate) struct BlobStoreSql {
     path: PathBuf,
 }
 
+/// Configuration for the blob store
+/// TODO: Implement this placeholder
+pub(crate) struct BlobConfig {
+    pub(crate) path: PathBuf,
+}
+
+/// ByteStream
+/// TODO: Implement this placeholder
+pub(crate) struct ByteStream {
+    pub(crate) bytes: Vec<u8>,
+}
+impl ByteStream {
+    pub async fn collect(self) -> Result<Vec<u8>> {
+        Ok(self.bytes)
+    }
+}
+
 impl BlobStoreSql {
-    pub fn new(did: String, cfg: &SdkConfig) -> Self {
+    pub fn new(did: String, cfg: &BlobConfig) -> Self {
         // let client = aws_sdk_s3::Client::new(cfg);
         // BlobStorePlaceholder {
         //     client,
@@ -26,7 +43,7 @@ impl BlobStoreSql {
         todo!();
     }
 
-    pub fn creator(cfg: &SdkConfig) -> Box<dyn Fn(String) -> BlobStoreSql + '_> {
+    pub fn creator(cfg: &BlobConfig) -> Box<dyn Fn(String) -> BlobStoreSql + '_> {
         Box::new(move |did: String| BlobStoreSql::new(did, cfg))
     }
 
@@ -130,8 +147,9 @@ impl BlobStoreSql {
 
     pub async fn get_bytes(&self, cid: Cid) -> Result<Vec<u8>> {
         let res = self.get_object(cid).await?;
-        let bytes = res.collect().await.map(|data| data.into_bytes())?;
-        Ok(bytes.to_vec())
+        // let bytes = res.collect().await.map(|data| data.into_bytes())?;
+        // Ok(bytes.to_vec())
+        todo!();
     }
 
     pub async fn get_stream(&self, cid: Cid) -> Result<ByteStream> {
@@ -221,4 +239,9 @@ impl BlobStoreSql {
         // Ok(())
         todo!();
     }
+}
+
+struct MoveObject {
+    from: String,
+    to: String,
 }

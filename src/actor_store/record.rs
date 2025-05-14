@@ -10,7 +10,7 @@ use diesel::*;
 use futures::stream::{self, StreamExt};
 use rsky_lexicon::com::atproto::admin::StatusAttr;
 use rsky_pds::actor_store::record::{GetRecord, RecordsForCollection, get_backlinks};
-use rsky_pds::models::{Backlink, Record};
+use rsky_pds::models::{Backlink, Record, RepoBlock};
 use rsky_repo::types::{RepoRecord, WriteOpAction};
 use rsky_repo::util::cbor_to_lex_record;
 use rsky_syntax::aturi::AtUri;
@@ -87,10 +87,7 @@ impl RecordReader {
         let mut builder = RecordSchema::record
             .inner_join(RepoBlockSchema::repo_block.on(RepoBlockSchema::cid.eq(RecordSchema::cid)))
             .limit(limit)
-            .select((
-                rsky_pds::models::Record::as_select(),
-                rsky_pds::models::RepoBlock::as_select(),
-            ))
+            .select((Record::as_select(), RepoBlock::as_select()))
             .filter(RecordSchema::did.eq(self.did.clone()))
             .filter(RecordSchema::collection.eq(collection))
             .into_boxed();
@@ -117,8 +114,7 @@ impl RecordReader {
                 builder = builder.filter(RecordSchema::rkey.lt(rkey_end));
             }
         }
-        let res: Vec<(rsky_pds::models::Record, rsky_pds::models::RepoBlock)> =
-            self.db.run(move |conn| builder.load(conn)).await?;
+        let res: Vec<(Record, RepoBlock)> = self.db.run(move |conn| builder.load(conn)).await?;
         res.into_iter()
             .map(|row| {
                 Ok(RecordsForCollection {
@@ -147,10 +143,7 @@ impl RecordReader {
         };
         let mut builder = RecordSchema::record
             .inner_join(RepoBlockSchema::repo_block.on(RepoBlockSchema::cid.eq(RecordSchema::cid)))
-            .select((
-                rsky_pds::models::Record::as_select(),
-                rsky_pds::models::RepoBlock::as_select(),
-            ))
+            .select((Record::as_select(), RepoBlock::as_select()))
             .filter(RecordSchema::uri.eq(uri.to_string()))
             .into_boxed();
         if !include_soft_deleted {
@@ -159,7 +152,7 @@ impl RecordReader {
         if let Some(cid) = cid {
             builder = builder.filter(RecordSchema::cid.eq(cid));
         }
-        let record: Option<(rsky_pds::models::Record, rsky_pds::models::RepoBlock)> = self
+        let record: Option<(Record, RepoBlock)> = self
             .db
             .run(move |conn| builder.first(conn).optional())
             .await?;
@@ -298,7 +291,7 @@ impl RecordReader {
         let record_backlinks = get_backlinks(uri, record)?;
         let conflicts: Vec<Vec<Record>> = stream::iter(record_backlinks)
             .then(|backlink| async move {
-                Ok::<Vec<Record>, anyhow::Error>(
+                Ok::<Vec<Record>, Error>(
                     self.get_record_backlinks(
                         uri.get_collection(),
                         backlink.path,

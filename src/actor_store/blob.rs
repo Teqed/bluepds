@@ -28,7 +28,7 @@ use rsky_pds::image;
 use rsky_pds::models::models;
 use rsky_repo::error::BlobError;
 use rsky_repo::types::{PreparedBlobRef, PreparedWrite};
-use sha2::{Digest, Sha256};
+use sha2::Digest;
 
 use super::ActorDb;
 use super::sql_blob::BlobStoreSql;
@@ -42,11 +42,12 @@ pub struct BlobReader {
 // Basically handles getting blob records from db
 impl BlobReader {
     pub fn new(blobstore: BlobStoreSql, db: ActorDb) -> Self {
-        BlobReader {
-            did: blobstore.bucket.clone(),
-            blobstore,
-            db,
-        }
+        // BlobReader {
+        //     did: blobstore.bucket.clone(),
+        //     blobstore,
+        //     db,
+        // }
+        todo!();
     }
 
     pub async fn get_blob_metadata(&self, cid: Cid) -> Result<GetBlobMetadataOutput> {
@@ -77,22 +78,23 @@ impl BlobReader {
 
     pub async fn get_blob(&self, cid: Cid) -> Result<GetBlobOutput> {
         let metadata = self.get_blob_metadata(cid).await?;
-        let blob_stream = match self.blobstore.get_stream(cid).await {
-            Ok(res) => res,
-            Err(e) => {
-                return match e.downcast_ref() {
-                    Some(GetObjectError::NoSuchKey(key)) => {
-                        Err(anyhow::Error::new(GetObjectError::NoSuchKey(key.clone())))
-                    }
-                    _ => bail!(e.to_string()),
-                };
-            }
-        };
-        Ok(GetBlobOutput {
-            size: metadata.size,
-            mime_type: metadata.mime_type,
-            stream: blob_stream,
-        })
+        // let blob_stream = match self.blobstore.get_stream(cid).await {
+        //     Ok(res) => res,
+        //     Err(e) => {
+        //         return match e.downcast_ref() {
+        //             Some(GetObjectError::NoSuchKey(key)) => {
+        //                 Err(anyhow::Error::new(GetObjectError::NoSuchKey(key.clone())))
+        //             }
+        //             _ => bail!(e.to_string()),
+        //         };
+        //     }
+        // };
+        // Ok(GetBlobOutput {
+        //     size: metadata.size,
+        //     mime_type: metadata.mime_type,
+        //     stream: blob_stream,
+        // })
+        todo!();
     }
 
     pub async fn get_records_for_blob(&self, cid: Cid) -> Result<Vec<String>> {
@@ -118,8 +120,9 @@ impl BlobReader {
     pub async fn upload_blob_and_get_metadata(
         &self,
         user_suggested_mime: String,
-        blob: Data<'_>,
+        blob: Data<'_>, // Type representing the body data of a request.
     ) -> Result<BlobMetadata> {
+        todo!();
         let blob_stream = blob.open(100.mebibytes());
         let bytes = blob_stream.into_bytes().await?;
         let size = bytes.n.written;

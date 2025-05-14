@@ -11,7 +11,6 @@ use rsky_pds::actor_store::preference::pref_match_namespace;
 use rsky_pds::actor_store::preference::util::pref_in_scope;
 use rsky_pds::auth_verifier::AuthScope;
 use rsky_pds::db::DbConn;
-use rsky_pds::models;
 use rsky_pds::models::AccountPref;
 use std::sync::Arc;
 
@@ -95,7 +94,7 @@ impl PreferenceReader {
                         use rsky_pds::schema::pds::account_pref::dsl as AccountPrefSchema;
                         let all_prefs = AccountPrefSchema::account_pref
                             .filter(AccountPrefSchema::did.eq(&did))
-                            .select(models::AccountPref::as_select())
+                            .select(AccountPref::as_select())
                             .load(conn)?;
                         let put_prefs = values
                             .into_iter()
