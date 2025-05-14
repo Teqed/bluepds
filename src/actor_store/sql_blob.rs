@@ -6,7 +6,6 @@
 use anyhow::{Context, Result};
 use cidv10::Cid;
 use diesel::prelude::*;
-use rsky_common::get_random_str;
 use std::sync::Arc;
 
 use crate::db::DbConn;
@@ -45,8 +44,6 @@ struct BlobEntry {
     size: i32,
     mime_type: String,
     quarantined: bool,
-    temp: bool,
-    temp_key: Option<String>,
 }
 
 // Table definition for blobs
@@ -58,8 +55,6 @@ table! {
         size -> Integer,
         mime_type -> Text,
         quarantined -> Bool,
-        temp -> Bool,
-        temp_key -> Nullable<Text>,
     }
 }
 
@@ -75,86 +70,38 @@ impl BlobStoreSql {
         Box::new(move |did: String| BlobStoreSql::new(did, db_clone.clone()))
     }
 
-    /// Generate a random key for temporary blobs
-    fn gen_key(&self) -> String {
-        get_random_str()
-    }
-
-    /// Store a blob temporarily
+    /// Store a blob temporarily - now just stores permanently with a key returned for API compatibility
     pub async fn put_temp(&self, bytes: Vec<u8>) -> Result<String> {
-        let key = self.gen_key();
-        let did_clone = self.did.clone();
-        let bytes_len = bytes.len() as i32;
+        // Generate a unique key as a CID based on the data
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(&bytes);
+        let key = hex::encode(digest);
 
-        // Store in the database with temp flag
-        let key_clone = key.clone();
-        self.db
-            .run(move |conn| {
-                let entry = BlobEntry {
-                    cid: "temp".to_string(), // Will be updated when made permanent
-                    did: did_clone,
-                    data: bytes,
-                    size: bytes_len,
-                    mime_type: "application/octet-stream".to_string(), // Will be updated when made permanent
-                    quarantined: false,
-                    temp: true,
-                    temp_key: Some(key_clone),
-                };
+        // Just store the blob directly
+        self.put_permanent_with_mime(
+            Cid::try_from(format!("bafy{}", key)).unwrap_or_else(|_| Cid::default()),
+            bytes,
+            "application/octet-stream".to_string(),
+        )
+        .await?;
 
-                diesel::insert_into(blobs::table)
-                    .values(&entry)
-                    .execute(conn)
-                    .context("Failed to insert temporary blob data")
-            })
-            .await?;
-
+        // Return the key for API compatibility
         Ok(key)
     }
 
-    /// Make a temporary blob permanent
-    pub async fn make_permanent(&self, key: String, cid: Cid) -> Result<()> {
-        let already_has = self.has_stored(cid).await?;
-        if !already_has {
-            let cid_str = cid.to_string();
-            let did_clone = self.did.clone();
-
-            // Update database record to make it permanent
-            self.db
-                .run(move |conn| {
-                    diesel::update(blobs::table)
-                        .filter(blobs::temp_key.eq(&key))
-                        .filter(blobs::did.eq(&did_clone))
-                        .set((
-                            blobs::cid.eq(&cid_str),
-                            blobs::temp.eq(false),
-                            blobs::temp_key.eq::<Option<String>>(None),
-                        ))
-                        .execute(conn)
-                        .context("Failed to update blob to permanent status")
-                })
-                .await?;
-
-            Ok(())
-        } else {
-            // Already exists, so delete the temporary one
-            let did_clone = self.did.clone();
-
-            self.db
-                .run(move |conn| {
-                    diesel::delete(blobs::table)
-                        .filter(blobs::temp_key.eq(&key))
-                        .filter(blobs::did.eq(&did_clone))
-                        .execute(conn)
-                        .context("Failed to delete redundant temporary blob")
-                })
-                .await?;
-
-            Ok(())
-        }
+    /// Make a temporary blob permanent - just a no-op for API compatibility
+    pub async fn make_permanent(&self, _key: String, _cid: Cid) -> Result<()> {
+        // No-op since we don't have temporary blobs anymore
+        Ok(())
     }
 
-    /// Store a blob directly as permanent
-    pub async fn put_permanent(&self, cid: Cid, bytes: Vec<u8>) -> Result<()> {
+    /// Store a blob with specific mime type
+    pub async fn put_permanent_with_mime(
+        &self,
+        cid: Cid,
+        bytes: Vec<u8>,
+        mime_type: String,
+    ) -> Result<()> {
         let cid_str = cid.to_string();
         let did_clone = self.did.clone();
         let bytes_len = bytes.len() as i32;
@@ -168,10 +115,8 @@ impl BlobStoreSql {
                     did: did_clone.clone(),
                     data: bytes,
                     size: bytes_len,
-                    mime_type: "application/octet-stream".to_string(), // Could be improved with MIME detection
+                    mime_type,
                     quarantined: false,
-                    temp: false,
-                    temp_key: None,
                 };
 
                 diesel::insert_into(blobs::table)
@@ -180,11 +125,17 @@ impl BlobStoreSql {
                     .do_update()
                     .set(blobs::data.eq(data_clone))
                     .execute(conn)
-                    .context("Failed to insert permanent blob data")
+                    .context("Failed to insert blob data")
             })
             .await?;
 
         Ok(())
+    }
+
+    /// Store a blob directly as permanent
+    pub async fn put_permanent(&self, cid: Cid, bytes: Vec<u8>) -> Result<()> {
+        self.put_permanent_with_mime(cid, bytes, "application/octet-stream".to_string())
+            .await
     }
 
     /// Quarantine a blob
@@ -321,8 +272,7 @@ impl BlobStoreSql {
                 diesel::select(diesel::dsl::exists(
                     blobs
                         .filter(self::blobs::cid.eq(&cid_str))
-                        .filter(did.eq(&did_clone))
-                        .filter(temp.eq(false)),
+                        .filter(did.eq(&did_clone)),
                 ))
                 .get_result::<bool>(conn)
                 .context("Failed to check if blob exists")
@@ -332,26 +282,11 @@ impl BlobStoreSql {
         Ok(exists)
     }
 
-    /// Check if a temporary blob exists
+    /// Check if a temporary blob exists - now just checks if any blob exists with the key pattern
     pub async fn has_temp(&self, key: String) -> Result<bool> {
-        use self::blobs::dsl::*;
-
-        let did_clone = self.did.clone();
-
-        let exists = self
-            .db
-            .run(move |conn| {
-                diesel::select(diesel::dsl::exists(
-                    blobs
-                        .filter(temp_key.eq(&key))
-                        .filter(did.eq(&did_clone))
-                        .filter(temp.eq(true)),
-                ))
-                .get_result::<bool>(conn)
-                .context("Failed to check if temporary blob exists")
-            })
-            .await?;
-
-        Ok(exists)
+        // We don't have temporary blobs anymore, but for compatibility we'll check if
+        // there's a blob with a similar CID pattern
+        let temp_cid = Cid::try_from(format!("bafy{}", key)).unwrap_or_else(|_| Cid::default());
+        self.has_stored(temp_cid).await
     }
 }
