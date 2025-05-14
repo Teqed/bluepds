@@ -26,6 +26,7 @@ use rsky_pds::image;
 use rsky_pds::models::models;
 use rsky_repo::error::BlobError;
 use rsky_repo::types::{PreparedBlobRef, PreparedWrite};
+use std::str::FromStr as _;
 use std::sync::Arc;
 
 use super::sql_blob::{BlobStoreSql, ByteStream};
@@ -244,12 +245,12 @@ impl BlobReader {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
         use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
 
+        // Extract URIs
         let uris: Vec<String> = writes
-            .clone()
-            .into_iter()
+            .iter()
             .filter_map(|w| match w {
-                PreparedWrite::Delete(w) => Some(w.uri),
-                PreparedWrite::Update(w) => Some(w.uri),
+                PreparedWrite::Delete(w) => Some(w.uri.clone()),
+                PreparedWrite::Update(w) => Some(w.uri.clone()),
                 _ => None,
             })
             .collect();
@@ -258,79 +259,97 @@ impl BlobReader {
             return Ok(());
         }
 
+        // In SQLite, we can't do DELETE...RETURNING
+        // So we need to fetch the records first, then delete
+        let did = self.did.clone();
+        let uris_clone = uris.clone();
         let deleted_repo_blobs: Vec<models::RecordBlob> = self
             .db
             .run(move |conn| {
-                delete(RecordBlobSchema::record_blob)
-                    .filter(RecordBlobSchema::recordUri.eq_any(uris))
-                    .get_results(conn)
+                RecordBlobSchema::record_blob
+                    .filter(RecordBlobSchema::recordUri.eq_any(&uris_clone))
+                    .filter(RecordBlobSchema::did.eq(&did))
+                    .load::<models::RecordBlob>(conn)
             })
-            .await?
-            .into_iter()
-            .collect::<Vec<models::RecordBlob>>();
+            .await?;
 
         if deleted_repo_blobs.is_empty() {
             return Ok(());
         }
 
+        // Now perform the delete
+        let uris_clone = uris.clone();
+        self.db
+            .run(move |conn| {
+                delete(RecordBlobSchema::record_blob)
+                    .filter(RecordBlobSchema::recordUri.eq_any(uris_clone))
+                    .execute(conn)
+            })
+            .await?;
+
+        // Extract blob cids from the deleted records
         let deleted_repo_blob_cids: Vec<String> = deleted_repo_blobs
             .into_iter()
             .map(|row| row.blob_cid)
-            .collect::<Vec<String>>();
+            .collect();
 
-        let x = deleted_repo_blob_cids.clone();
-        let mut duplicated_cids: Vec<String> = self
+        // Find duplicates (blobs referenced by other records)
+        let cids_clone = deleted_repo_blob_cids.clone();
+        let did_clone = self.did.clone();
+        let duplicated_cids: Vec<String> = self
             .db
             .run(move |conn| {
                 RecordBlobSchema::record_blob
+                    .filter(RecordBlobSchema::blobCid.eq_any(cids_clone))
+                    .filter(RecordBlobSchema::did.eq(did_clone))
                     .select(RecordBlobSchema::blobCid)
-                    .filter(RecordBlobSchema::blobCid.eq_any(&x))
-                    .load(conn)
+                    .load::<String>(conn)
             })
-            .await?
-            .into_iter()
-            .collect::<Vec<String>>();
+            .await?;
 
-        let mut new_blob_cids: Vec<String> = writes
-            .into_iter()
-            .map(|w| match w {
-                PreparedWrite::Create(w) => w.blobs,
-                PreparedWrite::Update(w) => w.blobs,
-                PreparedWrite::Delete(_) => Vec::new(),
+        // Extract new blob cids from writes (creates and updates)
+        let new_blob_cids: Vec<String> = writes
+            .iter()
+            .flat_map(|w| match w {
+                PreparedWrite::Create(w) => w.blobs.clone(),
+                PreparedWrite::Update(w) => w.blobs.clone(),
+                _ => Vec::new(),
             })
-            .collect::<Vec<Vec<PreparedBlobRef>>>()
-            .into_iter()
-            .flat_map(|v: Vec<PreparedBlobRef>| v.into_iter().map(|b| b.cid.to_string()))
+            .map(|b| b.cid.to_string())
             .collect();
 
-        let mut cids_to_keep = Vec::new();
-        cids_to_keep.append(&mut new_blob_cids);
-        cids_to_keep.append(&mut duplicated_cids);
-
-        let cids_to_delete = deleted_repo_blob_cids
+        // Determine which blobs to keep vs delete
+        let cids_to_keep: Vec<String> = [&new_blob_cids[..], &duplicated_cids[..]].concat();
+        let cids_to_delete: Vec<String> = deleted_repo_blob_cids
             .into_iter()
-            .filter_map(|cid: String| match cids_to_keep.contains(&cid) {
-                true => None,
-                false => Some(cid),
-            })
-            .collect::<Vec<String>>();
+            .filter(|cid| !cids_to_keep.contains(cid))
+            .collect();
 
         if cids_to_delete.is_empty() {
             return Ok(());
         }
 
-        let y = cids_to_delete.clone();
+        // Delete from the blob table
+        let cids = cids_to_delete.clone();
+        let did_clone = self.did.clone();
         self.db
             .run(move |conn| {
                 delete(BlobSchema::blob)
-                    .filter(BlobSchema::cid.eq_any(&y))
+                    .filter(BlobSchema::cid.eq_any(cids))
+                    .filter(BlobSchema::did.eq(did_clone))
                     .execute(conn)
             })
             .await?;
 
         // Delete from blob storage
+        // Ideally we'd use a background queue here, but for now:
         let _ = stream::iter(cids_to_delete)
-            .then(|cid| async { self.blobstore.delete(cid).await })
+            .then(|cid| async move {
+                match Cid::from_str(&cid) {
+                    Ok(cid) => self.blobstore.delete(cid.to_string()).await,
+                    Err(e) => Err(anyhow::Error::new(e)),
+                }
+            })
             .collect::<Vec<_>>()
             .await
             .into_iter()
@@ -451,44 +470,47 @@ impl BlobReader {
                     bail!("Limit too high. Max: 1000.");
                 }
 
-                let res: Vec<models::RecordBlob> = if let Some(cursor) = cursor {
-                    RecordBlobSchema::record_blob
-                        .limit(limit as i64)
-                        .filter(not(exists(
-                            BlobSchema::blob
-                                .filter(BlobSchema::cid.eq(RecordBlobSchema::blobCid))
-                                .filter(BlobSchema::did.eq(&did))
-                                .select(models::Blob::as_select()),
-                        )))
-                        .filter(RecordBlobSchema::blobCid.gt(cursor))
-                        .filter(RecordBlobSchema::did.eq(&did))
-                        .select(models::RecordBlob::as_select())
-                        .order(RecordBlobSchema::blobCid.asc())
-                        .distinct_on(RecordBlobSchema::blobCid)
-                        .get_results(conn)?
+                // TODO: Improve this query
+
+                // SQLite doesn't support DISTINCT ON, so we use GROUP BY instead
+                let query = RecordBlobSchema::record_blob
+                    .filter(not(exists(
+                        BlobSchema::blob
+                            .filter(BlobSchema::cid.eq(RecordBlobSchema::blobCid))
+                            .filter(BlobSchema::did.eq(&did)),
+                    )))
+                    .filter(RecordBlobSchema::did.eq(&did))
+                    .into_boxed();
+
+                // Apply cursor filtering if provided
+                let query = if let Some(cursor) = cursor {
+                    query.filter(RecordBlobSchema::blobCid.gt(cursor))
                 } else {
-                    RecordBlobSchema::record_blob
-                        .limit(limit as i64)
-                        .filter(not(exists(
-                            BlobSchema::blob
-                                .filter(BlobSchema::cid.eq(RecordBlobSchema::blobCid))
-                                .filter(BlobSchema::did.eq(&did))
-                                .select(models::Blob::as_select()),
-                        )))
-                        .filter(RecordBlobSchema::did.eq(&did))
-                        .select(models::RecordBlob::as_select())
-                        .order(RecordBlobSchema::blobCid.asc())
-                        .distinct_on(RecordBlobSchema::blobCid)
-                        .get_results(conn)?
+                    query
                 };
 
-                Ok(res
-                    .into_iter()
-                    .map(|row| ListMissingBlobsRefRecordBlob {
-                        cid: row.blob_cid,
-                        record_uri: row.record_uri,
-                    })
-                    .collect())
+                // For SQLite, use a simplified approach without GROUP BY to avoid recursion limit issues
+                let res = query
+                    .select((RecordBlobSchema::blobCid, RecordBlobSchema::recordUri))
+                    .order(RecordBlobSchema::blobCid.asc())
+                    .limit(limit as i64)
+                    .load::<(String, String)>(conn)?;
+
+                // Process results to get distinct cids with their first record URI
+                let mut result = Vec::new();
+                let mut last_cid = None;
+
+                for (cid, uri) in res {
+                    if last_cid.as_ref() != Some(&cid) {
+                        result.push(ListMissingBlobsRefRecordBlob {
+                            cid: cid.clone(),
+                            record_uri: uri,
+                        });
+                        last_cid = Some(cid);
+                    }
+                }
+
+                Ok(result)
             })
             .await
     }

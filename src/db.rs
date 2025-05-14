@@ -6,7 +6,7 @@ use std::env;
 use std::fmt::{Debug, Formatter};
 
 #[database("sqlite_db")]
-pub struct DbConn(PgConnection);
+pub struct DbConn(SqliteConnection);
 
 impl Debug for DbConn {
     fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {

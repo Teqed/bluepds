@@ -247,9 +247,8 @@ impl RepoStorage for SqlRepoReader {
                     let db = db.clone();
                     async move {
                         db.run(move |conn| {
-                            insert_into(RepoBlockSchema::repo_block)
+                            insert_or_ignore_into(RepoBlockSchema::repo_block)
                                 .values(batch)
-                                .on_conflict_do_nothing()
                                 .execute(conn)
                                 .map(|_| ())
                         })

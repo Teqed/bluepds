@@ -439,9 +439,8 @@ impl RecordReader {
             use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
             self.db
                 .run(move |conn| {
-                    insert_into(BacklinkSchema::backlink)
+                    insert_or_ignore_into(BacklinkSchema::backlink)
                         .values(&backlinks)
-                        .on_conflict_do_nothing()
                         .execute(conn)?;
                     Ok(())
                 })
