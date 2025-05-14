@@ -4,8 +4,6 @@
 //!
 //! Modified for SQLite backend
 
-use std::sync::Arc;
-
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_lexicon::app::bsky::actor::RefPreferences;
@@ -14,15 +12,13 @@ use rsky_pds::actor_store::preference::util::pref_in_scope;
 use rsky_pds::auth_verifier::AuthScope;
 use rsky_pds::models::AccountPref;
 
-use crate::db::DbConn;
-
 pub struct PreferenceReader {
     pub did: String,
-    pub db: Arc<DbConn>,
+    pub db: deadpool_diesel::Connection<SqliteConnection>,
 }
 
 impl PreferenceReader {
-    pub fn new(did: String, db: Arc<DbConn>) -> Self {
+    pub fn new(did: String, db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
         PreferenceReader { did, db }
     }
 
@@ -35,7 +31,7 @@ impl PreferenceReader {
 
         let did = self.did.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let prefs_res = AccountPrefSchema::account_pref
                     .filter(AccountPrefSchema::did.eq(&did))
                     .select(AccountPref::as_select())
@@ -62,6 +58,7 @@ impl PreferenceReader {
                 Ok(account_prefs)
             })
             .await
+            .expect("Failed to get preferences")
     }
 
     #[tracing::instrument(skip_all)]
@@ -73,7 +70,7 @@ impl PreferenceReader {
     ) -> Result<()> {
         let did = self.did.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 match values
                     .iter()
                     .all(|value| pref_match_namespace(&namespace, &value.get_type()))
@@ -142,5 +139,6 @@ impl PreferenceReader {
                 }
             })
             .await
+            .expect("Failed to put preferences")
     }
 }

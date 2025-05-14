@@ -25,16 +25,23 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::db::DbConn;
-
-#[derive(Clone, Debug)]
 pub struct SqlRepoReader {
     pub cache: Arc<RwLock<BlockMap>>,
-    pub db: Arc<DbConn>,
+    pub db: deadpool_diesel::Connection<SqliteConnection>,
     pub root: Option<Cid>,
     pub rev: Option<String>,
     pub now: String,
     pub did: String,
+}
+
+impl std::fmt::Debug for SqlRepoReader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SqlRepoReader")
+            .field("did", &self.did)
+            .field("root", &self.root)
+            .field("rev", &self.rev)
+            .finish()
+    }
 }
 
 impl ReadableBlockstore for SqlRepoReader {
@@ -43,7 +50,6 @@ impl ReadableBlockstore for SqlRepoReader {
         cid: &'life Cid,
     ) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
         let cid = cid.clone();
 
         Box::pin(async move {
@@ -56,8 +62,9 @@ impl ReadableBlockstore for SqlRepoReader {
                 return Ok(Some(cached_result.clone()));
             }
 
-            let found: Option<Vec<u8>> = db
-                .run(move |conn| {
+            let found: Option<Vec<u8>> = self
+                .db
+                .interact(move |conn| {
                     RepoBlockSchema::repo_block
                         .filter(RepoBlockSchema::cid.eq(cid.to_string()))
                         .filter(RepoBlockSchema::did.eq(did))
@@ -65,7 +72,8 @@ impl ReadableBlockstore for SqlRepoReader {
                         .first(conn)
                         .optional()
                 })
-                .await?;
+                .await
+                .expect("Failed to get block")?;
             match found {
                 None => Ok(None),
                 Some(result) => {
@@ -94,7 +102,6 @@ impl ReadableBlockstore for SqlRepoReader {
         cids: Vec<Cid>,
     ) -> Pin<Box<dyn Future<Output = Result<BlocksAndMissing>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
 
         Box::pin(async move {
             use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
@@ -115,7 +122,6 @@ impl ReadableBlockstore for SqlRepoReader {
 
             let _: Vec<_> = stream::iter(missing_strings.chunks(500))
                 .then(|batch| {
-                    let this_db = db.clone();
                     let this_did = did.clone();
                     let blocks = Arc::clone(&blocks);
                     let missing = Arc::clone(&missing_set);
@@ -123,15 +129,17 @@ impl ReadableBlockstore for SqlRepoReader {
 
                     async move {
                         // Database query
-                        let rows: Vec<(String, Vec<u8>)> = this_db
-                            .run(move |conn| {
+                        let rows: Vec<(String, Vec<u8>)> = self
+                            .db
+                            .interact(move |conn| {
                                 RepoBlockSchema::repo_block
                                     .filter(RepoBlockSchema::cid.eq_any(batch))
                                     .filter(RepoBlockSchema::did.eq(this_did))
                                     .select((RepoBlockSchema::cid, RepoBlockSchema::content))
                                     .load(conn)
                             })
-                            .await?;
+                            .await
+                            .expect("Failed to get blocks")?;
 
                         // Process rows with locked access
                         let mut blocks = blocks.lock().await;
@@ -191,23 +199,24 @@ impl RepoStorage for SqlRepoReader {
         rev: String,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
         let bytes_cloned = bytes.clone();
         Box::pin(async move {
             use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-            db.run(move |conn| {
-                insert_into(RepoBlockSchema::repo_block)
-                    .values((
-                        RepoBlockSchema::did.eq(did),
-                        RepoBlockSchema::cid.eq(cid.to_string()),
-                        RepoBlockSchema::repoRev.eq(rev),
-                        RepoBlockSchema::size.eq(bytes.len() as i32),
-                        RepoBlockSchema::content.eq(bytes),
-                    ))
-                    .execute(conn)
-            })
-            .await?;
+            self.db
+                .interact(move |conn| {
+                    insert_into(RepoBlockSchema::repo_block)
+                        .values((
+                            RepoBlockSchema::did.eq(did),
+                            RepoBlockSchema::cid.eq(cid.to_string()),
+                            RepoBlockSchema::repoRev.eq(rev),
+                            RepoBlockSchema::size.eq(bytes.len() as i32),
+                            RepoBlockSchema::content.eq(bytes),
+                        ))
+                        .execute(conn)
+                })
+                .await
+                .expect("Failed to put block")?;
             {
                 let mut cache_guard = self.cache.write().await;
                 cache_guard.set(cid, bytes_cloned);
@@ -222,7 +231,6 @@ impl RepoStorage for SqlRepoReader {
         rev: String,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
 
         Box::pin(async move {
             use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
@@ -242,24 +250,16 @@ impl RepoStorage for SqlRepoReader {
             let chunks: Vec<Vec<RepoBlock>> =
                 blocks.chunks(50).map(|chunk| chunk.to_vec()).collect();
 
-            let _: Vec<_> = stream::iter(chunks)
-                .then(|batch| {
-                    let db = db.clone();
-                    async move {
-                        db.run(move |conn| {
-                            insert_or_ignore_into(RepoBlockSchema::repo_block)
-                                .values(batch)
-                                .execute(conn)
-                                .map(|_| ())
-                        })
-                        .await
-                        .map_err(anyhow::Error::from)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<()>>>()?;
+            for batch in chunks {
+                self.db
+                    .interact(move |conn| {
+                        insert_or_ignore_into(RepoBlockSchema::repo_block)
+                            .values(&batch)
+                            .execute(conn)
+                    })
+                    .await
+                    .expect("Failed to insert blocks")?;
+            }
 
             Ok(())
         })
@@ -271,7 +271,6 @@ impl RepoStorage for SqlRepoReader {
         is_create: Option<bool>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'life>> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
         let now: String = self.now.clone();
 
         Box::pin(async move {
@@ -279,29 +278,33 @@ impl RepoStorage for SqlRepoReader {
 
             let is_create = is_create.unwrap_or(false);
             if is_create {
-                db.run(move |conn| {
-                    insert_into(RepoRootSchema::repo_root)
-                        .values((
-                            RepoRootSchema::did.eq(did),
-                            RepoRootSchema::cid.eq(cid.to_string()),
-                            RepoRootSchema::rev.eq(rev),
-                            RepoRootSchema::indexedAt.eq(now),
-                        ))
-                        .execute(conn)
-                })
-                .await?;
+                self.db
+                    .interact(move |conn| {
+                        insert_into(RepoRootSchema::repo_root)
+                            .values((
+                                RepoRootSchema::did.eq(did),
+                                RepoRootSchema::cid.eq(cid.to_string()),
+                                RepoRootSchema::rev.eq(rev),
+                                RepoRootSchema::indexedAt.eq(now),
+                            ))
+                            .execute(conn)
+                    })
+                    .await
+                    .expect("Failed to create root")?;
             } else {
-                db.run(move |conn| {
-                    update(RepoRootSchema::repo_root)
-                        .filter(RepoRootSchema::did.eq(did))
-                        .set((
-                            RepoRootSchema::cid.eq(cid.to_string()),
-                            RepoRootSchema::rev.eq(rev),
-                            RepoRootSchema::indexedAt.eq(now),
-                        ))
-                        .execute(conn)
-                })
-                .await?;
+                self.db
+                    .interact(move |conn| {
+                        update(RepoRootSchema::repo_root)
+                            .filter(RepoRootSchema::did.eq(did))
+                            .set((
+                                RepoRootSchema::cid.eq(cid.to_string()),
+                                RepoRootSchema::rev.eq(rev),
+                                RepoRootSchema::indexedAt.eq(now),
+                            ))
+                            .execute(conn)
+                    })
+                    .await
+                    .expect("Failed to update root")?;
             }
             Ok(())
         })
@@ -324,7 +327,11 @@ impl RepoStorage for SqlRepoReader {
 
 // Basically handles getting ipld blocks from db
 impl SqlRepoReader {
-    pub fn new(did: String, now: Option<String>, db: Arc<DbConn>) -> Self {
+    pub fn new(
+        did: String,
+        now: Option<String>,
+        db: deadpool_diesel::Connection<SqliteConnection>,
+    ) -> Self {
         let now = now.unwrap_or_else(rsky_common::now);
         SqlRepoReader {
             cache: Arc::new(RwLock::new(BlockMap::new())),
@@ -371,13 +378,13 @@ impl SqlRepoReader {
         cursor: &Option<CidAndRev>,
     ) -> Result<Vec<RepoBlock>> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
         let since = since.clone();
         let cursor = cursor.clone();
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-        Ok(db
-            .run(move |conn| {
+        Ok(self
+            .db
+            .interact(move |conn| {
                 let mut builder = RepoBlockSchema::repo_block
                     .select(RepoBlock::as_select())
                     .order((RepoBlockSchema::repoRev.desc(), RepoBlockSchema::cid.desc()))
@@ -404,22 +411,24 @@ impl SqlRepoReader {
                 }
                 builder.load(conn)
             })
-            .await?)
+            .await
+            .expect("Failed to get block range")?)
     }
 
     pub async fn count_blocks(&self) -> Result<i64> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-        let res = db
-            .run(move |conn| {
+        let res = self
+            .db
+            .interact(move |conn| {
                 RepoBlockSchema::repo_block
                     .filter(RepoBlockSchema::did.eq(did))
                     .count()
                     .get_result(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to count blocks")?;
         Ok(res)
     }
 
@@ -429,11 +438,11 @@ impl SqlRepoReader {
     /// Proactively cache all blocks from a particular commit (to prevent multiple roundtrips)
     pub async fn cache_rev(&mut self, rev: String) -> Result<()> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-        let result: Vec<(String, Vec<u8>)> = db
-            .run(move |conn| {
+        let result: Vec<(String, Vec<u8>)> = self
+            .db
+            .interact(move |conn| {
                 RepoBlockSchema::repo_block
                     .filter(RepoBlockSchema::did.eq(did))
                     .filter(RepoBlockSchema::repoRev.eq(rev))
@@ -441,7 +450,8 @@ impl SqlRepoReader {
                     .limit(15)
                     .get_results::<(String, Vec<u8>)>(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to cache rev")?;
         for row in result {
             let mut cache_guard = self.cache.write().await;
             cache_guard.set(Cid::from_str(&row.0)?, row.1)
@@ -454,33 +464,35 @@ impl SqlRepoReader {
             return Ok(());
         }
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         let cid_strings: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();
-        db.run(move |conn| {
-            delete(RepoBlockSchema::repo_block)
-                .filter(RepoBlockSchema::did.eq(did))
-                .filter(RepoBlockSchema::cid.eq_any(cid_strings))
-                .execute(conn)
-        })
-        .await?;
+        self.db
+            .interact(move |conn| {
+                delete(RepoBlockSchema::repo_block)
+                    .filter(RepoBlockSchema::did.eq(did))
+                    .filter(RepoBlockSchema::cid.eq_any(cid_strings))
+                    .execute(conn)
+            })
+            .await
+            .expect("Failed to delete many")?;
         Ok(())
     }
 
     pub async fn get_root_detailed(&self) -> Result<CidAndRev> {
         let did: String = self.did.clone();
-        let db: Arc<DbConn> = self.db.clone();
         use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
 
-        let res = db
-            .run(move |conn| {
+        let res = self
+            .db
+            .interact(move |conn| {
                 RepoRootSchema::repo_root
                     .filter(RepoRootSchema::did.eq(did))
                     .select(models::RepoRoot::as_select())
                     .first(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to get root")?;
 
         Ok(CidAndRev {
             cid: Cid::from_str(&res.cid)?,

@@ -27,10 +27,8 @@ use rsky_pds::models::models;
 use rsky_repo::error::BlobError;
 use rsky_repo::types::{PreparedBlobRef, PreparedWrite};
 use std::str::FromStr as _;
-use std::sync::Arc;
 
 use super::sql_blob::{BlobStoreSql, ByteStream};
-use crate::db::DbConn;
 
 pub struct GetBlobOutput {
     pub size: i32,
@@ -45,12 +43,12 @@ pub struct BlobReader {
     /// DID of the actor
     pub did: String,
     /// Database connection
-    pub db: Arc<DbConn>,
+    pub db: deadpool_diesel::Connection<SqliteConnection>,
 }
 
 impl BlobReader {
     /// Create a new blob reader
-    pub fn new(blobstore: BlobStoreSql, db: Arc<DbConn>) -> Self {
+    pub fn new(blobstore: BlobStoreSql, db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
         BlobReader {
             did: blobstore.did.clone(),
             blobstore,
@@ -65,7 +63,7 @@ impl BlobReader {
         let did = self.did.clone();
         let found = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 BlobSchema::blob
                     .filter(BlobSchema::did.eq(did))
                     .filter(BlobSchema::cid.eq(cid.to_string()))
@@ -74,7 +72,8 @@ impl BlobReader {
                     .first(conn)
                     .optional()
             })
-            .await?;
+            .await
+            .expect("Failed to get blob metadata")?;
 
         match found {
             None => bail!("Blob not found"),
@@ -107,7 +106,7 @@ impl BlobReader {
         let did = self.did.clone();
         let res = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let results = RecordBlobSchema::record_blob
                     .filter(RecordBlobSchema::blobCid.eq(cid.to_string()))
                     .filter(RecordBlobSchema::did.eq(did))
@@ -115,7 +114,8 @@ impl BlobReader {
                     .get_results(conn)?;
                 Ok::<_, result::Error>(results.into_iter().map(|row| row.record_uri))
             })
-            .await?
+            .await
+            .expect("Failed to get records for blob")?
             .collect::<Vec<String>>();
 
         Ok(res)
@@ -163,7 +163,7 @@ impl BlobReader {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
         let did = self.did.clone();
-        self.db.run(move |conn| {
+        self.db.interact(move |conn| {
             let BlobMetadata {
                 temp_key,
                 size,
@@ -207,7 +207,7 @@ impl BlobReader {
                 .execute(conn)?;
 
             Ok(BlobRef::new(cid, mime_type, size, None))
-        }).await
+        }).await.expect("Failed to track untethered blob")
     }
 
     /// Process blobs associated with writes
@@ -265,13 +265,14 @@ impl BlobReader {
         let uris_clone = uris.clone();
         let deleted_repo_blobs: Vec<models::RecordBlob> = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 RecordBlobSchema::record_blob
                     .filter(RecordBlobSchema::recordUri.eq_any(&uris_clone))
                     .filter(RecordBlobSchema::did.eq(&did))
                     .load::<models::RecordBlob>(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to get deleted repo blobs")?;
 
         if deleted_repo_blobs.is_empty() {
             return Ok(());
@@ -280,12 +281,13 @@ impl BlobReader {
         // Now perform the delete
         let uris_clone = uris.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 delete(RecordBlobSchema::record_blob)
                     .filter(RecordBlobSchema::recordUri.eq_any(uris_clone))
                     .execute(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to delete repo blobs")?;
 
         // Extract blob cids from the deleted records
         let deleted_repo_blob_cids: Vec<String> = deleted_repo_blobs
@@ -298,14 +300,15 @@ impl BlobReader {
         let did_clone = self.did.clone();
         let duplicated_cids: Vec<String> = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 RecordBlobSchema::record_blob
                     .filter(RecordBlobSchema::blobCid.eq_any(cids_clone))
                     .filter(RecordBlobSchema::did.eq(did_clone))
                     .select(RecordBlobSchema::blobCid)
                     .load::<String>(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to get duplicated cids")?;
 
         // Extract new blob cids from writes (creates and updates)
         let new_blob_cids: Vec<String> = writes
@@ -333,13 +336,14 @@ impl BlobReader {
         let cids = cids_to_delete.clone();
         let did_clone = self.did.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 delete(BlobSchema::blob)
                     .filter(BlobSchema::cid.eq_any(cids))
                     .filter(BlobSchema::did.eq(did_clone))
                     .execute(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to delete blobs")?;
 
         // Delete from blob storage
         // Ideally we'd use a background queue here, but for now:
@@ -364,7 +368,7 @@ impl BlobReader {
 
         let found = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 BlobSchema::blob
                     .filter(
                         BlobSchema::cid
@@ -375,7 +379,8 @@ impl BlobReader {
                     .first(conn)
                     .optional()
             })
-            .await?;
+            .await
+            .expect("Failed to verify blob")?;
 
         if let Some(found) = found {
             verify_blob(&blob, &found).await?;
@@ -385,13 +390,14 @@ impl BlobReader {
                     .await?;
             }
             self.db
-                .run(move |conn| {
+                .interact(move |conn| {
                     update(BlobSchema::blob)
                         .filter(BlobSchema::tempKey.eq(found.temp_key))
                         .set(BlobSchema::tempKey.eq::<Option<String>>(None))
                         .execute(conn)
                 })
-                .await?;
+                .await
+                .expect("Failed to update blob")?;
             Ok(())
         } else {
             bail!("Could not find blob: {:?}", blob.cid.to_string())
@@ -406,7 +412,7 @@ impl BlobReader {
         let did = self.did.clone();
 
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 insert_into(RecordBlobSchema::record_blob)
                     .values((
                         RecordBlobSchema::blobCid.eq(cid),
@@ -416,7 +422,8 @@ impl BlobReader {
                     .on_conflict_do_nothing()
                     .execute(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to associate blob")?;
 
         Ok(())
     }
@@ -427,7 +434,7 @@ impl BlobReader {
 
         let did = self.did.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let res = BlobSchema::blob
                     .filter(BlobSchema::did.eq(&did))
                     .count()
@@ -435,6 +442,7 @@ impl BlobReader {
                 Ok(res)
             })
             .await
+            .expect("Failed to count blobs")
     }
 
     /// Count blobs associated with records
@@ -443,7 +451,7 @@ impl BlobReader {
 
         let did = self.did.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let res: i64 = RecordBlobSchema::record_blob
                     .filter(RecordBlobSchema::did.eq(&did))
                     .select(count_distinct(RecordBlobSchema::blobCid))
@@ -451,6 +459,7 @@ impl BlobReader {
                 Ok(res)
             })
             .await
+            .expect("Failed to count record blobs")
     }
 
     /// List blobs that are referenced but missing
@@ -463,7 +472,7 @@ impl BlobReader {
 
         let did = self.did.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let ListMissingBlobsOpts { cursor, limit } = opts;
 
                 if limit > 1000 {
@@ -513,6 +522,7 @@ impl BlobReader {
                 Ok(result)
             })
             .await
+            .expect("Failed to list missing blobs")
     }
 
     /// List all blobs with optional filtering
@@ -541,7 +551,10 @@ impl BlobReader {
             if let Some(cursor) = cursor {
                 builder = builder.filter(RecordBlobSchema::blobCid.gt(cursor));
             }
-            self.db.run(move |conn| builder.load(conn)).await?
+            self.db
+                .interact(move |conn| builder.load(conn))
+                .await
+                .expect("Failed to list blobs")?
         } else {
             let mut builder = RecordBlobSchema::record_blob
                 .select(RecordBlobSchema::blobCid)
@@ -553,7 +566,10 @@ impl BlobReader {
             if let Some(cursor) = cursor {
                 builder = builder.filter(RecordBlobSchema::blobCid.gt(cursor));
             }
-            self.db.run(move |conn| builder.load(conn)).await?
+            self.db
+                .interact(move |conn| builder.load(conn))
+                .await
+                .expect("Failed to list blobs")?
         };
 
         Ok(res)
@@ -564,7 +580,7 @@ impl BlobReader {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let res = BlobSchema::blob
                     .filter(BlobSchema::cid.eq(cid.to_string()))
                     .select(models::Blob::as_select())
@@ -586,6 +602,7 @@ impl BlobReader {
                 }
             })
             .await
+            .expect("Failed to get blob takedown status")
     }
 
     /// Update the takedown status of a blob
@@ -604,7 +621,7 @@ impl BlobReader {
         let did_clone = self.did.clone();
 
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 update(BlobSchema::blob)
                     .filter(BlobSchema::cid.eq(blob_cid))
                     .filter(BlobSchema::did.eq(did_clone))
@@ -612,7 +629,8 @@ impl BlobReader {
                     .execute(conn)?;
                 Ok::<_, result::Error>(blob)
             })
-            .await?;
+            .await
+            .expect("Failed to update blob takedown status")?;
 
         let res = match takedown.applied {
             true => self.blobstore.quarantine(blob).await,

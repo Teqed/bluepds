@@ -17,21 +17,18 @@ use rsky_repo::util::cbor_to_lex_record;
 use rsky_syntax::aturi::AtUri;
 use std::env;
 use std::str::FromStr;
-use std::sync::Arc;
-
-use crate::db::DbConn;
 
 /// Combined handler for record operations with both read and write capabilities.
 pub(crate) struct RecordReader {
     /// Database connection.
-    pub db: Arc<DbConn>,
+    pub db: deadpool_diesel::Connection<SqliteConnection>,
     /// DID of the actor.
     pub did: String,
 }
 
 impl RecordReader {
     /// Create a new record handler.
-    pub(crate) fn new(did: String, db: Arc<DbConn>) -> Self {
+    pub(crate) fn new(did: String, db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
         Self { did, db }
     }
 
@@ -41,11 +38,12 @@ impl RecordReader {
 
         let other_did = self.did.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let res: i64 = record.filter(did.eq(&other_did)).count().get_result(conn)?;
                 Ok(res)
             })
             .await
+            .expect("Failed to count records")
     }
 
     /// List all collections in the repository.
@@ -54,7 +52,7 @@ impl RecordReader {
 
         let other_did = self.did.clone();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let collections = record
                     .filter(did.eq(&other_did))
                     .select(collection)
@@ -65,6 +63,7 @@ impl RecordReader {
                 Ok(collections)
             })
             .await
+            .expect("Failed to list collections")
     }
 
     /// List records for a specific collection.
@@ -116,7 +115,11 @@ impl RecordReader {
                 builder = builder.filter(RecordSchema::rkey.lt(rkey_end));
             }
         }
-        let res: Vec<(Record, RepoBlock)> = self.db.run(move |conn| builder.load(conn)).await?;
+        let res: Vec<(Record, RepoBlock)> = self
+            .db
+            .interact(move |conn| builder.load(conn))
+            .await
+            .expect("Failed to load records")?;
         res.into_iter()
             .map(|row| {
                 Ok(RecordsForCollection {
@@ -156,8 +159,9 @@ impl RecordReader {
         }
         let record: Option<(Record, RepoBlock)> = self
             .db
-            .run(move |conn| builder.first(conn).optional())
-            .await?;
+            .interact(move |conn| builder.first(conn).optional())
+            .await
+            .expect("Failed to load record")?;
         if let Some(record) = record {
             Ok(Some(GetRecord {
                 uri: record.0.uri,
@@ -197,8 +201,9 @@ impl RecordReader {
         }
         let record_uri = self
             .db
-            .run(move |conn| builder.first::<String>(conn).optional())
-            .await?;
+            .interact(move |conn| builder.first::<String>(conn).optional())
+            .await
+            .expect("Failed to check record")?;
         Ok(!!record_uri.is_some())
     }
 
@@ -211,14 +216,15 @@ impl RecordReader {
 
         let res = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 RecordSchema::record
                     .select(RecordSchema::takedownRef)
                     .filter(RecordSchema::uri.eq(uri))
                     .first::<Option<String>>(conn)
                     .optional()
             })
-            .await?;
+            .await
+            .expect("Failed to get takedown status")?;
         if let Some(res) = res {
             if let Some(takedown_ref) = res {
                 Ok(Some(StatusAttr {
@@ -242,14 +248,15 @@ impl RecordReader {
 
         let res = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 RecordSchema::record
                     .select(RecordSchema::cid)
                     .filter(RecordSchema::uri.eq(uri))
                     .first::<String>(conn)
                     .optional()
             })
-            .await?;
+            .await
+            .expect("Failed to get current CID")?;
         if let Some(res) = res {
             Ok(Some(Cid::from_str(&res)?))
         } else {
@@ -269,7 +276,7 @@ impl RecordReader {
 
         let res = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 RecordSchema::record
                     .inner_join(
                         BacklinkSchema::backlink.on(BacklinkSchema::uri.eq(RecordSchema::uri)),
@@ -280,7 +287,8 @@ impl RecordReader {
                     .filter(RecordSchema::collection.eq(collection))
                     .load::<Record>(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to get backlinks")?;
         Ok(res)
     }
 
@@ -365,7 +373,7 @@ impl RecordReader {
         // Track current version of record
         let (record, uri) = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 insert_into(RecordSchema::record)
                     .values(row)
                     .on_conflict(RecordSchema::uri)
@@ -378,7 +386,8 @@ impl RecordReader {
                     .execute(conn)?;
                 Ok::<_, Error>((record, uri))
             })
-            .await?;
+            .await
+            .expect("Failed to index record")?;
 
         if let Some(record) = record {
             // Maintain backlinks
@@ -402,7 +411,7 @@ impl RecordReader {
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
         let uri = uri.to_string();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 delete(RecordSchema::record)
                     .filter(RecordSchema::uri.eq(&uri))
                     .execute(conn)?;
@@ -415,6 +424,7 @@ impl RecordReader {
                 Ok(())
             })
             .await
+            .expect("Failed to delete record")
     }
 
     /// Remove backlinks for a URI.
@@ -422,13 +432,14 @@ impl RecordReader {
         use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
         let uri = uri.to_string();
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 delete(BacklinkSchema::backlink)
                     .filter(BacklinkSchema::uri.eq(uri))
                     .execute(conn)?;
                 Ok(())
             })
             .await
+            .expect("Failed to remove backlinks")
     }
 
     /// Add backlinks to the database.
@@ -438,13 +449,14 @@ impl RecordReader {
         } else {
             use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
             self.db
-                .run(move |conn| {
+                .interact(move |conn| {
                     insert_or_ignore_into(BacklinkSchema::backlink)
                         .values(&backlinks)
                         .execute(conn)?;
                     Ok(())
                 })
                 .await
+                .expect("Failed to add backlinks")
         }
     }
 
@@ -466,7 +478,7 @@ impl RecordReader {
         let uri_string = uri.to_string();
 
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 update(RecordSchema::record)
                     .filter(RecordSchema::uri.eq(uri_string))
                     .set(RecordSchema::takedownRef.eq(takedown_ref))
@@ -474,5 +486,6 @@ impl RecordReader {
                 Ok(())
             })
             .await
+            .expect("Failed to update takedown status")
     }
 }

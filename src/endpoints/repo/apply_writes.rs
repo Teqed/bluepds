@@ -1,8 +1,7 @@
 //! Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
 use crate::{
-    AppState, Db, Error, Result, SigningKey,
-    actor_store::ActorStore,
-    actor_store::sql_blob::BlobStoreSql,
+    ActorPools, AppState, Db, Error, Result, SigningKey,
+    actor_store::{ActorStore, sql_blob::BlobStoreSql},
     auth::AuthenticatedUser,
     config::AppConfig,
     error::ErrorMessage,
@@ -66,6 +65,7 @@ pub(crate) async fn apply_writes(
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(db): State<Db>,
+    State(db_actors): State<std::collections::HashMap<String, ActorPools>>,
     State(fhp): State<FirehoseProducer>,
     Json(input): Json<ApplyWritesInput>,
 ) -> Result<Json<repo::apply_writes::Output>> {
@@ -156,7 +156,14 @@ pub(crate) async fn apply_writes(
             None => None,
         };
 
-        let mut actor_store = ActorStore::new(did.clone(), BlobStoreSql::new(did.clone(), db), db);
+        let actor_db = db_actors
+            .get(did)
+            .ok_or_else(|| anyhow!("Actor DB not found"))?;
+        let mut actor_store = ActorStore::new(
+            did.clone(),
+            BlobStoreSql::new(did.clone(), actor_db.blob),
+            actor_db.repo,
+        );
 
         let commit = actor_store
             .process_writes(writes.clone(), swap_commit_cid)

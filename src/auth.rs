@@ -5,9 +5,10 @@ use atrium_crypto::{
 };
 use axum::{extract::FromRequestParts, http::StatusCode};
 use base64::Engine as _;
+use diesel::prelude::*;
 use sha2::{Digest as _, Sha256};
 
-use crate::{AppState, Error, error::ErrorMessage};
+use crate::{AppState, Error, db::DbConn, error::ErrorMessage};
 
 /// Request extractor for authenticated users.
 /// If specified in an API endpoint, this guarantees the API can only be called
@@ -129,8 +130,17 @@ async fn validate_bearer_token(token: &str, state: &AppState) -> Result<Authenti
 
     // Extract subject (DID)
     if let Some(did) = claims.get("sub").and_then(serde_json::Value::as_str) {
-        let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
-            .fetch_one(&state.db)
+        // Convert SQLx query to Diesel query
+        use crate::schema::accounts::dsl as AccountSchema;
+
+        let _status = state
+            .db
+            .run(move |conn| {
+                AccountSchema::accounts
+                    .filter(AccountSchema::did.eq(did.to_string()))
+                    .select(AccountSchema::status)
+                    .first::<String>(conn)
+            })
             .await
             .with_context(|| format!("failed to query account {did}"))
             .context("should fetch account status")?;
@@ -326,12 +336,21 @@ async fn validate_dpop_token(
 
     let timestamp = chrono::Utc::now().timestamp();
 
+    // Convert SQLx JTI check to Diesel
+    use crate::schema::oauth_used_jtis::dsl as JtiSchema;
+
     // Check if JTI has been used before
-    let jti_used =
-        sqlx::query_scalar!(r#"SELECT COUNT(*) FROM oauth_used_jtis WHERE jti = ?"#, jti)
-            .fetch_one(&state.db)
-            .await
-            .context("failed to check JTI")?;
+    let jti_string = jti.to_string();
+    let jti_used = state
+        .db
+        .run(move |conn| {
+            JtiSchema::oauth_used_jtis
+                .filter(JtiSchema::jti.eq(jti_string))
+                .count()
+                .get_result::<i64>(conn)
+        })
+        .await
+        .context("failed to check JTI")?;
 
     if jti_used > 0 {
         return Err(Error::with_status(
@@ -347,24 +366,37 @@ async fn validate_dpop_token(
         .and_then(serde_json::Value::as_i64)
         .unwrap_or_else(|| timestamp.checked_add(60).unwrap_or(timestamp));
 
-    _ = sqlx::query!(
-        r#"
-        INSERT INTO oauth_used_jtis (jti, issuer, created_at, expires_at)
-        VALUES (?, ?, ?, ?)
-        "#,
-        jti,
-        calculated_thumbprint, // Use thumbprint as issuer identifier
-        timestamp,
-        exp
-    )
-    .execute(&state.db)
-    .await
-    .context("failed to store JTI")?;
+    // Convert SQLx INSERT to Diesel
+    let jti_str = jti.to_string();
+    let thumbprint_str = calculated_thumbprint.to_string();
+    state
+        .db
+        .run(move |conn| {
+            diesel::insert_into(JtiSchema::oauth_used_jtis)
+                .values((
+                    JtiSchema::jti.eq(jti_str),
+                    JtiSchema::issuer.eq(thumbprint_str),
+                    JtiSchema::created_at.eq(timestamp),
+                    JtiSchema::expires_at.eq(exp),
+                ))
+                .execute(conn)
+        })
+        .await
+        .context("failed to store JTI")?;
 
     // Extract subject (DID) from access token
-    if let Some(did) = claims.get("sub").and_then(|v| v.as_str()) {
-        let _status = sqlx::query_scalar!(r#"SELECT status FROM accounts WHERE did = ?"#, did)
-            .fetch_one(&state.db)
+    if let Some(did) = claims.get("sub").and_then(|v| v.as_str) {
+        // Convert SQLx query to Diesel
+        use crate::schema::accounts::dsl as AccountSchema;
+
+        let _status = state
+            .db
+            .run(move |conn| {
+                AccountSchema::accounts
+                    .filter(AccountSchema::did.eq(did.to_string()))
+                    .select(AccountSchema::status)
+                    .first::<String>(conn)
+            })
             .await
             .with_context(|| format!("failed to query account {did}"))
             .context("should fetch account status")?;

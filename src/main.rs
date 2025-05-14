@@ -37,9 +37,10 @@ use azure_core::credentials::TokenCredential;
 use clap::Parser;
 use clap_verbosity_flag::{InfoLevel, Verbosity, log::LevelFilter};
 use config::AppConfig;
+use db::establish_pool;
+use deadpool_diesel::sqlite::Pool;
 use diesel::prelude::*;
-use diesel::r2d2::{self, ConnectionManager};
-use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
+use diesel_migrations::{EmbeddedMigrations, embed_migrations};
 #[expect(clippy::pub_use, clippy::useless_attribute)]
 pub use error::Error;
 use figment::{Figment, providers::Format as _};
@@ -68,8 +69,6 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("./migrations");
 pub type Result<T> = std::result::Result<T, Error>;
 /// The reqwest client type with middleware.
 pub type Client = reqwest_middleware::ClientWithMiddleware;
-/// The database connection pool.
-pub type Db = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 /// The Azure credential type.
 pub type Cred = Arc<dyn TokenCredential>;
 
@@ -132,6 +131,19 @@ struct Args {
     verbosity: Verbosity<InfoLevel>,
 }
 
+struct ActorPools {
+    repo: Pool,
+    blob: Pool,
+}
+impl Clone for ActorPools {
+    fn clone(&self) -> Self {
+        Self {
+            repo: self.repo.clone(),
+            blob: self.blob.clone(),
+        }
+    }
+}
+
 #[expect(clippy::arbitrary_source_item_ordering, reason = "arbitrary")]
 #[derive(Clone, FromRef)]
 struct AppState {
@@ -139,8 +151,10 @@ struct AppState {
     config: AppConfig,
     /// The Azure credential.
     cred: Cred,
-    /// The database connection pool.
-    db: Db,
+    /// The main database connection pool. Used for common PDS data, like invite codes.
+    db: Pool,
+    /// Actor-specific database connection pools. Hashed by DID.
+    db_actors: std::collections::HashMap<String, ActorPools>,
 
     /// The HTTP client with middleware.
     client: Client,
@@ -291,6 +305,7 @@ async fn service_proxy(
 #[expect(
     clippy::cognitive_complexity,
     clippy::too_many_lines,
+    unused_qualifications,
     reason = "main function has high complexity"
 )]
 async fn run() -> anyhow::Result<()> {
@@ -388,18 +403,52 @@ async fn run() -> anyhow::Result<()> {
     let cred = azure_identity::DefaultAzureCredential::new()
         .context("failed to create Azure credential")?;
 
-    // Create a database connection manager and pool
-    let manager = ConnectionManager::<SqliteConnection>::new(&config.db);
-    let db = r2d2::Pool::builder()
-        .build(manager)
-        .context("failed to create database connection pool")?;
+    // Create a database connection manager and pool for the main database.
+    let pool =
+        establish_pool(&config.db).context("failed to establish database connection pool")?;
+    // Create a dictionary of database connection pools for each actor.
+    let mut actor_pools = std::collections::HashMap::new();
+    // let mut actor_blob_pools = std::collections::HashMap::new();
+    // We'll determine actors by looking in the data/repo dir for .db files.
+    let mut actor_dbs = tokio::fs::read_dir(&config.repo.path)
+        .await
+        .context("failed to read repo directory")?;
+    while let Some(entry) = actor_dbs
+        .next_entry()
+        .await
+        .context("failed to read repo dir")?
+    {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("db") {
+            let did = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .context("failed to get actor DID")?;
+            let did = Did::from_str(did).expect("should be able to parse actor DID");
 
+            // Create a new database connection manager and pool for the actor.
+            // The path for the SQLite connection needs to look like "sqlite://data/repo/<actor>.db"
+            let path_repo = format!("sqlite://{}", path.display());
+            let actor_repo_pool =
+                establish_pool(&path_repo).context("failed to create database connection pool")?;
+            // Create a new database connection manager and pool for the actor blobs.
+            // The path for the SQLite connection needs to look like "sqlite://data/blob/<actor>.db"
+            let path_blob = path_repo.replace("repo", "blob");
+            let actor_blob_pool =
+                establish_pool(&path_blob).context("failed to create database connection pool")?;
+            actor_pools.insert(
+                did.to_string(),
+                ActorPools {
+                    repo: actor_repo_pool,
+                    blob: actor_blob_pool,
+                },
+            );
+        }
+    }
     // Apply pending migrations
-    let conn = &mut db
-        .get()
-        .context("failed to get database connection for migrations")?;
-    conn.run_pending_migrations(MIGRATIONS)
-        .expect("should be able to run migrations");
+    // let conn = pool.get().await?;
+    // conn.run_pending_migrations(MIGRATIONS)
+    //     .expect("should be able to run migrations");
 
     let (_fh, fhp) = firehose::spawn(client.clone(), config.clone());
 
@@ -422,7 +471,8 @@ async fn run() -> anyhow::Result<()> {
         .with_state(AppState {
             cred,
             config: config.clone(),
-            db: db.clone(),
+            db: pool.clone(),
+            db_actors: actor_pools.clone(),
             client: client.clone(),
             simple_client,
             firehose: fhp,
@@ -435,7 +485,7 @@ async fn run() -> anyhow::Result<()> {
 
     // Determine whether or not this was the first startup (i.e. no accounts exist and no invite codes were created).
     // If so, create an invite code and share it via the console.
-    let conn = &mut db.get().context("failed to get database connection")?;
+    let conn = pool.get().await.context("failed to get db connection")?;
 
     #[derive(QueryableByName)]
     struct TotalCount {
@@ -443,11 +493,19 @@ async fn run() -> anyhow::Result<()> {
         total_count: i32,
     }
 
-    let result = diesel::sql_query(
-        "SELECT (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites) AS total_count",
-    )
-    .get_result::<TotalCount>(conn)
-    .context("failed to query database")?;
+    // let result = diesel::sql_query(
+    //     "SELECT (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites) AS total_count",
+    // )
+    // .get_result::<TotalCount>(conn)
+    // .context("failed to query database")?;
+    let result = conn.interact(move |conn| {
+        diesel::sql_query(
+            "SELECT (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites) AS total_count",
+        )
+        .get_result::<TotalCount>(conn)
+    })
+    .await
+    .expect("should be able to query database")?;
 
     let c = result.total_count;
 
@@ -455,12 +513,16 @@ async fn run() -> anyhow::Result<()> {
     if c == 0 {
         let uuid = Uuid::new_v4().to_string();
 
-        diesel::sql_query(
+        let uuid_clone = uuid.clone();
+        conn.interact(move |conn| {
+            diesel::sql_query(
             "INSERT INTO invites (id, did, count, created_at) VALUES (?, NULL, 1, datetime('now'))",
         )
-        .bind::<diesel::sql_types::Text, _>(uuid.clone())
+        .bind::<diesel::sql_types::Text, _>(uuid_clone)
         .execute(conn)
-        .context("failed to create new invite code")?;
+        .context("failed to create new invite code")
+        .expect("should be able to create invite code")
+        });
 
         // N.B: This is a sensitive message, so we're bypassing `tracing` here and
         // logging it directly to console.

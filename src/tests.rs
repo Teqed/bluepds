@@ -222,7 +222,7 @@ impl TestState {
             let opts = SqliteConnectOptions::from_str(&config.db)
                 .context("failed to parse database options")?
                 .create_if_missing(true);
-            let db = SqlitePool::connect_with(opts).await?;
+            let db = SqliteDbConn::connect_with(opts).await?;
 
             sqlx::migrate!()
                 .run(&db)

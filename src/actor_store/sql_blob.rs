@@ -7,9 +7,6 @@
 use anyhow::{Context, Result};
 use cidv10::Cid;
 use diesel::prelude::*;
-use std::sync::Arc;
-
-use crate::db::DbConn;
 
 /// ByteStream implementation for blob data
 pub struct ByteStream {
@@ -27,10 +24,9 @@ impl ByteStream {
 }
 
 /// SQL-based implementation of blob storage
-#[derive(Clone)]
 pub struct BlobStoreSql {
     /// Database connection for metadata
-    pub db: Arc<DbConn>,
+    pub db: deadpool_diesel::Connection<SqliteConnection>,
     /// DID of the actor
     pub did: String,
 }
@@ -61,15 +57,17 @@ table! {
 
 impl BlobStoreSql {
     /// Create a new SQL-based blob store for the given DID
-    pub fn new(did: String, db: Arc<DbConn>) -> Self {
+    pub fn new(did: String, db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
         BlobStoreSql { db, did }
     }
 
-    /// Create a factory function for blob stores
-    pub fn creator(db: Arc<DbConn>) -> Box<dyn Fn(String) -> BlobStoreSql> {
-        let db_clone = db.clone();
-        Box::new(move |did: String| BlobStoreSql::new(did, db_clone.clone()))
-    }
+    // /// Create a factory function for blob stores
+    // pub fn creator(
+    //     db: deadpool_diesel::Connection<SqliteConnection>,
+    // ) -> Box<dyn Fn(String) -> BlobStoreSql> {
+    //     let db_clone = db.clone();
+    //     Box::new(move |did: String| BlobStoreSql::new(did, db_clone.clone()))
+    // }
 
     /// Store a blob temporarily - now just stores permanently with a key returned for API compatibility
     pub async fn put_temp(&self, bytes: Vec<u8>) -> Result<String> {
@@ -109,7 +107,7 @@ impl BlobStoreSql {
 
         // Store directly in the database
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 let data_clone = bytes.clone();
                 let entry = BlobEntry {
                     cid: cid_str.clone(),
@@ -128,7 +126,8 @@ impl BlobStoreSql {
                     .execute(conn)
                     .context("Failed to insert blob data")
             })
-            .await?;
+            .await
+            .expect("Failed to store blob data")?;
 
         Ok(())
     }
@@ -146,7 +145,7 @@ impl BlobStoreSql {
 
         // Update the quarantine flag in the database
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 diesel::update(blobs::table)
                     .filter(blobs::cid.eq(&cid_str))
                     .filter(blobs::did.eq(&did_clone))
@@ -154,7 +153,8 @@ impl BlobStoreSql {
                     .execute(conn)
                     .context("Failed to quarantine blob")
             })
-            .await?;
+            .await
+            .expect("Failed to update quarantine status")?;
 
         Ok(())
     }
@@ -166,7 +166,7 @@ impl BlobStoreSql {
 
         // Update the quarantine flag in the database
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 diesel::update(blobs::table)
                     .filter(blobs::cid.eq(&cid_str))
                     .filter(blobs::did.eq(&did_clone))
@@ -174,7 +174,8 @@ impl BlobStoreSql {
                     .execute(conn)
                     .context("Failed to unquarantine blob")
             })
-            .await?;
+            .await
+            .expect("Failed to update unquarantine status")?;
 
         Ok(())
     }
@@ -189,7 +190,7 @@ impl BlobStoreSql {
         // Get the blob data from the database
         let blob_data = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 blobs
                     .filter(self::blobs::cid.eq(&cid_str))
                     .filter(did.eq(&did_clone))
@@ -199,7 +200,8 @@ impl BlobStoreSql {
                     .optional()
                     .context("Failed to query blob data")
             })
-            .await?;
+            .await
+            .expect("Failed to get blob data")?;
 
         if let Some(bytes) = blob_data {
             Ok(ByteStream::new(bytes))
@@ -227,14 +229,15 @@ impl BlobStoreSql {
 
         // Delete from database
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 diesel::delete(blobs)
                     .filter(self::blobs::cid.eq(&blob_cid))
                     .filter(did.eq(&did_clone))
                     .execute(conn)
                     .context("Failed to delete blob")
             })
-            .await?;
+            .await
+            .expect("Failed to delete blob")?;
 
         Ok(())
     }
@@ -248,14 +251,15 @@ impl BlobStoreSql {
 
         // Delete all blobs in one operation
         self.db
-            .run(move |conn| {
+            .interact(move |conn| {
                 diesel::delete(blobs)
                     .filter(self::blobs::cid.eq_any(cid_strings))
                     .filter(did.eq(&did_clone))
                     .execute(conn)
                     .context("Failed to delete multiple blobs")
             })
-            .await?;
+            .await
+            .expect("Failed to delete multiple blobs")?;
 
         Ok(())
     }
@@ -269,7 +273,7 @@ impl BlobStoreSql {
 
         let exists = self
             .db
-            .run(move |conn| {
+            .interact(move |conn| {
                 diesel::select(diesel::dsl::exists(
                     blobs
                         .filter(self::blobs::cid.eq(&cid_str))
@@ -278,7 +282,8 @@ impl BlobStoreSql {
                 .get_result::<bool>(conn)
                 .context("Failed to check if blob exists")
             })
-            .await?;
+            .await
+            .expect("Failed to check blob existence")?;
 
         Ok(exists)
     }

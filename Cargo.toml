@@ -252,6 +252,7 @@ async-trait = "0.1.88"
 lazy_static = "1.5.0"
 secp256k1 = "0.28.2"
 dotenvy = "0.15.7"
+deadpool-diesel = { version = "0.6.1", features = ["serde", "sqlite", "tracing"] }
 [dependencies.rocket_sync_db_pools]
 version = "=0.1.0"
 features = ["diesel_sqlite_pool"]

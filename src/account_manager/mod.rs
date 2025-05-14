@@ -30,18 +30,23 @@ use crate::db::DbConn;
 
 #[derive(Clone, Debug)]
 pub struct AccountManager {
-    pub db: Arc<DbConn>,
+    pub db: deadpool_diesel::Connection<SqliteConnection>,
 }
 
-pub type AccountManagerCreator = Box<dyn Fn(Arc<DbConn>) -> AccountManager + Send + Sync>;
+pub type AccountManagerCreator =
+    Box<dyn Fn(deadpool_diesel::Connection<SqliteConnection>) -> AccountManager + Send + Sync>;
 
 impl AccountManager {
-    pub fn new(db: Arc<DbConn>) -> Self {
+    pub fn new(db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
         Self { db }
     }
 
     pub fn creator() -> AccountManagerCreator {
-        Box::new(move |db: Arc<DbConn>| -> AccountManager { AccountManager::new(db) })
+        Box::new(
+            move |db: deadpool_diesel::Connection<SqliteConnection>| -> AccountManager {
+                AccountManager::new(db)
+            },
+        )
     }
 
     pub async fn get_account(
