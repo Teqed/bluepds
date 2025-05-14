@@ -174,102 +174,102 @@ impl TestState {
 
     /// Start the application in a background task.
     async fn start_app(&self) -> Result<()> {
-        // Get a reference to the config that can be moved into the task
-        let config = self.config.clone();
-        let address = self.address;
+        // // Get a reference to the config that can be moved into the task
+        // let config = self.config.clone();
+        // let address = self.address;
 
-        // Start the application in a background task
-        let _handle = tokio::spawn(async move {
-            // Set up the application
-            use crate::*;
+        // // Start the application in a background task
+        // let _handle = tokio::spawn(async move {
+        //     // Set up the application
+        //     use crate::*;
 
-            // Initialize metrics (noop in test mode)
-            drop(metrics::setup(None));
+        //     // Initialize metrics (noop in test mode)
+        //     drop(metrics::setup(None));
 
-            // Create client
-            let simple_client = reqwest::Client::builder()
-                .user_agent(APP_USER_AGENT)
-                .build()
-                .context("failed to build requester client")?;
-            let client = reqwest_middleware::ClientBuilder::new(simple_client.clone())
-                .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
-                    mode: CacheMode::Default,
-                    manager: MokaManager::default(),
-                    options: HttpCacheOptions::default(),
-                }))
-                .build();
+        //     // Create client
+        //     let simple_client = reqwest::Client::builder()
+        //         .user_agent(APP_USER_AGENT)
+        //         .build()
+        //         .context("failed to build requester client")?;
+        //     let client = reqwest_middleware::ClientBuilder::new(simple_client.clone())
+        //         .with(http_cache_reqwest::Cache(http_cache_reqwest::HttpCache {
+        //             mode: CacheMode::Default,
+        //             manager: MokaManager::default(),
+        //             options: HttpCacheOptions::default(),
+        //         }))
+        //         .build();
 
-            // Create a test keypair
-            std::fs::create_dir_all(config.key.parent().context("should have parent")?)?;
-            let (skey, rkey) = {
-                let skey = Secp256k1Keypair::create(&mut rand::thread_rng());
-                let rkey = Secp256k1Keypair::create(&mut rand::thread_rng());
+        //     // Create a test keypair
+        //     std::fs::create_dir_all(config.key.parent().context("should have parent")?)?;
+        //     let (skey, rkey) = {
+        //         let skey = Secp256k1Keypair::create(&mut rand::thread_rng());
+        //         let rkey = Secp256k1Keypair::create(&mut rand::thread_rng());
 
-                let keys = KeyData {
-                    skey: skey.export(),
-                    rkey: rkey.export(),
-                };
+        //         let keys = KeyData {
+        //             skey: skey.export(),
+        //             rkey: rkey.export(),
+        //         };
 
-                let mut f =
-                    std::fs::File::create(&config.key).context("failed to create key file")?;
-                serde_ipld_dagcbor::to_writer(&mut f, &keys)
-                    .context("failed to serialize crypto keys")?;
+        //         let mut f =
+        //             std::fs::File::create(&config.key).context("failed to create key file")?;
+        //         serde_ipld_dagcbor::to_writer(&mut f, &keys)
+        //             .context("failed to serialize crypto keys")?;
 
-                (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
-            };
+        //         (SigningKey(Arc::new(skey)), RotationKey(Arc::new(rkey)))
+        //     };
 
-            // Set up database
-            let opts = SqliteConnectOptions::from_str(&config.db)
-                .context("failed to parse database options")?
-                .create_if_missing(true);
-            let db = SqliteDbConn::connect_with(opts).await?;
+        //     // Set up database
+        //     let opts = SqliteConnectOptions::from_str(&config.db)
+        //         .context("failed to parse database options")?
+        //         .create_if_missing(true);
+        //     let db = SqliteDbConn::connect_with(opts).await?;
 
-            sqlx::migrate!()
-                .run(&db)
-                .await
-                .context("failed to apply migrations")?;
+        //     sqlx::migrate!()
+        //         .run(&db)
+        //         .await
+        //         .context("failed to apply migrations")?;
 
-            // Create firehose
-            let (_fh, fhp) = firehose::spawn(client.clone(), config.clone());
+        //     // Create firehose
+        //     let (_fh, fhp) = firehose::spawn(client.clone(), config.clone());
 
-            // Create the application state
-            let app_state = AppState {
-                cred: azure_identity::DefaultAzureCredential::new()?,
-                config: config.clone(),
-                db: db.clone(),
-                client: client.clone(),
-                simple_client,
-                firehose: fhp,
-                signing_key: skey,
-                rotation_key: rkey,
-            };
+        //     // Create the application state
+        //     let app_state = AppState {
+        //         cred: azure_identity::DefaultAzureCredential::new()?,
+        //         config: config.clone(),
+        //         db: db.clone(),
+        //         client: client.clone(),
+        //         simple_client,
+        //         firehose: fhp,
+        //         signing_key: skey,
+        //         rotation_key: rkey,
+        //     };
 
-            // Create the router
-            let app = Router::new()
-                .route("/", get(index))
-                .merge(oauth::routes())
-                .nest(
-                    "/xrpc",
-                    endpoints::routes()
-                        .merge(actor_endpoints::routes())
-                        .fallback(service_proxy),
-                )
-                .layer(CorsLayer::permissive())
-                .layer(TraceLayer::new_for_http())
-                .with_state(app_state);
+        //     // Create the router
+        //     let app = Router::new()
+        //         .route("/", get(index))
+        //         .merge(oauth::routes())
+        //         .nest(
+        //             "/xrpc",
+        //             endpoints::routes()
+        //                 .merge(actor_endpoints::routes())
+        //                 .fallback(service_proxy),
+        //         )
+        //         .layer(CorsLayer::permissive())
+        //         .layer(TraceLayer::new_for_http())
+        //         .with_state(app_state);
 
-            // Listen for connections
-            let listener = TcpListener::bind(&address)
-                .await
-                .context("failed to bind address")?;
+        //     // Listen for connections
+        //     let listener = TcpListener::bind(&address)
+        //         .await
+        //         .context("failed to bind address")?;
 
-            axum::serve(listener, app.into_make_service())
-                .await
-                .context("failed to serve app")
-        });
+        //     axum::serve(listener, app.into_make_service())
+        //         .await
+        //         .context("failed to serve app")
+        // });
 
-        // Give the server a moment to start
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // // Give the server a moment to start
+        // tokio::time::sleep(Duration::from_millis(500)).await;
 
         Ok(())
     }

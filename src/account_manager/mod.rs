@@ -1,13 +1,17 @@
+//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/account_manager/mod.rs
+//! blacksky-algorithms/rsky is licensed under the Apache License 2.0
+//!
+//! Modified for SQLite backend
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::offset::Utc as UtcOffset;
 use cidv10::Cid;
 use futures::try_join;
+use helpers::{account, auth, email_token, invite, password};
 use rsky_common::RFC3339_VARIANT;
 use rsky_common::time::{HOUR, from_micros_to_str, from_str_to_micros};
 use rsky_lexicon::com::atproto::admin::StatusAttr;
 use rsky_lexicon::com::atproto::server::{AccountCodes, CreateAppPasswordOutput};
-use rsky_pds::account_manager::CreateAccountOpts;
 use rsky_pds::account_manager::helpers::account::{
     AccountStatus, ActorAccount, AvailabilityFlags, GetAccountAdminStatusOutput,
 };
@@ -17,35 +21,67 @@ use rsky_pds::account_manager::helpers::auth::{
 use rsky_pds::account_manager::helpers::invite::CodeDetail;
 use rsky_pds::account_manager::helpers::password::UpdateUserPasswordOpts;
 use rsky_pds::account_manager::helpers::repo;
-use rsky_pds::account_manager::helpers::{account, auth, email_token, invite, password};
+use rsky_pds::account_manager::{
+    ConfirmEmailOpts, CreateAccountOpts, DisableInviteCodesOpts, ResetPasswordOpts,
+    UpdateAccountPasswordOpts, UpdateEmailOpts,
+};
 use rsky_pds::auth_verifier::AuthScope;
 use rsky_pds::models::models::EmailTokenPurpose;
 use secp256k1::{Keypair, Secp256k1, SecretKey};
 use std::collections::BTreeMap;
 use std::env;
-use std::sync::Arc;
 use std::time::SystemTime;
 
-use crate::db::DbConn;
-
-#[derive(Clone, Debug)]
-pub struct AccountManager {
-    pub db: deadpool_diesel::Connection<SqliteConnection>,
+pub(crate) mod helpers {
+    pub mod account;
+    pub mod auth;
+    pub mod email_token;
+    pub mod invite;
+    pub mod password;
+    pub mod repo;
 }
 
-pub type AccountManagerCreator =
-    Box<dyn Fn(deadpool_diesel::Connection<SqliteConnection>) -> AccountManager + Send + Sync>;
+#[derive(Clone)]
+pub struct AccountManager {
+    pub db: deadpool_diesel::Pool<
+        deadpool_diesel::Manager<diesel::SqliteConnection>,
+        deadpool_diesel::sqlite::Object,
+    >,
+}
+impl std::fmt::Debug for AccountManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AccountManager").finish()
+    }
+}
+
+pub type AccountManagerCreator = Box<
+    dyn Fn(
+            deadpool_diesel::Pool<
+                deadpool_diesel::Manager<diesel::SqliteConnection>,
+                deadpool_diesel::sqlite::Object,
+            >,
+        ) -> AccountManager
+        + Send
+        + Sync,
+>;
 
 impl AccountManager {
-    pub fn new(db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
+    pub fn new(
+        db: deadpool_diesel::Pool<
+            deadpool_diesel::Manager<diesel::SqliteConnection>,
+            deadpool_diesel::sqlite::Object,
+        >,
+    ) -> Self {
         Self { db }
     }
 
     pub fn creator() -> AccountManagerCreator {
         Box::new(
-            move |db: deadpool_diesel::Connection<SqliteConnection>| -> AccountManager {
-                AccountManager::new(db)
-            },
+            move |db: deadpool_diesel::Pool<
+                deadpool_diesel::Manager<diesel::SqliteConnection>,
+                deadpool_diesel::sqlite::Object,
+            >|
+                  -> AccountManager { AccountManager::new(db) },
         )
     }
 
