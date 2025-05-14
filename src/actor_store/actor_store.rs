@@ -25,7 +25,8 @@ use std::sync::Arc;
 use std::{env, fmt};
 use tokio::sync::RwLock;
 
-use super::ActorDb;
+use crate::db::DbConn;
+
 use super::blob::BlobReader;
 use super::preference::PreferenceReader;
 use super::record::RecordReader;
@@ -66,7 +67,8 @@ pub struct ActorStore {
 // Combination of RepoReader/Transactor, BlobReader/Transactor, SqlRepoReader/Transactor
 impl ActorStore {
     /// Concrete reader of an individual repo (hence BlobStoreSql which takes `did` param)
-    pub fn new(did: String, blobstore: BlobStoreSql, db: ActorDb) -> Self {
+    pub fn new(did: String, blobstore: BlobStoreSql, db: DbConn) -> Self {
+        let db = Arc::new(db);
         ActorStore {
             storage: Arc::new(RwLock::new(SqlRepoReader::new(
                 did.clone(),
@@ -428,7 +430,7 @@ impl ActorStore {
     pub async fn destroy(&mut self) -> Result<()> {
         let did: String = self.did.clone();
         let storage_guard = self.storage.read().await;
-        let db: ActorDb = storage_guard.db.clone();
+        let db: Arc<DbConn> = storage_guard.db.clone();
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
         let blob_rows: Vec<String> = db
@@ -462,7 +464,7 @@ impl ActorStore {
         }
         let did: String = self.did.clone();
         let storage_guard = self.storage.read().await;
-        let db: ActorDb = storage_guard.db.clone();
+        let db: Arc<DbConn> = storage_guard.db.clone();
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
         let cid_strs: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();

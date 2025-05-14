@@ -4,10 +4,11 @@
 //!
 //! Modified for SQLite backend
 
-use anyhow::{Result, bail};
+use std::sync::Arc;
+
+use anyhow::{Error, Result, bail};
 use cidv10::Cid;
 use diesel::dsl::{count_distinct, exists, not};
-use diesel::result::Error;
 use diesel::sql_types::{Integer, Nullable, Text};
 use diesel::*;
 use futures::stream::{self, StreamExt};
@@ -30,18 +31,18 @@ use rsky_repo::error::BlobError;
 use rsky_repo::types::{PreparedBlobRef, PreparedWrite};
 use sha2::Digest;
 
-use super::ActorDb;
 use super::sql_blob::BlobStoreSql;
+use crate::db::DbConn;
 
 pub struct BlobReader {
     pub blobstore: BlobStoreSql,
     pub did: String,
-    pub db: ActorDb,
+    pub db: Arc<DbConn>,
 }
 
 // Basically handles getting blob records from db
 impl BlobReader {
-    pub fn new(blobstore: BlobStoreSql, db: ActorDb) -> Self {
+    pub fn new(blobstore: BlobStoreSql, db: Arc<DbConn>) -> Self {
         // BlobReader {
         //     did: blobstore.bucket.clone(),
         //     blobstore,

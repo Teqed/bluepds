@@ -1,4 +1,4 @@
-//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/actor_store/repo/sql_repo.rs
+//! Based on https://github.com/blacksky-algorithms/rsky/blob/main/rsky-pds/src/actor_store/record/mod.rs
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
@@ -25,12 +25,12 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use super::ActorDb;
+use crate::db::DbConn;
 
 #[derive(Clone, Debug)]
 pub struct SqlRepoReader {
     pub cache: Arc<RwLock<BlockMap>>,
-    pub db: ActorDb,
+    pub db: Arc<DbConn>,
     pub root: Option<Cid>,
     pub rev: Option<String>,
     pub now: String,
@@ -43,7 +43,7 @@ impl ReadableBlockstore for SqlRepoReader {
         cid: &'a Cid,
     ) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>>> + Send + Sync + 'a>> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
         let cid = cid.clone();
 
         Box::pin(async move {
@@ -94,7 +94,7 @@ impl ReadableBlockstore for SqlRepoReader {
         cids: Vec<Cid>,
     ) -> Pin<Box<dyn Future<Output = Result<BlocksAndMissing>> + Send + Sync + 'a>> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
 
         Box::pin(async move {
             use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
@@ -189,7 +189,7 @@ impl RepoStorage for SqlRepoReader {
         rev: String,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
         let bytes_cloned = bytes.clone();
         Box::pin(async move {
             use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
@@ -220,7 +220,7 @@ impl RepoStorage for SqlRepoReader {
         rev: String,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
 
         Box::pin(async move {
             use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
@@ -270,7 +270,7 @@ impl RepoStorage for SqlRepoReader {
         is_create: Option<bool>,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
         let now: String = self.now.clone();
 
         Box::pin(async move {
@@ -323,7 +323,7 @@ impl RepoStorage for SqlRepoReader {
 
 // Basically handles getting ipld blocks from db
 impl SqlRepoReader {
-    pub fn new(did: String, now: Option<String>, db: ActorDb) -> Self {
+    pub fn new(did: String, now: Option<String>, db: Arc<DbConn>) -> Self {
         let now = now.unwrap_or_else(rsky_common::now);
         SqlRepoReader {
             cache: Arc::new(RwLock::new(BlockMap::new())),
@@ -370,7 +370,7 @@ impl SqlRepoReader {
         cursor: &Option<CidAndRev>,
     ) -> Result<Vec<RepoBlock>> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
         let since = since.clone();
         let cursor = cursor.clone();
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
@@ -408,7 +408,7 @@ impl SqlRepoReader {
 
     pub async fn count_blocks(&self) -> Result<i64> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         let res = db
@@ -428,10 +428,10 @@ impl SqlRepoReader {
     /// Proactively cache all blocks from a particular commit (to prevent multiple roundtrips)
     pub async fn cache_rev(&mut self, rev: String) -> Result<()> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-        let res: Vec<(String, Vec<u8>)> = db
+        let result: Vec<(String, Vec<u8>)> = db
             .run(move |conn| {
                 RepoBlockSchema::repo_block
                     .filter(RepoBlockSchema::did.eq(did))
@@ -441,7 +441,7 @@ impl SqlRepoReader {
                     .get_results::<(String, Vec<u8>)>(conn)
             })
             .await?;
-        for row in res {
+        for row in result {
             let mut cache_guard = self.cache.write().await;
             cache_guard.set(Cid::from_str(&row.0)?, row.1)
         }
@@ -453,7 +453,7 @@ impl SqlRepoReader {
             return Ok(());
         }
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         let cid_strings: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();
@@ -469,7 +469,7 @@ impl SqlRepoReader {
 
     pub async fn get_root_detailed(&self) -> Result<CidAndRev> {
         let did: String = self.did.clone();
-        let db: ActorDb = self.db.clone();
+        let db: Arc<DbConn> = self.db.clone();
         use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
 
         let res = db

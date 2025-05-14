@@ -1,10 +1,10 @@
-use std::{path::PathBuf, str::FromStr as _};
+use std::{path::PathBuf, str::FromStr as _, sync::Arc};
 
 use anyhow::Result;
 use cidv10::Cid;
 use rsky_common::get_random_str;
 
-use crate::db::DatabaseConnection;
+use crate::db::DbConn;
 
 /// Type for stream of blob data
 pub type BlobStream = Box<dyn std::io::Read + Send>;
@@ -12,7 +12,7 @@ pub type BlobStream = Box<dyn std::io::Read + Send>;
 /// Placeholder implementation for blob store
 #[derive(Clone)]
 pub(crate) struct BlobStoreSql {
-    client: DatabaseConnection,
+    client: Arc<DbConn>,
     path: PathBuf,
 }
 

@@ -4,6 +4,8 @@
 //!
 //! Modified for SQLite backend
 
+use std::sync::Arc;
+
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_lexicon::app::bsky::actor::RefPreferences;
@@ -12,15 +14,15 @@ use rsky_pds::actor_store::preference::util::pref_in_scope;
 use rsky_pds::auth_verifier::AuthScope;
 use rsky_pds::models::AccountPref;
 
-use super::ActorDb;
+use crate::db::DbConn;
 
 pub struct PreferenceReader {
     pub did: String,
-    pub db: ActorDb,
+    pub db: Arc<DbConn>,
 }
 
 impl PreferenceReader {
-    pub fn new(did: String, db: ActorDb) -> Self {
+    pub fn new(did: String, db: Arc<DbConn>) -> Self {
         PreferenceReader { did, db }
     }
 

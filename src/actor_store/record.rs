@@ -17,20 +17,21 @@ use rsky_repo::util::cbor_to_lex_record;
 use rsky_syntax::aturi::AtUri;
 use std::env;
 use std::str::FromStr;
+use std::sync::Arc;
 
-use crate::actor_store::db::ActorDb;
+use crate::db::DbConn;
 
 /// Combined handler for record operations with both read and write capabilities.
 pub(crate) struct RecordReader {
     /// Database connection.
-    pub db: ActorDb,
+    pub db: Arc<DbConn>,
     /// DID of the actor.
     pub did: String,
 }
 
 impl RecordReader {
     /// Create a new record handler.
-    pub(crate) fn new(did: String, db: ActorDb) -> Self {
+    pub(crate) fn new(did: String, db: Arc<DbConn>) -> Self {
         Self { did, db }
     }
 
@@ -292,7 +293,7 @@ impl RecordReader {
         let record_backlinks = get_backlinks(uri, record)?;
         let conflicts: Vec<Vec<Record>> = stream::iter(record_backlinks)
             .then(|backlink| async move {
-                Ok::<Vec<Record>, Error>(
+                Ok::<Vec<Record>, anyhow::Error>(
                     self.get_record_backlinks(
                         uri.get_collection(),
                         backlink.path,
