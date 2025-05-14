@@ -20,9 +20,9 @@ use rsky_repo::types::{
 use rsky_repo::util::format_data_key;
 use rsky_syntax::aturi::AtUri;
 use secp256k1::{Keypair, Secp256k1, SecretKey};
-use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::{env, fmt};
 use tokio::sync::RwLock;
 
 use super::ActorDb;
@@ -40,6 +40,21 @@ enum FormatCommitError {
     MissingRepoRoot(String),
 }
 
+impl fmt::Display for FormatCommitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BadRecordSwap(record) => write!(f, "BadRecordSwapError: `{:?}`", record),
+            Self::RecordSwapMismatch(record) => {
+                write!(f, "BadRecordSwapError: current record is `{:?}`", record)
+            }
+            Self::BadCommitSwap(cid) => write!(f, "BadCommitSwapError: {}", cid),
+            Self::MissingRepoRoot(did) => write!(f, "No repo root found for `{}`", did),
+        }
+    }
+}
+
+impl std::error::Error for FormatCommitError {}
+
 pub struct ActorStore {
     pub did: String,
     pub storage: Arc<RwLock<SqlRepoReader>>, // get ipld blocks from db
@@ -52,7 +67,6 @@ pub struct ActorStore {
 impl ActorStore {
     /// Concrete reader of an individual repo (hence BlobStoreSql which takes `did` param)
     pub fn new(did: String, blobstore: BlobStoreSql, db: ActorDb) -> Self {
-        let db = Arc::new(db);
         ActorStore {
             storage: Arc::new(RwLock::new(SqlRepoReader::new(
                 did.clone(),

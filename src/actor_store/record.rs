@@ -4,8 +4,9 @@
 //!
 //! Modified for SQLite backend
 
-use anyhow::{Error, Result, bail};
+use anyhow::{Result, bail};
 use cidv10::Cid;
+use diesel::result::Error;
 use diesel::*;
 use futures::stream::{self, StreamExt};
 use rsky_lexicon::com::atproto::admin::StatusAttr;

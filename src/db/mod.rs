@@ -4,6 +4,7 @@ use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 use diesel::sqlite::Sqlite;
 use diesel::*;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
+use std::env;
 use std::path::Path;
 use std::time::Duration;
 
@@ -13,6 +14,25 @@ pub type SqlitePooledConnection = PooledConnection<ConnectionManager<SqliteConne
 
 /// Database type for all queries
 pub type DbType = Sqlite;
+
+#[tracing::instrument(skip_all)]
+pub async fn establish_connection_for_sequencer() -> Result<DatabaseConnection> {
+    let database_url = env::var("BLUEPDS_DB").unwrap_or("sqlite://data/sqlite.db".into());
+    let pragmas = Some(
+        &[
+            ("journal_mode", "WAL"),
+            ("synchronous", "NORMAL"),
+            ("foreign_keys", "ON"),
+        ][..],
+    );
+    let db = DatabaseConnection::new(&database_url, pragmas)
+        .await
+        .context("Failed to initialize the actor database")?;
+    db.ensure_wal().await?;
+    db.run_migrations()
+        .context("Failed to run migrations on the actor database")?;
+    Ok(db)
+}
 
 /// Database connection wrapper
 #[derive(Clone, Debug)]

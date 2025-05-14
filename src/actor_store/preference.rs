@@ -10,17 +10,17 @@ use rsky_lexicon::app::bsky::actor::RefPreferences;
 use rsky_pds::actor_store::preference::pref_match_namespace;
 use rsky_pds::actor_store::preference::util::pref_in_scope;
 use rsky_pds::auth_verifier::AuthScope;
-use rsky_pds::db::DbConn;
 use rsky_pds::models::AccountPref;
-use std::sync::Arc;
+
+use super::ActorDb;
 
 pub struct PreferenceReader {
     pub did: String,
-    pub db: Arc<DbConn>,
+    pub db: ActorDb,
 }
 
 impl PreferenceReader {
-    pub fn new(did: String, db: Arc<DbConn>) -> Self {
+    pub fn new(did: String, db: ActorDb) -> Self {
         PreferenceReader { did, db }
     }
 
