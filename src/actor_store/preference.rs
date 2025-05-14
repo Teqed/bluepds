@@ -1,24 +1,15 @@
 //! Preference handling for actor store.
 
-use anyhow::{Context as _, Result, bail};
-use diesel::prelude::*;
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
-use std::sync::Arc;
+use anyhow::{Result, bail};
+use diesel::*;
+use rsky_lexicon::app::bsky::actor::RefPreferences;
+use rsky_pds::{
+    actor_store::preference::{pref_match_namespace, util::pref_in_scope},
+    auth_verifier::AuthScope,
+    models::AccountPref,
+};
 
 use crate::actor_store::db::ActorDb;
-
-/// Constants for preference-related operations
-const FULL_ACCESS_ONLY_PREFS: &[&str] = &["app.bsky.actor.defs#personalDetailsPref"];
-
-/// User preference with type information.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AccountPreference {
-    /// Type of the preference.
-    pub r#type: String,
-    /// Preference data as JSON.
-    pub value: JsonValue,
-}
 
 /// Handler for preference operations with both read and write capabilities.
 pub(crate) struct PreferenceHandler {
@@ -30,155 +21,127 @@ pub(crate) struct PreferenceHandler {
 
 impl PreferenceHandler {
     /// Create a new preference handler.
-    pub(crate) fn new(db: ActorDb, did: String) -> Self {
+    pub(crate) fn new(did: String, db: ActorDb) -> Self {
         Self { db, did }
     }
 
     /// Get preferences for a namespace.
-    pub(crate) async fn get_preferences(
+    pub async fn get_preferences(
         &self,
-        namespace: Option<&str>,
-        scope: &str,
-    ) -> Result<Vec<AccountPreference>> {
-        use rsky_pds::schema::pds::account_pref::dsl::*;
+        namespace: Option<String>,
+        scope: AuthScope,
+    ) -> Result<Vec<RefPreferences>> {
+        use rsky_pds::schema::pds::account_pref::dsl as AccountPrefSchema;
 
         let did = self.did.clone();
-        let namespace_clone = namespace.map(|ns| ns.to_string());
-        let scope_clone = scope.to_string();
-
-        let prefs_res = self
-            .db
-            .run(move |conn| {
-                let prefs = account_pref
-                    .filter(did.eq(&did))
-                    .order(id.asc())
-                    .load::<rsky_pds::models::AccountPref>(conn)
-                    .context("Failed to fetch preferences")?;
-
-                Ok::<Vec<rsky_pds::models::AccountPref>, diesel::result::Error>(prefs)
-            })
-            .await?;
-
-        // Filter preferences based on namespace and scope
-        let filtered_prefs = prefs_res
-            .into_iter()
-            .filter(|pref| {
-                namespace_clone
-                    .as_ref()
-                    .map_or(true, |ns| pref_match_namespace(ns, &pref.name))
-            })
-            .filter(|pref| pref_in_scope(scope, &pref.name))
-            .map(|pref| -> Result<AccountPreference> {
-                let value_json = match pref.value_json {
-                    Some(json) => serde_json::from_str(&json)
-                        .context(format!("Failed to parse preference JSON for {}", pref.name))?,
-                    None => bail!("Preference JSON is null for {}", pref.name),
-                };
-
-                Ok(AccountPreference {
-                    r#type: pref.name,
-                    value: value_json,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        Ok(filtered_prefs)
-    }
-
-    /// Put preferences for a namespace.
-    pub(crate) async fn put_preferences(
-        &self,
-        values: Vec<AccountPreference>,
-        namespace: &str,
-        scope: &str,
-    ) -> Result<()> {
-        // Validate all preferences match the namespace
-        if !values
-            .iter()
-            .all(|value| pref_match_namespace(namespace, &value.r#type))
-        {
-            bail!("Some preferences are not in the {} namespace", namespace);
-        }
-
-        // Validate scope permissions
-        let not_in_scope = values
-            .iter()
-            .filter(|val| !pref_in_scope(scope, &val.r#type))
-            .collect::<Vec<_>>();
-
-        if !not_in_scope.is_empty() {
-            bail!("Do not have authorization to set preferences");
-        }
-
-        let did = self.did.clone();
-        let namespace_str = namespace.to_string();
-        let scope_str = scope.to_string();
-
-        // Convert preferences to serialized form
-        let serialized_prefs = values
-            .into_iter()
-            .map(|pref| -> Result<(String, String)> {
-                let json = serde_json::to_string(&pref.value)
-                    .context("Failed to serialize preference value")?;
-                Ok((pref.r#type, json))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
-        // Execute transaction
         self.db
-            .transaction(move |conn| {
-                use rsky_pds::schema::pds::account_pref::dsl::*;
-
-                // Find all preferences in the namespace
-                let namespace_pattern = format!("{}%", namespace_str);
-                let all_prefs = account_pref
-                    .filter(did.eq(&did))
-                    .filter(name.eq(&namespace_str).or(name.like(&namespace_pattern)))
-                    .load::<rsky_pds::models::AccountPref>(conn)
-                    .context("Failed to fetch preferences")?;
-
-                // Filter to those in scope
-                let all_pref_ids_in_namespace = all_prefs
-                    .iter()
-                    .filter(|pref| pref_match_namespace(&namespace_str, &pref.name))
-                    .filter(|pref| pref_in_scope(&scope_str, &pref.name))
-                    .map(|pref| pref.id)
-                    .collect::<Vec<i32>>();
-
-                // Delete existing preferences in namespace
-                if !all_pref_ids_in_namespace.is_empty() {
-                    diesel::delete(account_pref)
-                        .filter(id.eq_any(all_pref_ids_in_namespace))
-                        .execute(conn)
-                        .context("Failed to delete existing preferences")?;
-                }
-
-                // Insert new preferences
-                if !serialized_prefs.is_empty() {
-                    for (pref_type, pref_json) in serialized_prefs {
-                        diesel::insert_into(account_pref)
-                            .values((
-                                did.eq(&did),
-                                name.eq(&pref_type),
-                                valueJson.eq(Some(&pref_json)),
-                            ))
-                            .execute(conn)
-                            .context("Failed to insert preference")?;
-                    }
-                }
-
-                Ok(())
+            .run(move |conn| {
+                let prefs_res = AccountPrefSchema::account_pref
+                    .filter(AccountPrefSchema::did.eq(&did))
+                    .select(AccountPref::as_select())
+                    .order(AccountPrefSchema::id.asc())
+                    .load(conn)?;
+                let account_prefs = prefs_res
+                    .into_iter()
+                    .filter(|pref| match &namespace {
+                        None => true,
+                        Some(namespace) => pref_match_namespace(namespace, &pref.name),
+                    })
+                    .filter(|pref| pref_in_scope(scope.clone(), pref.name.clone()))
+                    .map(|pref| {
+                        let value_json_res = match pref.value_json {
+                            None => bail!("preferences json null for {}", pref.name),
+                            Some(value_json) => serde_json::from_str::<RefPreferences>(&value_json),
+                        };
+                        match value_json_res {
+                            Err(error) => bail!(error.to_string()),
+                            Ok(value_json) => Ok(value_json),
+                        }
+                    })
+                    .collect::<Result<Vec<RefPreferences>>>()?;
+                Ok(account_prefs)
             })
             .await
     }
-}
 
-/// Check if a preference matches a namespace.
-pub(super) fn pref_match_namespace(namespace: &str, fullname: &str) -> bool {
-    fullname == namespace || fullname.starts_with(&format!("{}.", namespace))
-}
+    /// Put preferences for a namespace.
+    #[tracing::instrument(skip_all)]
+    pub async fn put_preferences(
+        &self,
+        values: Vec<RefPreferences>,
+        namespace: String,
+        scope: AuthScope,
+    ) -> Result<()> {
+        let did = self.did.clone();
+        self.db
+            .run(move |conn| {
+                match values
+                    .iter()
+                    .all(|value| pref_match_namespace(&namespace, &value.get_type()))
+                {
+                    false => bail!("Some preferences are not in the {namespace} namespace"),
+                    true => {
+                        let not_in_scope = values
+                            .iter()
+                            .filter(|value| !pref_in_scope(scope.clone(), value.get_type()))
+                            .collect::<Vec<&RefPreferences>>();
+                        if !not_in_scope.is_empty() {
+                            tracing::info!(
+                        "@LOG: PreferenceReader::put_preferences() debug scope: {:?}, values: {:?}",
+                        scope,
+                        values
+                    );
+                            bail!("Do not have authorization to set preferences.");
+                        }
+                        // get all current prefs for user and prep new pref rows
+                        use rsky_pds::schema::pds::account_pref::dsl as AccountPrefSchema;
+                        let all_prefs = AccountPrefSchema::account_pref
+                            .filter(AccountPrefSchema::did.eq(&did))
+                            .select(AccountPref::as_select())
+                            .load(conn)?;
+                        let put_prefs = values
+                            .into_iter()
+                            .map(|value| {
+                                Ok(AccountPref {
+                                    id: 0,
+                                    name: value.get_type(),
+                                    value_json: Some(serde_json::to_string(&value)?),
+                                })
+                            })
+                            .collect::<Result<Vec<AccountPref>>>()?;
 
-/// Check if a preference is in scope.
-pub(super) fn pref_in_scope(scope: &str, pref_type: &str) -> bool {
-    scope == "access" || !FULL_ACCESS_ONLY_PREFS.contains(&pref_type)
+                        let all_pref_ids_in_namespace = all_prefs
+                            .iter()
+                            .filter(|pref| pref_match_namespace(&namespace, &pref.name))
+                            .filter(|pref| pref_in_scope(scope.clone(), pref.name.clone()))
+                            .map(|pref| pref.id)
+                            .collect::<Vec<i32>>();
+                        // replace all prefs in given namespace
+                        if !all_pref_ids_in_namespace.is_empty() {
+                            delete(AccountPrefSchema::account_pref)
+                                .filter(AccountPrefSchema::id.eq_any(all_pref_ids_in_namespace))
+                                .execute(conn)?;
+                        }
+                        if !put_prefs.is_empty() {
+                            insert_into(AccountPrefSchema::account_pref)
+                                .values(
+                                    put_prefs
+                                        .into_iter()
+                                        .map(|pref| {
+                                            (
+                                                AccountPrefSchema::did.eq(&did),
+                                                AccountPrefSchema::name.eq(pref.name),
+                                                AccountPrefSchema::valueJson.eq(pref.value_json),
+                                            )
+                                        })
+                                        .collect::<Vec<_>>(),
+                                )
+                                .execute(conn)?;
+                        }
+                        Ok(())
+                    }
+                }
+            })
+            .await
+    }
 }
