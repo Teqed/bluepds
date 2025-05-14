@@ -26,7 +26,10 @@ impl ByteStream {
 /// SQL-based implementation of blob storage
 pub struct BlobStoreSql {
     /// Database connection for metadata
-    pub db: deadpool_diesel::Connection<SqliteConnection>,
+    pub db: deadpool_diesel::Pool<
+        deadpool_diesel::Manager<SqliteConnection>,
+        deadpool_diesel::sqlite::Object,
+    >,
     /// DID of the actor
     pub did: String,
 }
@@ -57,13 +60,22 @@ table! {
 
 impl BlobStoreSql {
     /// Create a new SQL-based blob store for the given DID
-    pub fn new(did: String, db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
+    pub fn new(
+        did: String,
+        db: deadpool_diesel::Pool<
+            deadpool_diesel::Manager<SqliteConnection>,
+            deadpool_diesel::sqlite::Object,
+        >,
+    ) -> Self {
         BlobStoreSql { db, did }
     }
 
     // /// Create a factory function for blob stores
     // pub fn creator(
-    //     db: deadpool_diesel::Connection<SqliteConnection>,
+    //     db: deadpool_diesel::Pool<
+    //     deadpool_diesel::Manager<SqliteConnection>,
+    //     deadpool_diesel::sqlite::Object,
+    // >,
     // ) -> Box<dyn Fn(String) -> BlobStoreSql> {
     //     let db_clone = db.clone();
     //     Box::new(move |did: String| BlobStoreSql::new(did, db_clone.clone()))
@@ -107,6 +119,8 @@ impl BlobStoreSql {
 
         // Store directly in the database
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 let data_clone = bytes.clone();
                 let entry = BlobEntry {
@@ -145,6 +159,8 @@ impl BlobStoreSql {
 
         // Update the quarantine flag in the database
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 diesel::update(blobs::table)
                     .filter(blobs::cid.eq(&cid_str))
@@ -166,6 +182,8 @@ impl BlobStoreSql {
 
         // Update the quarantine flag in the database
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 diesel::update(blobs::table)
                     .filter(blobs::cid.eq(&cid_str))
@@ -190,6 +208,8 @@ impl BlobStoreSql {
         // Get the blob data from the database
         let blob_data = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 blobs
                     .filter(self::blobs::cid.eq(&cid_str))
@@ -229,6 +249,8 @@ impl BlobStoreSql {
 
         // Delete from database
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 diesel::delete(blobs)
                     .filter(self::blobs::cid.eq(&blob_cid))
@@ -251,6 +273,8 @@ impl BlobStoreSql {
 
         // Delete all blobs in one operation
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 diesel::delete(blobs)
                     .filter(self::blobs::cid.eq_any(cid_strings))
@@ -273,6 +297,8 @@ impl BlobStoreSql {
 
         let exists = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 diesel::select(diesel::dsl::exists(
                     blobs

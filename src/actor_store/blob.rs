@@ -43,12 +43,21 @@ pub struct BlobReader {
     /// DID of the actor
     pub did: String,
     /// Database connection
-    pub db: deadpool_diesel::Connection<SqliteConnection>,
+    pub db: deadpool_diesel::Pool<
+        deadpool_diesel::Manager<SqliteConnection>,
+        deadpool_diesel::sqlite::Object,
+    >,
 }
 
 impl BlobReader {
     /// Create a new blob reader
-    pub fn new(blobstore: BlobStoreSql, db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
+    pub fn new(
+        blobstore: BlobStoreSql,
+        db: deadpool_diesel::Pool<
+            deadpool_diesel::Manager<SqliteConnection>,
+            deadpool_diesel::sqlite::Object,
+        >,
+    ) -> Self {
         BlobReader {
             did: blobstore.did.clone(),
             blobstore,
@@ -63,6 +72,8 @@ impl BlobReader {
         let did = self.did.clone();
         let found = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 BlobSchema::blob
                     .filter(BlobSchema::did.eq(did))
@@ -106,6 +117,8 @@ impl BlobReader {
         let did = self.did.clone();
         let res = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 let results = RecordBlobSchema::record_blob
                     .filter(RecordBlobSchema::blobCid.eq(cid.to_string()))
@@ -163,7 +176,7 @@ impl BlobReader {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
         let did = self.did.clone();
-        self.db.interact(move |conn| {
+        self.db.get().await?.interact(move |conn| {
             let BlobMetadata {
                 temp_key,
                 size,
@@ -265,6 +278,8 @@ impl BlobReader {
         let uris_clone = uris.clone();
         let deleted_repo_blobs: Vec<models::RecordBlob> = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 RecordBlobSchema::record_blob
                     .filter(RecordBlobSchema::recordUri.eq_any(&uris_clone))
@@ -281,6 +296,8 @@ impl BlobReader {
         // Now perform the delete
         let uris_clone = uris.clone();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 delete(RecordBlobSchema::record_blob)
                     .filter(RecordBlobSchema::recordUri.eq_any(uris_clone))
@@ -300,6 +317,8 @@ impl BlobReader {
         let did_clone = self.did.clone();
         let duplicated_cids: Vec<String> = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 RecordBlobSchema::record_blob
                     .filter(RecordBlobSchema::blobCid.eq_any(cids_clone))
@@ -336,6 +355,8 @@ impl BlobReader {
         let cids = cids_to_delete.clone();
         let did_clone = self.did.clone();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 delete(BlobSchema::blob)
                     .filter(BlobSchema::cid.eq_any(cids))
@@ -368,6 +389,8 @@ impl BlobReader {
 
         let found = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 BlobSchema::blob
                     .filter(
@@ -390,6 +413,8 @@ impl BlobReader {
                     .await?;
             }
             self.db
+                .get()
+                .await?
                 .interact(move |conn| {
                     update(BlobSchema::blob)
                         .filter(BlobSchema::tempKey.eq(found.temp_key))
@@ -412,6 +437,8 @@ impl BlobReader {
         let did = self.did.clone();
 
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 insert_into(RecordBlobSchema::record_blob)
                     .values((
@@ -434,6 +461,8 @@ impl BlobReader {
 
         let did = self.did.clone();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 let res = BlobSchema::blob
                     .filter(BlobSchema::did.eq(&did))
@@ -451,6 +480,8 @@ impl BlobReader {
 
         let did = self.did.clone();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 let res: i64 = RecordBlobSchema::record_blob
                     .filter(RecordBlobSchema::did.eq(&did))
@@ -472,6 +503,8 @@ impl BlobReader {
 
         let did = self.did.clone();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 let ListMissingBlobsOpts { cursor, limit } = opts;
 
@@ -552,6 +585,8 @@ impl BlobReader {
                 builder = builder.filter(RecordBlobSchema::blobCid.gt(cursor));
             }
             self.db
+                .get()
+                .await?
                 .interact(move |conn| builder.load(conn))
                 .await
                 .expect("Failed to list blobs")?
@@ -567,6 +602,8 @@ impl BlobReader {
                 builder = builder.filter(RecordBlobSchema::blobCid.gt(cursor));
             }
             self.db
+                .get()
+                .await?
                 .interact(move |conn| builder.load(conn))
                 .await
                 .expect("Failed to list blobs")?
@@ -580,6 +617,8 @@ impl BlobReader {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 let res = BlobSchema::blob
                     .filter(BlobSchema::cid.eq(cid.to_string()))
@@ -621,6 +660,8 @@ impl BlobReader {
         let did_clone = self.did.clone();
 
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 update(BlobSchema::blob)
                     .filter(BlobSchema::cid.eq(blob_cid))

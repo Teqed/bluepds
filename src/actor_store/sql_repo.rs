@@ -27,7 +27,7 @@ use tokio::sync::RwLock;
 
 pub struct SqlRepoReader {
     pub cache: Arc<RwLock<BlockMap>>,
-    pub db: deadpool_diesel::Connection<SqliteConnection>,
+    pub db: deadpool_diesel::sqlite::Object,
     pub root: Option<Cid>,
     pub rev: Option<String>,
     pub now: String,
@@ -327,11 +327,7 @@ impl RepoStorage for SqlRepoReader {
 
 // Basically handles getting ipld blocks from db
 impl SqlRepoReader {
-    pub fn new(
-        did: String,
-        now: Option<String>,
-        db: deadpool_diesel::Connection<SqliteConnection>,
-    ) -> Self {
+    pub fn new(did: String, now: Option<String>, db: deadpool_diesel::sqlite::Object) -> Self {
         let now = now.unwrap_or_else(rsky_common::now);
         SqlRepoReader {
             cache: Arc::new(RwLock::new(BlockMap::new())),

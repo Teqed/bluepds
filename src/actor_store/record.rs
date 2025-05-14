@@ -21,14 +21,23 @@ use std::str::FromStr;
 /// Combined handler for record operations with both read and write capabilities.
 pub(crate) struct RecordReader {
     /// Database connection.
-    pub db: deadpool_diesel::Connection<SqliteConnection>,
+    pub db: deadpool_diesel::Pool<
+        deadpool_diesel::Manager<SqliteConnection>,
+        deadpool_diesel::sqlite::Object,
+    >,
     /// DID of the actor.
     pub did: String,
 }
 
 impl RecordReader {
     /// Create a new record handler.
-    pub(crate) fn new(did: String, db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
+    pub(crate) fn new(
+        did: String,
+        db: deadpool_diesel::Pool<
+            deadpool_diesel::Manager<SqliteConnection>,
+            deadpool_diesel::sqlite::Object,
+        >,
+    ) -> Self {
         Self { did, db }
     }
 
@@ -38,6 +47,8 @@ impl RecordReader {
 
         let other_did = self.did.clone();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 let res: i64 = record.filter(did.eq(&other_did)).count().get_result(conn)?;
                 Ok(res)
@@ -52,6 +63,8 @@ impl RecordReader {
 
         let other_did = self.did.clone();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 let collections = record
                     .filter(did.eq(&other_did))
@@ -117,6 +130,8 @@ impl RecordReader {
         }
         let res: Vec<(Record, RepoBlock)> = self
             .db
+            .get()
+            .await?
             .interact(move |conn| builder.load(conn))
             .await
             .expect("Failed to load records")?;
@@ -159,6 +174,8 @@ impl RecordReader {
         }
         let record: Option<(Record, RepoBlock)> = self
             .db
+            .get()
+            .await?
             .interact(move |conn| builder.first(conn).optional())
             .await
             .expect("Failed to load record")?;
@@ -201,6 +218,8 @@ impl RecordReader {
         }
         let record_uri = self
             .db
+            .get()
+            .await?
             .interact(move |conn| builder.first::<String>(conn).optional())
             .await
             .expect("Failed to check record")?;
@@ -216,6 +235,8 @@ impl RecordReader {
 
         let res = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 RecordSchema::record
                     .select(RecordSchema::takedownRef)
@@ -248,6 +269,8 @@ impl RecordReader {
 
         let res = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 RecordSchema::record
                     .select(RecordSchema::cid)
@@ -276,6 +299,8 @@ impl RecordReader {
 
         let res = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 RecordSchema::record
                     .inner_join(
@@ -373,6 +398,8 @@ impl RecordReader {
         // Track current version of record
         let (record, uri) = self
             .db
+            .get()
+            .await?
             .interact(move |conn| {
                 insert_into(RecordSchema::record)
                     .values(row)
@@ -411,6 +438,8 @@ impl RecordReader {
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
         let uri = uri.to_string();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 delete(RecordSchema::record)
                     .filter(RecordSchema::uri.eq(&uri))
@@ -432,6 +461,8 @@ impl RecordReader {
         use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
         let uri = uri.to_string();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 delete(BacklinkSchema::backlink)
                     .filter(BacklinkSchema::uri.eq(uri))
@@ -449,6 +480,8 @@ impl RecordReader {
         } else {
             use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
             self.db
+                .get()
+                .await?
                 .interact(move |conn| {
                     insert_or_ignore_into(BacklinkSchema::backlink)
                         .values(&backlinks)
@@ -478,6 +511,8 @@ impl RecordReader {
         let uri_string = uri.to_string();
 
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 update(RecordSchema::record)
                     .filter(RecordSchema::uri.eq(uri_string))

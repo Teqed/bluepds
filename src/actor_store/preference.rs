@@ -14,11 +14,20 @@ use rsky_pds::models::AccountPref;
 
 pub struct PreferenceReader {
     pub did: String,
-    pub db: deadpool_diesel::Connection<SqliteConnection>,
+    pub db: deadpool_diesel::Pool<
+        deadpool_diesel::Manager<SqliteConnection>,
+        deadpool_diesel::sqlite::Object,
+    >,
 }
 
 impl PreferenceReader {
-    pub fn new(did: String, db: deadpool_diesel::Connection<SqliteConnection>) -> Self {
+    pub fn new(
+        did: String,
+        db: deadpool_diesel::Pool<
+            deadpool_diesel::Manager<SqliteConnection>,
+            deadpool_diesel::sqlite::Object,
+        >,
+    ) -> Self {
         PreferenceReader { did, db }
     }
 
@@ -31,6 +40,8 @@ impl PreferenceReader {
 
         let did = self.did.clone();
         self.db
+            .get()
+            .await?
             .interact(move |conn| {
                 let prefs_res = AccountPrefSchema::account_pref
                     .filter(AccountPrefSchema::did.eq(&did))
@@ -69,7 +80,7 @@ impl PreferenceReader {
         scope: AuthScope,
     ) -> Result<()> {
         let did = self.did.clone();
-        self.db
+        self.db.get().await?
             .interact(move |conn| {
                 match values
                     .iter()

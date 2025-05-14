@@ -75,18 +75,18 @@ impl ActorStore {
     pub fn new(
         did: String,
         blobstore: BlobStoreSql,
-        db: deadpool_diesel::Connection<SqliteConnection>,
+        db: deadpool_diesel::Pool<
+            deadpool_diesel::Manager<SqliteConnection>,
+            deadpool_diesel::sqlite::Object,
+        >,
+        conn: deadpool_diesel::sqlite::Object,
     ) -> Self {
         ActorStore {
-            storage: Arc::new(RwLock::new(SqlRepoReader::new(
-                did.clone(),
-                None,
-                db.clone(),
-            ))),
+            storage: Arc::new(RwLock::new(SqlRepoReader::new(did.clone(), None, conn))),
             record: RecordReader::new(did.clone(), db.clone()),
             pref: PreferenceReader::new(did.clone(), db.clone()),
             did,
-            blob: BlobReader::new(blobstore, db.clone()), // Unlike TS impl, just use blob reader vs generator
+            blob: BlobReader::new(blobstore, db.clone()),
         }
     }
 
@@ -438,17 +438,18 @@ impl ActorStore {
     pub async fn destroy(&mut self) -> Result<()> {
         let did: String = self.did.clone();
         let storage_guard = self.storage.read().await;
-        let db: deadpool_diesel::Connection<SqliteConnection> = storage_guard.db.clone();
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
-        let blob_rows: Vec<String> = db
-            .run(move |conn| {
+        let blob_rows: Vec<String> = storage_guard
+            .db
+            .interact(move |conn| {
                 BlobSchema::blob
                     .filter(BlobSchema::did.eq(did))
                     .select(BlobSchema::cid)
                     .get_results(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to get blob rows")?;
         let cids = blob_rows
             .into_iter()
             .map(|row| Ok(Cid::from_str(&row)?))
@@ -472,13 +473,13 @@ impl ActorStore {
         }
         let did: String = self.did.clone();
         let storage_guard = self.storage.read().await;
-        let db: deadpool_diesel::Connection<SqliteConnection> = storage_guard.db.clone();
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
         let cid_strs: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();
         let touched_uri_strs: Vec<String> = touched_uris.iter().map(|t| t.to_string()).collect();
-        let res: Vec<String> = db
-            .run(move |conn| {
+        let res: Vec<String> = storage_guard
+            .db
+            .interact(move |conn| {
                 RecordSchema::record
                     .filter(RecordSchema::did.eq(did))
                     .filter(RecordSchema::cid.eq_any(cid_strs))
@@ -486,7 +487,8 @@ impl ActorStore {
                     .select(RecordSchema::cid)
                     .get_results(conn)
             })
-            .await?;
+            .await
+            .expect("Failed to get duplicate record cids")?;
         res.into_iter()
             .map(|row| Cid::from_str(&row).map_err(|error| anyhow::Error::new(error)))
             .collect::<Result<Vec<Cid>>>()

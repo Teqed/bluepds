@@ -159,10 +159,16 @@ pub(crate) async fn apply_writes(
         let actor_db = db_actors
             .get(did)
             .ok_or_else(|| anyhow!("Actor DB not found"))?;
+        let conn = actor_db
+            .repo
+            .get()
+            .await
+            .context("Failed to get actor db connection")?;
         let mut actor_store = ActorStore::new(
             did.clone(),
             BlobStoreSql::new(did.clone(), actor_db.blob),
             actor_db.repo,
+            conn,
         );
 
         let commit = actor_store
