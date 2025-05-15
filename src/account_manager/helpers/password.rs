@@ -2,12 +2,7 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
-use anyhow::{Result, anyhow, bail};
-use argon2::{
-    Argon2,
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
-};
-// use base64ct::{Base64, Encoding};
+use anyhow::{Result, bail};
 use diesel::*;
 use rsky_common::{get_random_str, now};
 use rsky_lexicon::com::atproto::server::CreateAppPasswordOutput;

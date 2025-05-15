@@ -12,8 +12,8 @@ use rsky_common::RFC3339_VARIANT;
 use rsky_lexicon::com::atproto::admin::StatusAttr;
 #[expect(unused_imports)]
 pub(crate) use rsky_pds::account_manager::helpers::account::{
-    AccountStatus, ActorAccount, ActorJoinAccount, AvailabilityFlags, BoxedQuery,
-    FormattedAccountStatus, GetAccountAdminStatusOutput, format_account_status, select_account_qb,
+    AccountStatus, ActorAccount, ActorJoinAccount, AvailabilityFlags, FormattedAccountStatus,
+    GetAccountAdminStatusOutput, format_account_status,
 };
 use rsky_pds::schema::pds::account::dsl as AccountSchema;
 use rsky_pds::schema::pds::actor::dsl as ActorSchema;
@@ -27,6 +27,30 @@ pub enum AccountHelperError {
     UserAlreadyExistsError,
     #[error("DatabaseError: `{0}`")]
     DieselError(String),
+}
+
+pub type BoxedQuery<'life> = dsl::IntoBoxed<'life, ActorJoinAccount, sqlite::Sqlite>;
+pub fn select_account_qb(flags: Option<AvailabilityFlags>) -> BoxedQuery<'static> {
+    let AvailabilityFlags {
+        include_taken_down,
+        include_deactivated,
+    } = flags.unwrap_or_else(|| AvailabilityFlags {
+        include_taken_down: Some(false),
+        include_deactivated: Some(false),
+    });
+    let include_taken_down = include_taken_down.unwrap_or(false);
+    let include_deactivated = include_deactivated.unwrap_or(false);
+
+    let mut builder = ActorSchema::actor
+        .left_join(AccountSchema::account.on(ActorSchema::did.eq(AccountSchema::did)))
+        .into_boxed();
+    if !include_taken_down {
+        builder = builder.filter(ActorSchema::takedownRef.is_null());
+    }
+    if !include_deactivated {
+        builder = builder.filter(ActorSchema::deactivatedAt.is_null());
+    }
+    builder
 }
 
 pub async fn get_account(
@@ -358,7 +382,8 @@ pub async fn update_email(
                 ))
                 .execute(conn)
         })
-        .await;
+        .await
+        .expect("Failed to update email");
 
     match res {
         Ok(_) => Ok(()),

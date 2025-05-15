@@ -7,7 +7,6 @@ use diesel::*;
 use rsky_common::time::{MINUTE, from_str_to_utc, less_than_ago_s};
 use rsky_pds::apis::com::atproto::server::get_random_token;
 use rsky_pds::models::EmailToken;
-use rsky_pds::models::models::EmailTokenPurpose;
 
 pub async fn create_email_token(
     did: &str,
@@ -121,6 +120,84 @@ pub async fn assert_valid_token_and_find_did(
         Ok(res.did)
     } else {
         bail!("Token is invalid")
+    }
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    AsExpression,
+)]
+#[diesel(sql_type = sql_types::Text)]
+pub enum EmailTokenPurpose {
+    #[default]
+    ConfirmEmail,
+    UpdateEmail,
+    ResetPassword,
+    DeleteAccount,
+    PlcOperation,
+}
+
+impl EmailTokenPurpose {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EmailTokenPurpose::ConfirmEmail => "confirm_email",
+            EmailTokenPurpose::UpdateEmail => "update_email",
+            EmailTokenPurpose::ResetPassword => "reset_password",
+            EmailTokenPurpose::DeleteAccount => "delete_account",
+            EmailTokenPurpose::PlcOperation => "plc_operation",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "confirm_email" => Ok(EmailTokenPurpose::ConfirmEmail),
+            "update_email" => Ok(EmailTokenPurpose::UpdateEmail),
+            "reset_password" => Ok(EmailTokenPurpose::ResetPassword),
+            "delete_account" => Ok(EmailTokenPurpose::DeleteAccount),
+            "plc_operation" => Ok(EmailTokenPurpose::PlcOperation),
+            _ => bail!("Unable to parse as EmailTokenPurpose: `{s:?}`"),
+        }
+    }
+}
+
+impl<DB> Queryable<sql_types::Text, DB> for EmailTokenPurpose
+where
+    DB: backend::Backend,
+    String: deserialize::FromSql<sql_types::Text, DB>,
+{
+    type Row = String;
+
+    fn build(s: String) -> deserialize::Result<Self> {
+        Ok(EmailTokenPurpose::from_str(&s)?)
+    }
+}
+
+impl serialize::ToSql<sql_types::Text, sqlite::Sqlite> for EmailTokenPurpose
+where
+    String: serialize::ToSql<sql_types::Text, sqlite::Sqlite>,
+{
+    fn to_sql<'lifetime>(
+        &'lifetime self,
+        out: &mut serialize::Output<'lifetime, '_, sqlite::Sqlite>,
+    ) -> serialize::Result {
+        serialize::ToSql::<sql_types::Text, sqlite::Sqlite>::to_sql(
+            match self {
+                EmailTokenPurpose::ConfirmEmail => "confirm_email",
+                EmailTokenPurpose::UpdateEmail => "update_email",
+                EmailTokenPurpose::ResetPassword => "reset_password",
+                EmailTokenPurpose::DeleteAccount => "delete_account",
+                EmailTokenPurpose::PlcOperation => "plc_operation",
+            },
+            out,
+        )
     }
 }
 

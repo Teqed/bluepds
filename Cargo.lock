@@ -1318,7 +1318,6 @@ dependencies = [
  "regex",
  "reqwest 0.12.15",
  "reqwest-middleware",
- "rocket_sync_db_pools",
  "rsky-common",
  "rsky-lexicon",
  "rsky-pds",

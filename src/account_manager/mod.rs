@@ -16,6 +16,7 @@ use chrono::offset::Utc as UtcOffset;
 use cidv10::Cid;
 use diesel::*;
 use futures::try_join;
+use helpers::email_token::EmailTokenPurpose;
 use helpers::{account, auth, email_token, invite, password, repo};
 use rsky_common::RFC3339_VARIANT;
 use rsky_common::time::{HOUR, from_micros_to_str, from_str_to_micros};
@@ -26,7 +27,6 @@ use rsky_pds::account_manager::{
     UpdateAccountPasswordOpts, UpdateEmailOpts,
 };
 use rsky_pds::auth_verifier::AuthScope;
-use rsky_pds::models::models::EmailTokenPurpose;
 use secp256k1::{Keypair, Secp256k1, SecretKey};
 use std::collections::BTreeMap;
 use std::env;

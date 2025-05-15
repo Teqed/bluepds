@@ -129,7 +129,12 @@ enum_glob_use = "deny"
 
 [dependencies]
 multihash = "0.19.3"
-diesel = { version = "2.1.5", features = ["chrono", "sqlite", "r2d2"] }
+diesel = { version = "2.1.5", features = [
+    "chrono",
+    "sqlite",
+    "r2d2",
+    "returning_clauses_for_sqlite_3_35",
+] }
 diesel_migrations = { version = "2.1.0" }
 r2d2 = "0.8.10"
 
@@ -252,7 +257,8 @@ async-trait = "0.1.88"
 lazy_static = "1.5.0"
 secp256k1 = "0.28.2"
 dotenvy = "0.15.7"
-deadpool-diesel = { version = "0.6.1", features = ["serde", "sqlite", "tracing"] }
-[dependencies.rocket_sync_db_pools]
-version = "=0.1.0"
-features = ["diesel_sqlite_pool"]
+deadpool-diesel = { version = "0.6.1", features = [
+    "serde",
+    "sqlite",
+    "tracing",
+] }
