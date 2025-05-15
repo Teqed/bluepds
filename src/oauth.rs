@@ -1,7 +1,7 @@
 //! OAuth endpoints
 
 use crate::metrics::AUTH_FAILED;
-use crate::{AppConfig, AppState, Client, Db, Error, Result, SigningKey};
+use crate::{AppConfig, AppState, Client, Error, Result, SigningKey};
 use anyhow::{Context as _, anyhow};
 use argon2::{Argon2, PasswordHash, PasswordVerifier as _};
 use atrium_crypto::keypair::Did as _;
@@ -14,6 +14,8 @@ use axum::{
     routing::{get, post},
 };
 use base64::Engine as _;
+use deadpool_diesel::sqlite::Pool;
+use diesel::*;
 use metrics::counter;
 use rand::distributions::Alphanumeric;
 use rand::{Rng as _, thread_rng};
@@ -252,7 +254,7 @@ async fn fetch_client_metadata(client: &Client, client_id: &str) -> Result<Value
 /// POST `/oauth/par`
 #[expect(clippy::too_many_lines)]
 async fn par(
-    State(db): State<Db>,
+    State(db): State<Pool>,
     State(client): State<Client>,
     Json(form_data): Json<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
@@ -357,31 +359,71 @@ async fn par(
         .context("failed to compute expiration time")?
         .timestamp();
 
-    _ = sqlx::query!(
-        r#"
-        INSERT INTO oauth_par_requests (
-            request_uri, client_id, response_type, code_challenge, code_challenge_method,
-            state, login_hint, scope, redirect_uri, response_mode, display,
-            created_at, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        request_uri,
-        client_id,
-        response_type,
-        code_challenge,
-        code_challenge_method,
-        state,
-        login_hint,
-        scope,
-        redirect_uri,
-        response_mode,
-        display,
-        created_at,
-        expires_at
-    )
-    .execute(&db)
-    .await
-    .context("failed to store PAR request")?;
+    // _ = sqlx::query!(
+    //     r#"
+    //     INSERT INTO oauth_par_requests (
+    //         request_uri, client_id, response_type, code_challenge, code_challenge_method,
+    //         state, login_hint, scope, redirect_uri, response_mode, display,
+    //         created_at, expires_at
+    //     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    //     "#,
+    //     request_uri,
+    //     client_id,
+    //     response_type,
+    //     code_challenge,
+    //     code_challenge_method,
+    //     state,
+    //     login_hint,
+    //     scope,
+    //     redirect_uri,
+    //     response_mode,
+    //     display,
+    //     created_at,
+    //     expires_at
+    // )
+    // .execute(&db)
+    // .await
+    // .context("failed to store PAR request")?;
+    use crate::schema::pds::oauth_par_requests::dsl as ParRequestSchema;
+    let client_id = client_id.to_owned();
+    let request_uri_cloned = request_uri.to_owned();
+    let response_type = response_type.to_owned();
+    let code_challenge = code_challenge.to_owned();
+    let code_challenge_method = code_challenge_method.to_owned();
+    let state = state.map(|s| s.to_owned());
+    let login_hint = login_hint.map(|s| s.to_owned());
+    let scope = scope.map(|s| s.to_owned());
+    let redirect_uri = redirect_uri.map(|s| s.to_owned());
+    let response_mode = response_mode.map(|s| s.to_owned());
+    let display = display.map(|s| s.to_owned());
+    let created_at = created_at;
+    let expires_at = expires_at;
+    _ = db
+        .get()
+        .await
+        .expect("Failed to get database connection")
+        .interact(move |conn| {
+            insert_into(ParRequestSchema::oauth_par_requests)
+                .values((
+                    ParRequestSchema::request_uri.eq(&request_uri_cloned),
+                    ParRequestSchema::client_id.eq(client_id),
+                    ParRequestSchema::response_type.eq(response_type),
+                    ParRequestSchema::code_challenge.eq(code_challenge),
+                    ParRequestSchema::code_challenge_method.eq(code_challenge_method),
+                    ParRequestSchema::state.eq(state),
+                    ParRequestSchema::login_hint.eq(login_hint),
+                    ParRequestSchema::scope.eq(scope),
+                    ParRequestSchema::redirect_uri.eq(redirect_uri),
+                    ParRequestSchema::response_mode.eq(response_mode),
+                    ParRequestSchema::display.eq(display),
+                    ParRequestSchema::created_at.eq(created_at),
+                    ParRequestSchema::expires_at.eq(expires_at),
+                ))
+                .execute(conn)
+        })
+        .await
+        .expect("Failed to store PAR request")
+        .expect("Failed to store PAR request");
 
     Ok(Json(json!({
         "request_uri": request_uri,
@@ -392,7 +434,7 @@ async fn par(
 /// OAuth Authorization endpoint
 /// GET `/oauth/authorize`
 async fn authorize(
-    State(db): State<Db>,
+    State(db): State<Pool>,
     State(client): State<Client>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse> {
@@ -407,25 +449,47 @@ async fn authorize(
     let timestamp = chrono::Utc::now().timestamp();
 
     // Retrieve the PAR request from the database
-    let par_request = sqlx::query!(
-        r#"
-        SELECT * FROM oauth_par_requests
-        WHERE request_uri = ? AND client_id = ? AND expires_at > ?
-        "#,
-        request_uri,
-        client_id,
-        timestamp
-    )
-    .fetch_optional(&db)
-    .await
-    .context("failed to query PAR request")?
-    .context("PAR request not found or expired")?;
+    // let par_request = sqlx::query!(
+    //     r#"
+    //     SELECT * FROM oauth_par_requests
+    //     WHERE request_uri = ? AND client_id = ? AND expires_at > ?
+    //     "#,
+    //     request_uri,
+    //     client_id,
+    //     timestamp
+    // )
+    // .fetch_optional(&db)
+    // .await
+    // .context("failed to query PAR request")?
+    // .context("PAR request not found or expired")?;
+    use crate::schema::pds::oauth_par_requests::dsl as ParRequestSchema;
+
+    let request_uri_clone = request_uri.to_owned();
+    let client_id_clone = client_id.to_owned();
+    let timestamp_clone = timestamp.clone();
+    let login_hint = db
+        .get()
+        .await
+        .expect("Failed to get database connection")
+        .interact(move |conn| {
+            ParRequestSchema::oauth_par_requests
+                .select(ParRequestSchema::login_hint)
+                .filter(ParRequestSchema::request_uri.eq(request_uri_clone))
+                .filter(ParRequestSchema::client_id.eq(client_id_clone))
+                .filter(ParRequestSchema::expires_at.gt(timestamp_clone))
+                .first::<Option<String>>(conn)
+                .optional()
+        })
+        .await
+        .expect("Failed to query PAR request")
+        .expect("Failed to query PAR request")
+        .expect("Failed to query PAR request");
 
     // Validate client metadata
     let client_metadata = fetch_client_metadata(&client, client_id).await?;
 
     // Authorization page with login form
-    let login_hint = par_request.login_hint.unwrap_or_default();
+    let login_hint = login_hint.unwrap_or_default();
     let html = format!(
         r#"<!DOCTYPE html>
         <html>
@@ -491,7 +555,7 @@ async fn authorize(
 /// POST `/oauth/authorize/sign-in`
 #[expect(clippy::too_many_lines)]
 async fn authorize_signin(
-    State(db): State<Db>,
+    State(db): State<Pool>,
     State(config): State<AppConfig>,
     State(client): State<Client>,
     extract::Form(form_data): extract::Form<HashMap<String, String>>,
@@ -511,43 +575,107 @@ async fn authorize_signin(
     let timestamp = chrono::Utc::now().timestamp();
 
     // Retrieve the PAR request
-    let par_request = sqlx::query!(
-        r#"
-        SELECT * FROM oauth_par_requests
-        WHERE request_uri = ? AND client_id = ? AND expires_at > ?
-        "#,
-        request_uri,
-        client_id,
-        timestamp
-    )
-    .fetch_optional(&db)
-    .await
-    .context("failed to query PAR request")?
-    .context("PAR request not found or expired")?;
+    // let par_request = sqlx::query!(
+    //     r#"
+    //     SELECT * FROM oauth_par_requests
+    //     WHERE request_uri = ? AND client_id = ? AND expires_at > ?
+    //     "#,
+    //     request_uri,
+    //     client_id,
+    //     timestamp
+    // )
+    // .fetch_optional(&db)
+    // .await
+    // .context("failed to query PAR request")?
+    // .context("PAR request not found or expired")?;
+    use crate::schema::pds::oauth_par_requests::dsl as ParRequestSchema;
+    // diesel::table! {
+    //     pds.oauth_par_requests (request_uri) {
+    //         request_uri -> Varchar,
+    //         client_id -> Varchar,
+    //         response_type -> Varchar,
+    //         code_challenge -> Varchar,
+    //         code_challenge_method -> Varchar,
+    //         state -> Nullable<Varchar>,
+    //         login_hint -> Nullable<Varchar>,
+    //         scope -> Nullable<Varchar>,
+    //         redirect_uri -> Nullable<Varchar>,
+    //         response_mode -> Nullable<Varchar>,
+    //         display -> Nullable<Varchar>,
+    //         created_at -> Int8,
+    //         expires_at -> Int8,
+    //     }
+    // }
+    #[derive(Queryable, Selectable)]
+    #[diesel(table_name = crate::schema::pds::oauth_par_requests)]
+    #[diesel(check_for_backend(sqlite::Sqlite))]
+    struct ParRequest {
+        request_uri: String,
+        client_id: String,
+        response_type: String,
+        code_challenge: String,
+        code_challenge_method: String,
+        state: Option<String>,
+        login_hint: Option<String>,
+        scope: Option<String>,
+        redirect_uri: Option<String>,
+        response_mode: Option<String>,
+        display: Option<String>,
+        created_at: i64,
+        expires_at: i64,
+    }
+    let request_uri_clone = request_uri.to_owned();
+    let client_id_clone = client_id.to_owned();
+    let timestamp_clone = timestamp.clone();
+    let par_request = db
+        .get()
+        .await
+        .expect("Failed to get database connection")
+        .interact(move |conn| {
+            ParRequestSchema::oauth_par_requests
+                .filter(ParRequestSchema::request_uri.eq(request_uri_clone))
+                .filter(ParRequestSchema::client_id.eq(client_id_clone))
+                .filter(ParRequestSchema::expires_at.gt(timestamp_clone))
+                .first::<ParRequest>(conn)
+                .optional()
+        })
+        .await
+        .expect("Failed to query PAR request")
+        .expect("Failed to query PAR request")
+        .expect("Failed to query PAR request");
 
     // Authenticate the user
-    let account = sqlx::query!(
-        r#"
-        WITH LatestHandles AS (
-            SELECT did, handle
-            FROM handles
-            WHERE (did, created_at) IN (
-                SELECT did, MAX(created_at) AS max_created_at
-                FROM handles
-                GROUP BY did
-            )
-        )
-        SELECT a.did, a.email, a.password, h.handle
-        FROM accounts a
-        LEFT JOIN LatestHandles h ON a.did = h.did
-        WHERE h.handle = ?
-        "#,
-        username
-    )
-    .fetch_optional(&db)
-    .await
-    .context("failed to query database")?
-    .context("user not found")?;
+    use rsky_pds::schema::pds::account::dsl as AccountSchema;
+    use rsky_pds::schema::pds::actor::dsl as ActorSchema;
+    let username_clone = username.to_owned();
+    let account = db
+        .get()
+        .await
+        .expect("Failed to get database connection")
+        .interact(move |conn| {
+            AccountSchema::account
+                .filter(AccountSchema::email.eq(username_clone))
+                .first::<rsky_pds::models::Account>(conn)
+                .optional()
+        })
+        .await
+        .expect("Failed to query account")
+        .expect("Failed to query account")
+        .expect("Failed to query account");
+    // let actor = db
+    //     .get()
+    //     .await
+    //     .expect("Failed to get database connection")
+    //     .interact(move |conn| {
+    //         ActorSchema::actor
+    //             .filter(ActorSchema::did.eq(did))
+    //             .first::<rsky_pds::models::Actor>(conn)
+    //             .optional()
+    //     })
+    //     .await
+    //     .expect("Failed to query actor")
+    //     .expect("Failed to query actor")
+    //     .expect("Failed to query actor");
 
     // Verify password - fixed to use equality check instead of pattern matching
     if Argon2::default().verify_password(
@@ -592,27 +720,59 @@ async fn authorize_signin(
         .context("failed to compute expiration time")?
         .timestamp();
 
-    _ = sqlx::query!(
-        r#"
-        INSERT INTO oauth_authorization_codes (
-            code, client_id, subject, code_challenge, code_challenge_method,
-            redirect_uri, scope, created_at, expires_at, used
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
-        code,
-        client_id,
-        account.did,
-        par_request.code_challenge,
-        par_request.code_challenge_method,
-        redirect_uri,
-        par_request.scope,
-        created_at,
-        expires_at,
-        false
-    )
-    .execute(&db)
-    .await
-    .context("failed to store authorization code")?;
+    // _ = sqlx::query!(
+    //     r#"
+    //     INSERT INTO oauth_authorization_codes (
+    //         code, client_id, subject, code_challenge, code_challenge_method,
+    //         redirect_uri, scope, created_at, expires_at, used
+    //     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    //     "#,
+    //     code,
+    //     client_id,
+    //     account.did,
+    //     par_request.code_challenge,
+    //     par_request.code_challenge_method,
+    //     redirect_uri,
+    //     par_request.scope,
+    //     created_at,
+    //     expires_at,
+    //     false
+    // )
+    // .execute(&db)
+    // .await
+    // .context("failed to store authorization code")?;
+    use crate::schema::pds::oauth_authorization_codes::dsl as AuthCodeSchema;
+    let code_cloned = code.to_owned();
+    let client_id = client_id.to_owned();
+    let subject = account.did.to_owned();
+    let code_challenge = par_request.code_challenge.to_owned();
+    let code_challenge_method = par_request.code_challenge_method.to_owned();
+    let redirect_uri_cloned = redirect_uri.to_owned();
+    let scope = par_request.scope.to_owned();
+    let used = false;
+    _ = db
+        .get()
+        .await
+        .expect("Failed to get database connection")
+        .interact(move |conn| {
+            insert_into(AuthCodeSchema::oauth_authorization_codes)
+                .values((
+                    AuthCodeSchema::code.eq(code_cloned),
+                    AuthCodeSchema::client_id.eq(client_id),
+                    AuthCodeSchema::subject.eq(subject),
+                    AuthCodeSchema::code_challenge.eq(code_challenge),
+                    AuthCodeSchema::code_challenge_method.eq(code_challenge_method),
+                    AuthCodeSchema::redirect_uri.eq(redirect_uri_cloned),
+                    AuthCodeSchema::scope.eq(scope),
+                    AuthCodeSchema::created_at.eq(created_at),
+                    AuthCodeSchema::expires_at.eq(expires_at),
+                    AuthCodeSchema::used.eq(used),
+                ))
+                .execute(conn)
+        })
+        .await
+        .expect("Failed to store authorization code")
+        .expect("Failed to store authorization code");
 
     // Use state from the PAR request or generate one
     let state = par_request.state.unwrap_or_else(|| {
@@ -673,7 +833,7 @@ async fn verify_dpop_proof(
     dpop_token: &str,
     http_method: &str,
     http_uri: &str,
-    db: &Db,
+    db: &Pool,
     access_token: Option<&str>,
     bound_key_thumbprint: Option<&str>,
 ) -> Result<String> {
@@ -811,11 +971,28 @@ async fn verify_dpop_proof(
     }
 
     // 11. Check for replay attacks via JTI tracking
-    let jti_used =
-        sqlx::query_scalar!(r#"SELECT COUNT(*) FROM oauth_used_jtis WHERE jti = ?"#, jti)
-            .fetch_one(db)
-            .await
-            .context("failed to check JTI")?;
+    // let jti_used =
+    //     sqlx::query_scalar!(r#"SELECT COUNT(*) FROM oauth_used_jtis WHERE jti = ?"#, jti)
+    //         .fetch_one(db)
+    //         .await
+    //         .context("failed to check JTI")?;
+    use crate::schema::pds::oauth_used_jtis::dsl as JtiSchema;
+    let jti_clone = jti.to_owned();
+    let jti_used = db
+        .get()
+        .await
+        .expect("Failed to get database connection")
+        .interact(move |conn| {
+            JtiSchema::oauth_used_jtis
+                .filter(JtiSchema::jti.eq(jti_clone))
+                .count()
+                .get_result::<i64>(conn)
+                .optional()
+        })
+        .await
+        .expect("Failed to check JTI")
+        .expect("Failed to check JTI")
+        .unwrap_or(0);
 
     if jti_used > 0 {
         return Err(Error::with_status(
@@ -825,26 +1002,60 @@ async fn verify_dpop_proof(
     }
 
     // 12. Store the JTI to prevent replay attacks
-    _ = sqlx::query!(
-        r#"
-        INSERT INTO oauth_used_jtis (jti, issuer, created_at, expires_at)
-        VALUES (?, ?, ?, ?)
-        "#,
-        jti,
-        thumbprint, // Use thumbprint as issuer identifier
-        now,
-        exp
-    )
-    .execute(db)
-    .await
-    .context("failed to store JTI")?;
+    // _ = sqlx::query!(
+    //     r#"
+    //     INSERT INTO oauth_used_jtis (jti, issuer, created_at, expires_at)
+    //     VALUES (?, ?, ?, ?)
+    //     "#,
+    //     jti,
+    //     thumbprint, // Use thumbprint as issuer identifier
+    //     now,
+    //     exp
+    // )
+    // .execute(db)
+    // .await
+    // .context("failed to store JTI")?;
+    let jti_cloned = jti.to_owned();
+    let issuer = thumbprint.to_owned();
+    let created_at = now;
+    let expires_at = exp;
+    _ = db
+        .get()
+        .await
+        .expect("Failed to get database connection")
+        .interact(move |conn| {
+            insert_into(JtiSchema::oauth_used_jtis)
+                .values((
+                    JtiSchema::jti.eq(jti_cloned),
+                    JtiSchema::issuer.eq(issuer),
+                    JtiSchema::created_at.eq(created_at),
+                    JtiSchema::expires_at.eq(expires_at),
+                ))
+                .execute(conn)
+        })
+        .await
+        .expect("Failed to store JTI")
+        .expect("Failed to store JTI");
 
     // 13. Cleanup expired JTIs periodically (1% chance on each request)
     if thread_rng().gen_range(0_i32..100_i32) == 0_i32 {
-        _ = sqlx::query!(r#"DELETE FROM oauth_used_jtis WHERE expires_at < ?"#, now)
-            .execute(db)
+        // _ = sqlx::query!(r#"DELETE FROM oauth_used_jtis WHERE expires_at < ?"#, now)
+        //     .execute(db)
+        //     .await
+        //     .context("failed to clean up expired JTIs")?;
+        let now_clone = now.to_owned();
+        _ = db
+            .get()
             .await
-            .context("failed to clean up expired JTIs")?;
+            .expect("Failed to get database connection")
+            .interact(move |conn| {
+                delete(JtiSchema::oauth_used_jtis)
+                    .filter(JtiSchema::expires_at.lt(now_clone))
+                    .execute(conn)
+            })
+            .await
+            .expect("Failed to clean up expired JTIs")
+            .expect("Failed to clean up expired JTIs");
     }
 
     Ok(thumbprint)
@@ -882,7 +1093,7 @@ fn verify_pkce(code_verifier: &str, stored_challenge: &str, method: &str) -> Res
 /// Handles both `authorization_code` and `refresh_token` grants
 #[expect(clippy::too_many_lines)]
 async fn token(
-    State(db): State<Db>,
+    State(db): State<Pool>,
     State(skey): State<SigningKey>,
     State(config): State<AppConfig>,
     State(client): State<Client>,
@@ -959,14 +1170,32 @@ async fn token(
         // }
     } else {
         // Rule 2: For public clients, check if this DPoP key has been used before
-        let is_key_reused = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) FROM oauth_refresh_tokens WHERE dpop_thumbprint = ? AND client_id = ?"#,
-            dpop_thumbprint,
-            client_id
-        )
-        .fetch_one(&db)
-        .await
-        .context("failed to check key usage history")? > 0;
+        // let is_key_reused = sqlx::query_scalar!(
+        //     r#"SELECT COUNT(*) FROM oauth_refresh_tokens WHERE dpop_thumbprint = ? AND client_id = ?"#,
+        //     dpop_thumbprint,
+        //     client_id
+        // )
+        // .fetch_one(&db)
+        // .await
+        // .context("failed to check key usage history")? > 0;
+        use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
+        let is_key_reused = db
+            .get()
+            .await
+            .expect("Failed to get database connection")
+            .interact(move |conn| {
+                RefreshTokenSchema::oauth_refresh_tokens
+                    .filter(RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint))
+                    .filter(RefreshTokenSchema::client_id.eq(client_id))
+                    .count()
+                    .get_result::<i64>(conn)
+                    .optional()
+            })
+            .await
+            .expect("Failed to check key usage history")
+            .expect("Failed to check key usage history")
+            .unwrap_or(0)
+            > 0;
 
         if is_key_reused && grant_type == "authorization_code" {
             return Err(Error::with_status(
@@ -990,20 +1219,68 @@ async fn token(
             let timestamp = chrono::Utc::now().timestamp();
 
             // Retrieve and validate the authorization code
-            let auth_code = sqlx::query!(
-                r#"
-                SELECT * FROM oauth_authorization_codes
-                WHERE code = ? AND client_id = ? AND redirect_uri = ? AND expires_at > ? AND used = FALSE
-                "#,
-                code,
-                client_id,
-                redirect_uri,
-                timestamp
-            )
-            .fetch_optional(&db)
-            .await
-            .context("failed to query authorization code")?
-            .context("authorization code not found, expired, or already used")?;
+            // let auth_code = sqlx::query!(
+            //     r#"
+            //     SELECT * FROM oauth_authorization_codes
+            //     WHERE code = ? AND client_id = ? AND redirect_uri = ? AND expires_at > ? AND used = FALSE
+            //     "#,
+            //     code,
+            //     client_id,
+            //     redirect_uri,
+            //     timestamp
+            // )
+            // .fetch_optional(&db)
+            // .await
+            // .context("failed to query authorization code")?
+            // .context("authorization code not found, expired, or already used")?;
+            use crate::schema::pds::oauth_authorization_codes::dsl as AuthCodeSchema;
+            // diesel::table! {
+            //     pds.oauth_authorization_codes (code) {
+            //         code -> Varchar,
+            //         client_id -> Varchar,
+            //         subject -> Varchar,
+            //         code_challenge -> Varchar,
+            //         code_challenge_method -> Varchar,
+            //         redirect_uri -> Varchar,
+            //         scope -> Nullable<Varchar>,
+            //         created_at -> Int8,
+            //         expires_at -> Int8,
+            //         used -> Bool,
+            //     }
+            // }
+            #[derive(Queryable, Selectable)]
+            #[diesel(table_name = crate::schema::pds::oauth_authorization_codes)]
+            #[diesel(check_for_backend(sqlite::Sqlite))]
+            struct AuthCode {
+                code: String,
+                client_id: String,
+                subject: String,
+                code_challenge: String,
+                code_challenge_method: String,
+                redirect_uri: String,
+                scope: Option<String>,
+                created_at: i64,
+                expires_at: i64,
+                used: bool,
+            }
+            let auth_code = db
+                .get()
+                .await
+                .expect("Failed to get database connection")
+                .interact(move |conn| {
+                    AuthCodeSchema::oauth_authorization_codes
+                        .filter(AuthCodeSchema::code.eq(code))
+                        .filter(AuthCodeSchema::client_id.eq(client_id))
+                        .filter(AuthCodeSchema::redirect_uri.eq(redirect_uri))
+                        .filter(AuthCodeSchema::expires_at.gt(timestamp))
+                        .filter(AuthCodeSchema::used.eq(false))
+                        .first::<AuthCode>(conn)
+                        .optional()
+                })
+                .await
+                .expect("Failed to query authorization code")
+                .expect("Failed to query authorization code")
+                .expect("Failed to query authorization code");
 
             // Verify PKCE code challenge
             verify_pkce(
@@ -1013,13 +1290,27 @@ async fn token(
             )?;
 
             // Mark the code as used
-            _ = sqlx::query!(
-                r#"UPDATE oauth_authorization_codes SET used = TRUE WHERE code = ?"#,
-                code
-            )
-            .execute(&db)
-            .await
-            .context("failed to mark code as used")?;
+            // _ = sqlx::query!(
+            //     r#"UPDATE oauth_authorization_codes SET used = TRUE WHERE code = ?"#,
+            //     code
+            // )
+            // .execute(&db)
+            // .await
+            // .context("failed to mark code as used")?;
+            let code_cloned = code.to_owned();
+            _ = db
+                .get()
+                .await
+                .expect("Failed to get database connection")
+                .interact(move |conn| {
+                    update(AuthCodeSchema::oauth_authorization_codes)
+                        .filter(AuthCodeSchema::code.eq(code_cloned))
+                        .set(AuthCodeSchema::used.eq(true))
+                        .execute(conn)
+                })
+                .await
+                .expect("Failed to mark code as used")
+                .expect("Failed to mark code as used");
 
             // Generate tokens with appropriate lifetimes
             let now = chrono::Utc::now().timestamp();
@@ -1068,24 +1359,53 @@ async fn token(
                 .context("failed to sign refresh token")?;
 
             // Store the refresh token with DPoP binding
-            _ = sqlx::query!(
-                r#"
-                INSERT INTO oauth_refresh_tokens (
-                    token, client_id, subject, dpop_thumbprint, scope, created_at, expires_at, revoked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                "#,
-                refresh_token,
-                client_id,
-                auth_code.subject,
-                dpop_thumbprint,
-                auth_code.scope,
-                now,
-                refresh_token_expires_at,
-                false
-            )
-            .execute(&db)
-            .await
-            .context("failed to store refresh token")?;
+            // _ = sqlx::query!(
+            //     r#"
+            //     INSERT INTO oauth_refresh_tokens (
+            //         token, client_id, subject, dpop_thumbprint, scope, created_at, expires_at, revoked
+            //     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            //     "#,
+            //     refresh_token,
+            //     client_id,
+            //     auth_code.subject,
+            //     dpop_thumbprint,
+            //     auth_code.scope,
+            //     now,
+            //     refresh_token_expires_at,
+            //     false
+            // )
+            // .execute(&db)
+            // .await
+            // .context("failed to store refresh token")?;
+            use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
+            let refresh_token_cloned = refresh_token.to_owned();
+            let client_id_cloned = client_id.to_owned();
+            let subject = auth_code.subject.to_owned();
+            let dpop_thumbprint_cloned = dpop_thumbprint.to_owned();
+            let scope = auth_code.scope.to_owned();
+            let created_at = now;
+            let expires_at = refresh_token_expires_at;
+            _ = db
+                .get()
+                .await
+                .expect("Failed to get database connection")
+                .interact(move |conn| {
+                    insert_into(RefreshTokenSchema::oauth_refresh_tokens)
+                        .values((
+                            RefreshTokenSchema::token.eq(refresh_token_cloned),
+                            RefreshTokenSchema::client_id.eq(client_id_cloned),
+                            RefreshTokenSchema::subject.eq(subject),
+                            RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint_cloned),
+                            RefreshTokenSchema::scope.eq(scope),
+                            RefreshTokenSchema::created_at.eq(created_at),
+                            RefreshTokenSchema::expires_at.eq(expires_at),
+                            RefreshTokenSchema::revoked.eq(false),
+                        ))
+                        .execute(conn)
+                })
+                .await
+                .expect("Failed to store refresh token")
+                .expect("Failed to store refresh token");
 
             // Return token response with the subject claim
             Ok(Json(json!({
@@ -1107,35 +1427,97 @@ async fn token(
 
             // Rules 7 & 8: Verify refresh token and DPoP consistency
             // Retrieve the refresh token
-            let token_data = sqlx::query!(
-                r#"
-                SELECT * FROM oauth_refresh_tokens
-                WHERE token = ? AND client_id = ? AND expires_at > ? AND revoked = FALSE AND dpop_thumbprint = ?
-                "#,
-                refresh_token,
-                client_id,
-                timestamp,
-                dpop_thumbprint // Rule 8: Must use same DPoP key
-            )
-            .fetch_optional(&db)
-            .await
-            .context("failed to query refresh token")?
-            .context("refresh token not found, expired, revoked, or invalid for this DPoP key")?;
+            // let token_data = sqlx::query!(
+            //     r#"
+            //     SELECT * FROM oauth_refresh_tokens
+            //     WHERE token = ? AND client_id = ? AND expires_at > ? AND revoked = FALSE AND dpop_thumbprint = ?
+            //     "#,
+            //     refresh_token,
+            //     client_id,
+            //     timestamp,
+            //     dpop_thumbprint // Rule 8: Must use same DPoP key
+            // )
+            // .fetch_optional(&db)
+            // .await
+            // .context("failed to query refresh token")?
+            // .context("refresh token not found, expired, revoked, or invalid for this DPoP key")?;
+            use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
+            // diesel::table! {
+            //     pds.oauth_refresh_tokens (token) {
+            //         token -> Varchar,
+            //         client_id -> Varchar,
+            //         subject -> Varchar,
+            //         dpop_thumbprint -> Varchar,
+            //         scope -> Nullable<Varchar>,
+            //         created_at -> Int8,
+            //         expires_at -> Int8,
+            //         revoked -> Bool,
+            //     }
+            // }
+            #[derive(Queryable, Selectable)]
+            #[diesel(table_name = crate::schema::pds::oauth_refresh_tokens)]
+            #[diesel(check_for_backend(sqlite::Sqlite))]
+            struct TokenData {
+                token: String,
+                client_id: String,
+                subject: String,
+                dpop_thumbprint: String,
+                scope: Option<String>,
+                created_at: i64,
+                expires_at: i64,
+                revoked: bool,
+            }
+            let token_data = db
+                .get()
+                .await
+                .expect("Failed to get database connection")
+                .interact(move |conn| {
+                    RefreshTokenSchema::oauth_refresh_tokens
+                        .filter(RefreshTokenSchema::token.eq(refresh_token))
+                        .filter(RefreshTokenSchema::client_id.eq(client_id))
+                        .filter(RefreshTokenSchema::expires_at.gt(timestamp))
+                        .filter(RefreshTokenSchema::revoked.eq(false))
+                        .filter(RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint))
+                        .first::<TokenData>(conn)
+                        .optional()
+                })
+                .await
+                .expect("Failed to query refresh token")
+                .expect("Failed to query refresh token")
+                .expect("Failed to query refresh token");
 
             // Rule 10: For confidential clients, verify key is still advertised in their jwks
             if is_confidential_client {
                 let client_still_advertises_key = true; // Implement actual check against client jwks
                 if !client_still_advertises_key {
                     // Revoke all tokens bound to this key
-                    _ = sqlx::query!(
-                        r#"UPDATE oauth_refresh_tokens SET revoked = TRUE
-                        WHERE client_id = ? AND dpop_thumbprint = ?"#,
-                        client_id,
-                        dpop_thumbprint
-                    )
-                    .execute(&db)
-                    .await
-                    .context("failed to revoke tokens")?;
+                    // _ = sqlx::query!(
+                    //     r#"UPDATE oauth_refresh_tokens SET revoked = TRUE
+                    //     WHERE client_id = ? AND dpop_thumbprint = ?"#,
+                    //     client_id,
+                    //     dpop_thumbprint
+                    // )
+                    // .execute(&db)
+                    // .await
+                    // .context("failed to revoke tokens")?;
+                    let client_id_cloned = client_id.to_owned();
+                    let dpop_thumbprint_cloned = dpop_thumbprint.to_owned();
+                    _ = db
+                        .get()
+                        .await
+                        .expect("Failed to get database connection")
+                        .interact(move |conn| {
+                            update(RefreshTokenSchema::oauth_refresh_tokens)
+                                .filter(RefreshTokenSchema::client_id.eq(client_id_cloned))
+                                .filter(
+                                    RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint_cloned),
+                                )
+                                .set(RefreshTokenSchema::revoked.eq(true))
+                                .execute(conn)
+                        })
+                        .await
+                        .expect("Failed to revoke tokens")
+                        .expect("Failed to revoke tokens");
 
                     return Err(Error::with_status(
                         StatusCode::BAD_REQUEST,
@@ -1145,13 +1527,27 @@ async fn token(
             }
 
             // Rotate the refresh token
-            _ = sqlx::query!(
-                r#"UPDATE oauth_refresh_tokens SET revoked = TRUE WHERE token = ?"#,
-                refresh_token
-            )
-            .execute(&db)
-            .await
-            .context("failed to revoke old refresh token")?;
+            // _ = sqlx::query!(
+            //     r#"UPDATE oauth_refresh_tokens SET revoked = TRUE WHERE token = ?"#,
+            //     refresh_token
+            // )
+            // .execute(&db)
+            // .await
+            // .context("failed to revoke old refresh token")?;
+            let refresh_token_cloned = refresh_token.to_owned();
+            _ = db
+                .get()
+                .await
+                .expect("Failed to get database connection")
+                .interact(move |conn| {
+                    update(RefreshTokenSchema::oauth_refresh_tokens)
+                        .filter(RefreshTokenSchema::token.eq(refresh_token_cloned))
+                        .set(RefreshTokenSchema::revoked.eq(true))
+                        .execute(conn)
+                })
+                .await
+                .expect("Failed to revoke old refresh token")
+                .expect("Failed to revoke old refresh token");
 
             // Generate new tokens
             let now = chrono::Utc::now().timestamp();
@@ -1195,24 +1591,52 @@ async fn token(
                 .context("failed to sign refresh token")?;
 
             // Store the new refresh token
-            _ = sqlx::query!(
-                r#"
-                INSERT INTO oauth_refresh_tokens (
-                    token, client_id, subject, dpop_thumbprint, scope, created_at, expires_at, revoked
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                "#,
-                new_refresh_token,
-                client_id,
-                token_data.subject,
-                dpop_thumbprint,
-                token_data.scope,
-                now,
-                refresh_token_expires_at,
-                false
-            )
-            .execute(&db)
-            .await
-            .context("failed to store refresh token")?;
+            // _ = sqlx::query!(
+            //     r#"
+            //     INSERT INTO oauth_refresh_tokens (
+            //         token, client_id, subject, dpop_thumbprint, scope, created_at, expires_at, revoked
+            //     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            //     "#,
+            //     new_refresh_token,
+            //     client_id,
+            //     token_data.subject,
+            //     dpop_thumbprint,
+            //     token_data.scope,
+            //     now,
+            //     refresh_token_expires_at,
+            //     false
+            // )
+            // .execute(&db)
+            // .await
+            // .context("failed to store refresh token")?;
+            let new_refresh_token_cloned = new_refresh_token.to_owned();
+            let client_id_cloned = client_id.to_owned();
+            let subject = token_data.subject.to_owned();
+            let dpop_thumbprint_cloned = dpop_thumbprint.to_owned();
+            let scope = token_data.scope.to_owned();
+            let created_at = now;
+            let expires_at = refresh_token_expires_at;
+            _ = db
+                .get()
+                .await
+                .expect("Failed to get database connection")
+                .interact(move |conn| {
+                    insert_into(RefreshTokenSchema::oauth_refresh_tokens)
+                        .values((
+                            RefreshTokenSchema::token.eq(new_refresh_token_cloned),
+                            RefreshTokenSchema::client_id.eq(client_id_cloned),
+                            RefreshTokenSchema::subject.eq(subject),
+                            RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint_cloned),
+                            RefreshTokenSchema::scope.eq(scope),
+                            RefreshTokenSchema::created_at.eq(created_at),
+                            RefreshTokenSchema::expires_at.eq(expires_at),
+                            RefreshTokenSchema::revoked.eq(false),
+                        ))
+                        .execute(conn)
+                })
+                .await
+                .expect("Failed to store refresh token")
+                .expect("Failed to store refresh token");
 
             // Return token response
             Ok(Json(json!({
@@ -1289,7 +1713,7 @@ async fn jwks(State(skey): State<SigningKey>) -> Result<Json<Value>> {
 ///
 /// Implements RFC7009 for revoking refresh tokens
 async fn revoke(
-    State(db): State<Db>,
+    State(db): State<Pool>,
     Json(form_data): Json<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
     // Extract required parameters
@@ -1308,13 +1732,28 @@ async fn revoke(
     }
 
     // Revoke the token
-    _ = sqlx::query!(
-        r#"UPDATE oauth_refresh_tokens SET revoked = TRUE WHERE token = ?"#,
-        token
-    )
-    .execute(&db)
-    .await
-    .context("failed to revoke token")?;
+    // _ = sqlx::query!(
+    //     r#"UPDATE oauth_refresh_tokens SET revoked = TRUE WHERE token = ?"#,
+    //     token
+    // )
+    // .execute(&db)
+    // .await
+    // .context("failed to revoke token")?;
+    use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
+    let token_cloned = token.to_owned();
+    _ = db
+        .get()
+        .await
+        .expect("Failed to get database connection")
+        .interact(move |conn| {
+            update(RefreshTokenSchema::oauth_refresh_tokens)
+                .filter(RefreshTokenSchema::token.eq(token_cloned))
+                .set(RefreshTokenSchema::revoked.eq(true))
+                .execute(conn)
+        })
+        .await
+        .expect("Failed to revoke token")
+        .expect("Failed to revoke token");
 
     // RFC7009 requires a 200 OK with an empty response
     Ok(Json(json!({})))
@@ -1325,7 +1764,7 @@ async fn revoke(
 ///
 /// Implements RFC7662 for introspecting tokens
 async fn introspect(
-    State(db): State<Db>,
+    State(db): State<Pool>,
     State(skey): State<SigningKey>,
     Json(form_data): Json<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
@@ -1368,14 +1807,31 @@ async fn introspect(
 
     // For refresh tokens, check if it's been revoked
     if is_refresh_token {
-        let is_revoked = sqlx::query_scalar!(
-            r#"SELECT revoked FROM oauth_refresh_tokens WHERE token = ?"#,
-            token
-        )
-        .fetch_optional(&db)
-        .await
-        .context("failed to query token")?
-        .unwrap_or(true);
+        // let is_revoked = sqlx::query_scalar!(
+        //     r#"SELECT revoked FROM oauth_refresh_tokens WHERE token = ?"#,
+        //     token
+        // )
+        // .fetch_optional(&db)
+        // .await
+        // .context("failed to query token")?
+        // .unwrap_or(true);
+        use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
+        let token_cloned = token.to_owned();
+        let is_revoked = db
+            .get()
+            .await
+            .expect("Failed to get database connection")
+            .interact(move |conn| {
+                RefreshTokenSchema::oauth_refresh_tokens
+                    .filter(RefreshTokenSchema::token.eq(token_cloned))
+                    .select(RefreshTokenSchema::revoked)
+                    .first::<bool>(conn)
+                    .optional()
+            })
+            .await
+            .expect("Failed to query token")
+            .expect("Failed to query token")
+            .unwrap_or(true);
 
         if is_revoked {
             return Ok(Json(json!({"active": false})));
