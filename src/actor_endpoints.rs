@@ -1,3 +1,7 @@
+/// HACK: store private user preferences in the PDS.
+///
+/// We shouldn't have to know about any bsky endpoints to store private user data.
+/// This will _very likely_ be changed in the future.
 use atrium_api::app::bsky::actor;
 use axum::{Json, routing::post};
 use constcat::concat;

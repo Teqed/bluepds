@@ -1,5 +1,6 @@
 //! PDS implementation.
 mod account_manager;
+mod actor_endpoints;
 mod actor_store;
 mod auth;
 mod config;
@@ -16,12 +17,6 @@ mod schema;
 mod service_proxy;
 #[cfg(test)]
 mod tests;
-
-/// HACK: store private user preferences in the PDS.
-///
-/// We shouldn't have to know about any bsky endpoints to store private user data.
-/// This will _very likely_ be changed in the future.
-mod actor_endpoints;
 
 use anyhow::{Context as _, anyhow};
 use atrium_api::types::string::Did;
