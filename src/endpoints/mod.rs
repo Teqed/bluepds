@@ -1,8 +1,8 @@
 //! Root module for all endpoints.
-mod identity;
-mod repo;
-mod server;
-mod sync;
+// mod identity;
+// mod repo;
+// mod server;
+// mod sync;
 
 use axum::{Json, Router, routing::get};
 use serde_json::json;
@@ -18,10 +18,9 @@ pub(crate) async fn health() -> Result<Json<serde_json::Value>> {
 
 /// Register all root routes.
 pub(crate) fn routes() -> Router<AppState> {
-    Router::new()
-        .route("/_health", get(health))
-        .merge(identity::routes()) // com.atproto.identity
-        .merge(repo::routes()) // com.atproto.repo
-        .merge(server::routes()) // com.atproto.server
-        .merge(sync::routes()) // com.atproto.sync
+    Router::new().route("/_health", get(health))
+    // .merge(identity::routes()) // com.atproto.identity
+    // .merge(repo::routes()) // com.atproto.repo
+    // .merge(server::routes()) // com.atproto.server
+    // .merge(sync::routes()) // com.atproto.sync
 }
