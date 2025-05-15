@@ -31,7 +31,7 @@ pub(crate) struct RecordReader {
 
 impl RecordReader {
     /// Create a new record handler.
-    pub(crate) fn new(
+    pub(crate) const fn new(
         did: String,
         db: deadpool_diesel::Pool<
             deadpool_diesel::Manager<SqliteConnection>,
@@ -93,11 +93,7 @@ impl RecordReader {
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-        let include_soft_deleted: bool = if let Some(include_soft_deleted) = include_soft_deleted {
-            include_soft_deleted
-        } else {
-            false
-        };
+        let include_soft_deleted: bool = include_soft_deleted.unwrap_or(false);
         let mut builder = RecordSchema::record
             .inner_join(RepoBlockSchema::repo_block.on(RepoBlockSchema::cid.eq(RecordSchema::cid)))
             .limit(limit)
@@ -156,11 +152,7 @@ impl RecordReader {
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
         use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
 
-        let include_soft_deleted: bool = if let Some(include_soft_deleted) = include_soft_deleted {
-            include_soft_deleted
-        } else {
-            false
-        };
+        let include_soft_deleted: bool = include_soft_deleted.unwrap_or(false);
         let mut builder = RecordSchema::record
             .inner_join(RepoBlockSchema::repo_block.on(RepoBlockSchema::cid.eq(RecordSchema::cid)))
             .select((Record::as_select(), RepoBlock::as_select()))
@@ -201,11 +193,7 @@ impl RecordReader {
     ) -> Result<bool> {
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
-        let include_soft_deleted: bool = if let Some(include_soft_deleted) = include_soft_deleted {
-            include_soft_deleted
-        } else {
-            false
-        };
+        let include_soft_deleted: bool = include_soft_deleted.unwrap_or(false);
         let mut builder = RecordSchema::record
             .select(RecordSchema::uri)
             .filter(RecordSchema::uri.eq(uri))
@@ -223,7 +211,7 @@ impl RecordReader {
             .interact(move |conn| builder.first::<String>(conn).optional())
             .await
             .expect("Failed to check record")?;
-        Ok(!!record_uri.is_some())
+        Ok(record_uri.is_some())
     }
 
     /// Get the takedown status of a record.
@@ -246,21 +234,25 @@ impl RecordReader {
             })
             .await
             .expect("Failed to get takedown status")?;
-        if let Some(res) = res {
-            if let Some(takedown_ref) = res {
-                Ok(Some(StatusAttr {
-                    applied: true,
-                    r#ref: Some(takedown_ref),
-                }))
-            } else {
-                Ok(Some(StatusAttr {
-                    applied: false,
-                    r#ref: None,
-                }))
-            }
-        } else {
-            Ok(None)
-        }
+        res.map_or_else(
+            || Ok(None),
+            |res| {
+                res.map_or_else(
+                    || {
+                        Ok(Some(StatusAttr {
+                            applied: false,
+                            r#ref: None,
+                        }))
+                    },
+                    |takedown_ref| {
+                        Ok(Some(StatusAttr {
+                            applied: true,
+                            r#ref: Some(takedown_ref),
+                        }))
+                    },
+                )
+            },
+        )
     }
 
     /// Get the current CID for a record URI.
@@ -373,7 +365,7 @@ impl RecordReader {
         let rkey = uri.get_rkey();
         let hostname = uri.get_hostname().to_string();
         let action = action.unwrap_or(WriteOpAction::Create);
-        let indexed_at = timestamp.unwrap_or_else(|| rsky_common::now());
+        let indexed_at = timestamp.unwrap_or_else(rsky_common::now);
         let row = Record {
             did: self.did.clone(),
             uri: uri.to_string(),
@@ -401,7 +393,7 @@ impl RecordReader {
             .get()
             .await?
             .interact(move |conn| {
-                insert_into(RecordSchema::record)
+                _ = insert_into(RecordSchema::record)
                     .values(row)
                     .on_conflict(RecordSchema::uri)
                     .do_update()
@@ -419,7 +411,7 @@ impl RecordReader {
         if let Some(record) = record {
             // Maintain backlinks
             let backlinks = get_backlinks(&uri, &record)?;
-            if let WriteOpAction::Update = action {
+            if action == WriteOpAction::Update {
                 // On update just recreate backlinks from scratch for the record, so we can clear out
                 // the old ones. E.g. for weird cases like updating a follow to be for a different did.
                 self.remove_backlinks_by_uri(&uri).await?;
@@ -441,10 +433,10 @@ impl RecordReader {
             .get()
             .await?
             .interact(move |conn| {
-                delete(RecordSchema::record)
+                _ = delete(RecordSchema::record)
                     .filter(RecordSchema::uri.eq(&uri))
                     .execute(conn)?;
-                delete(BacklinkSchema::backlink)
+                _ = delete(BacklinkSchema::backlink)
                     .filter(BacklinkSchema::uri.eq(&uri))
                     .execute(conn)?;
                 tracing::debug!(
@@ -464,7 +456,7 @@ impl RecordReader {
             .get()
             .await?
             .interact(move |conn| {
-                delete(BacklinkSchema::backlink)
+                _ = delete(BacklinkSchema::backlink)
                     .filter(BacklinkSchema::uri.eq(uri))
                     .execute(conn)?;
                 Ok(())
@@ -475,7 +467,7 @@ impl RecordReader {
 
     /// Add backlinks to the database.
     pub(crate) async fn add_backlinks(&self, backlinks: Vec<Backlink>) -> Result<()> {
-        if backlinks.len() == 0 {
+        if backlinks.is_empty() {
             Ok(())
         } else {
             use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
@@ -483,7 +475,7 @@ impl RecordReader {
                 .get()
                 .await?
                 .interact(move |conn| {
-                    insert_or_ignore_into(BacklinkSchema::backlink)
+                    _ = insert_or_ignore_into(BacklinkSchema::backlink)
                         .values(&backlinks)
                         .execute(conn)?;
                     Ok(())
@@ -502,10 +494,9 @@ impl RecordReader {
         use rsky_pds::schema::pds::record::dsl as RecordSchema;
 
         let takedown_ref: Option<String> = match takedown.applied {
-            true => match takedown.r#ref {
-                Some(takedown_ref) => Some(takedown_ref),
-                None => Some(rsky_common::now()),
-            },
+            true => takedown
+                .r#ref
+                .map_or_else(|| Some(rsky_common::now()), Some),
             false => None,
         };
         let uri_string = uri.to_string();
@@ -514,7 +505,7 @@ impl RecordReader {
             .get()
             .await?
             .interact(move |conn| {
-                update(RecordSchema::record)
+                _ = update(RecordSchema::record)
                     .filter(RecordSchema::uri.eq(uri_string))
                     .set(RecordSchema::takedownRef.eq(takedown_ref))
                     .execute(conn)?;

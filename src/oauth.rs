@@ -1,5 +1,5 @@
 //! OAuth endpoints
-
+#![allow(unnameable_types, unused_qualifications)]
 use crate::metrics::AUTH_FAILED;
 use crate::{AppConfig, AppState, Client, Error, Result, SigningKey};
 use anyhow::{Context as _, anyhow};

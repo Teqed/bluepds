@@ -34,7 +34,7 @@ pub fn select_account_qb(flags: Option<AvailabilityFlags>) -> BoxedQuery<'static
     let AvailabilityFlags {
         include_taken_down,
         include_deactivated,
-    } = flags.unwrap_or_else(|| AvailabilityFlags {
+    } = flags.unwrap_or(AvailabilityFlags {
         include_taken_down: Some(false),
         include_deactivated: Some(false),
     });
@@ -258,19 +258,20 @@ pub async fn delete_account(
     use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
 
     let did = did.to_owned();
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
-            delete(RepoRootSchema::repo_root)
+            _ = delete(RepoRootSchema::repo_root)
                 .filter(RepoRootSchema::did.eq(&did))
                 .execute(conn)?;
-            delete(EmailTokenSchema::email_token)
+            _ = delete(EmailTokenSchema::email_token)
                 .filter(EmailTokenSchema::did.eq(&did))
                 .execute(conn)?;
-            delete(RefreshTokenSchema::refresh_token)
+            _ = delete(RefreshTokenSchema::refresh_token)
                 .filter(RefreshTokenSchema::did.eq(&did))
                 .execute(conn)?;
-            delete(AccountSchema::account)
+            _ = delete(AccountSchema::account)
                 .filter(AccountSchema::did.eq(&did))
                 .execute(conn)?;
             delete(ActorSchema::actor)
@@ -291,14 +292,14 @@ pub async fn update_account_takedown_status(
     >,
 ) -> Result<()> {
     let takedown_ref: Option<String> = match takedown.applied {
-        true => match takedown.r#ref {
-            Some(takedown_ref) => Some(takedown_ref),
-            None => Some(rsky_common::now()),
-        },
+        true => takedown
+            .r#ref
+            .map_or_else(|| Some(rsky_common::now()), Some),
         false => None,
     };
     let did = did.to_owned();
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             update(ActorSchema::actor)
@@ -320,7 +321,8 @@ pub async fn deactivate_account(
     >,
 ) -> Result<()> {
     let did = did.to_owned();
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             update(ActorSchema::actor)
@@ -344,7 +346,8 @@ pub async fn activate_account(
     >,
 ) -> Result<()> {
     let did = did.to_owned();
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             update(ActorSchema::actor)
@@ -443,7 +446,8 @@ pub async fn set_email_confirmed_at(
     >,
 ) -> Result<()> {
     let did = did.to_owned();
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             update(AccountSchema::account)
@@ -479,16 +483,16 @@ pub async fn get_account_admin_status(
     match res {
         None => Ok(None),
         Some(res) => {
-            let takedown = match res.0 {
-                Some(takedown_ref) => StatusAttr {
-                    applied: true,
-                    r#ref: Some(takedown_ref),
-                },
-                None => StatusAttr {
+            let takedown = res.0.map_or(
+                StatusAttr {
                     applied: false,
                     r#ref: None,
                 },
-            };
+                |takedown_ref| StatusAttr {
+                    applied: true,
+                    r#ref: Some(takedown_ref),
+                },
+            );
             let deactivated = match res.1 {
                 Some(_) => StatusAttr {
                     applied: true,

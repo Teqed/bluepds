@@ -39,18 +39,23 @@ pub async fn ensure_invite_is_available(
             .first(conn)
             .optional()?;
 
-        if invite.is_none() || invite.clone().unwrap().disabled > 0 {
-            bail!("InvalidInviteCode: None or disabled. Provided invite code not available `{invite_code:?}`")
+        if let Some(invite) = invite {
+            if invite.disabled > 0 {
+                bail!("InvalidInviteCode: Disabled. Provided invite code not available `{invite_code:?}`");
+            }
+
+            let uses: i64 = InviteCodeUseSchema::invite_code_use
+                .count()
+                .filter(InviteCodeUseSchema::code.eq(&invite_code))
+                .first(conn)?;
+
+            if invite.available_uses as i64 <= uses {
+                bail!("InvalidInviteCode: Not enough uses. Provided invite code not available `{invite_code:?}`");
+            }
+        } else {
+            bail!("InvalidInviteCode: None. Provided invite code not available `{invite_code:?}`");
         }
 
-        let uses: i64 = InviteCodeUseSchema::invite_code_use
-            .count()
-            .filter(InviteCodeUseSchema::code.eq(&invite_code))
-            .first(conn)?;
-
-        if invite.unwrap().available_uses as i64 <= uses {
-            bail!("InvalidInviteCode: Not enough uses. Provided invite code not available `{invite_code:?}`")
-        }
         Ok(())
     }).await.expect("Failed to check invite code availability")?;
 
@@ -69,7 +74,8 @@ pub async fn record_invite_use(
     if let Some(invite_code) = invite_code {
         use rsky_pds::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
 
-        db.get()
+        _ = db
+            .get()
             .await?
             .interact(move |conn| {
                 insert_into(InviteCodeUseSchema::invite_code_use)
@@ -97,7 +103,8 @@ pub async fn create_invite_codes(
     use rsky_pds::schema::pds::invite_code::dsl as InviteCodeSchema;
     let created_at = rsky_common::now();
 
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             let rows: Vec<models::InviteCode> = to_create
@@ -158,7 +165,7 @@ pub async fn create_account_invite_codes(
                 })
                 .collect();
 
-            insert_into(InviteCodeSchema::invite_code)
+            _ = insert_into(InviteCodeSchema::invite_code)
                 .values(&rows)
                 .execute(conn)?;
 
@@ -256,7 +263,7 @@ pub async fn get_invite_codes_uses_v2(
             } = invite_code_use;
             match uses.get_mut(&code) {
                 None => {
-                    uses.insert(code, vec![CodeUse { used_by, used_at }]);
+                    drop(uses.insert(code, vec![CodeUse { used_by, used_at }]));
                 }
                 Some(matched_uses) => matched_uses.push(CodeUse { used_by, used_at }),
             };
@@ -317,7 +324,7 @@ pub async fn get_invited_by_for_accounts(
         BTreeMap::new(),
         |mut acc: BTreeMap<String, CodeDetail>, cur| {
             for code_use in &cur.uses {
-                acc.insert(code_use.used_by.clone(), cur.clone());
+                drop(acc.insert(code_use.used_by.clone(), cur.clone()));
             }
             acc
         },
@@ -336,7 +343,8 @@ pub async fn set_account_invites_disabled(
 
     let disabled: i16 = if disabled { 1 } else { 0 };
     let did = did.to_owned();
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             update(AccountSchema::account)
@@ -360,7 +368,8 @@ pub async fn disable_invite_codes(
 
     let DisableInviteCodesOpts { codes, accounts } = opts;
     if !codes.is_empty() {
-        db.get()
+        _ = db
+            .get()
             .await?
             .interact(move |conn| {
                 update(InviteCodeSchema::invite_code)
@@ -372,7 +381,8 @@ pub async fn disable_invite_codes(
             .expect("Failed to disable invite codes")?;
     }
     if !accounts.is_empty() {
-        db.get()
+        _ = db
+            .get()
             .await?
             .interact(move |conn| {
                 update(InviteCodeSchema::invite_code)

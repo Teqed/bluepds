@@ -2,7 +2,8 @@
 #![expect(
     clippy::pub_use,
     clippy::single_char_lifetime_names,
-    unused_qualifications
+    unused_qualifications,
+    unnameable_types
 )]
 use anyhow::{Context, Result};
 use cidv10::Cid;
@@ -14,7 +15,7 @@ pub struct ByteStream {
 }
 
 impl ByteStream {
-    pub fn new(bytes: Vec<u8>) -> Self {
+    pub const fn new(bytes: Vec<u8>) -> Self {
         Self { bytes }
     }
 
@@ -60,14 +61,14 @@ table! {
 
 impl BlobStoreSql {
     /// Create a new SQL-based blob store for the given DID
-    pub fn new(
+    pub const fn new(
         did: String,
         db: deadpool_diesel::Pool<
             deadpool_diesel::Manager<SqliteConnection>,
             deadpool_diesel::sqlite::Object,
         >,
     ) -> Self {
-        BlobStoreSql { db, did }
+        Self { db, did }
     }
 
     // /// Create a factory function for blob stores
@@ -92,7 +93,7 @@ impl BlobStoreSql {
         self.put_permanent_with_mime(
             Cid::try_from(format!("bafy{}", key)).unwrap_or_else(|_| Cid::default()),
             bytes,
-            "application/octet-stream".to_string(),
+            "application/octet-stream".to_owned(),
         )
         .await?;
 
@@ -118,7 +119,8 @@ impl BlobStoreSql {
         let bytes_len = bytes.len() as i32;
 
         // Store directly in the database
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {
@@ -148,7 +150,7 @@ impl BlobStoreSql {
 
     /// Store a blob directly as permanent
     pub async fn put_permanent(&self, cid: Cid, bytes: Vec<u8>) -> Result<()> {
-        self.put_permanent_with_mime(cid, bytes, "application/octet-stream".to_string())
+        self.put_permanent_with_mime(cid, bytes, "application/octet-stream".to_owned())
             .await
     }
 
@@ -158,7 +160,8 @@ impl BlobStoreSql {
         let did_clone = self.did.clone();
 
         // Update the quarantine flag in the database
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {
@@ -181,7 +184,8 @@ impl BlobStoreSql {
         let did_clone = self.did.clone();
 
         // Update the quarantine flag in the database
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {
@@ -248,7 +252,8 @@ impl BlobStoreSql {
         let did_clone = self.did.clone();
 
         // Delete from database
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {
@@ -272,7 +277,8 @@ impl BlobStoreSql {
         let did_clone = self.did.clone();
 
         // Delete all blobs in one operation
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {

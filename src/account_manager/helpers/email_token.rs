@@ -2,6 +2,7 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
+#![allow(unnameable_types, unused_qualifications)]
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_common::time::{MINUTE, from_str_to_utc, less_than_ago_s};
@@ -24,7 +25,7 @@ pub async fn create_email_token(
     db.get()
         .await?
         .interact(move |conn| {
-            insert_into(EmailTokenSchema::email_token)
+            _ = insert_into(EmailTokenSchema::email_token)
                 .values((
                     EmailTokenSchema::purpose.eq(purpose),
                     EmailTokenSchema::did.eq(did),
@@ -146,23 +147,23 @@ pub enum EmailTokenPurpose {
 }
 
 impl EmailTokenPurpose {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
-            EmailTokenPurpose::ConfirmEmail => "confirm_email",
-            EmailTokenPurpose::UpdateEmail => "update_email",
-            EmailTokenPurpose::ResetPassword => "reset_password",
-            EmailTokenPurpose::DeleteAccount => "delete_account",
-            EmailTokenPurpose::PlcOperation => "plc_operation",
+            Self::ConfirmEmail => "confirm_email",
+            Self::UpdateEmail => "update_email",
+            Self::ResetPassword => "reset_password",
+            Self::DeleteAccount => "delete_account",
+            Self::PlcOperation => "plc_operation",
         }
     }
 
     pub fn from_str(s: &str) -> Result<Self> {
         match s {
-            "confirm_email" => Ok(EmailTokenPurpose::ConfirmEmail),
-            "update_email" => Ok(EmailTokenPurpose::UpdateEmail),
-            "reset_password" => Ok(EmailTokenPurpose::ResetPassword),
-            "delete_account" => Ok(EmailTokenPurpose::DeleteAccount),
-            "plc_operation" => Ok(EmailTokenPurpose::PlcOperation),
+            "confirm_email" => Ok(Self::ConfirmEmail),
+            "update_email" => Ok(Self::UpdateEmail),
+            "reset_password" => Ok(Self::ResetPassword),
+            "delete_account" => Ok(Self::DeleteAccount),
+            "plc_operation" => Ok(Self::PlcOperation),
             _ => bail!("Unable to parse as EmailTokenPurpose: `{s:?}`"),
         }
     }
@@ -176,7 +177,7 @@ where
     type Row = String;
 
     fn build(s: String) -> deserialize::Result<Self> {
-        Ok(EmailTokenPurpose::from_str(&s)?)
+        Ok(Self::from_str(&s)?)
     }
 }
 
@@ -190,11 +191,11 @@ where
     ) -> serialize::Result {
         serialize::ToSql::<sql_types::Text, sqlite::Sqlite>::to_sql(
             match self {
-                EmailTokenPurpose::ConfirmEmail => "confirm_email",
-                EmailTokenPurpose::UpdateEmail => "update_email",
-                EmailTokenPurpose::ResetPassword => "reset_password",
-                EmailTokenPurpose::DeleteAccount => "delete_account",
-                EmailTokenPurpose::PlcOperation => "plc_operation",
+                Self::ConfirmEmail => "confirm_email",
+                Self::UpdateEmail => "update_email",
+                Self::ResetPassword => "reset_password",
+                Self::DeleteAccount => "delete_account",
+                Self::PlcOperation => "plc_operation",
             },
             out,
         )
@@ -211,7 +212,8 @@ pub async fn delete_email_token(
 ) -> Result<()> {
     use rsky_pds::schema::pds::email_token::dsl as EmailTokenSchema;
     let did = did.to_owned();
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             delete(EmailTokenSchema::email_token)
@@ -234,7 +236,8 @@ pub async fn delete_all_email_tokens(
     use rsky_pds::schema::pds::email_token::dsl as EmailTokenSchema;
 
     let did = did.to_owned();
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             delete(EmailTokenSchema::email_token)

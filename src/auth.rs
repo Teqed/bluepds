@@ -341,7 +341,7 @@ async fn validate_dpop_token(
     use crate::schema::pds::oauth_used_jtis::dsl as JtiSchema;
 
     // Check if JTI has been used before
-    let jti_string = jti.to_string();
+    let jti_string = jti.to_owned();
     let jti_used = state
         .db
         .get()
@@ -372,9 +372,9 @@ async fn validate_dpop_token(
         .unwrap_or_else(|| timestamp.checked_add(60).unwrap_or(timestamp));
 
     // Convert SQLx INSERT to Diesel
-    let jti_str = jti.to_string();
+    let jti_str = jti.to_owned();
     let thumbprint_str = calculated_thumbprint.to_string();
-    state
+    let _ = state
         .db
         .get()
         .await

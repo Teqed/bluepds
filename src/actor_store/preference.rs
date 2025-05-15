@@ -21,14 +21,14 @@ pub struct PreferenceReader {
 }
 
 impl PreferenceReader {
-    pub fn new(
+    pub const fn new(
         did: String,
         db: deadpool_diesel::Pool<
             deadpool_diesel::Manager<SqliteConnection>,
             deadpool_diesel::sqlite::Object,
         >,
     ) -> Self {
-        PreferenceReader { did, db }
+        Self { did, db }
     }
 
     pub async fn get_preferences(
@@ -50,9 +50,10 @@ impl PreferenceReader {
                     .load(conn)?;
                 let account_prefs = prefs_res
                     .into_iter()
-                    .filter(|pref| match &namespace {
-                        None => true,
-                        Some(namespace) => pref_match_namespace(namespace, &pref.name),
+                    .filter(|pref| {
+                        namespace
+                            .as_ref()
+                            .is_none_or(|namespace| pref_match_namespace(namespace, &pref.name))
                     })
                     .filter(|pref| pref_in_scope(scope.clone(), pref.name.clone()))
                     .map(|pref| {
@@ -88,11 +89,8 @@ impl PreferenceReader {
                 {
                     false => bail!("Some preferences are not in the {namespace} namespace"),
                     true => {
-                        let not_in_scope = values
-                            .iter()
-                            .filter(|value| !pref_in_scope(scope.clone(), value.get_type()))
-                            .collect::<Vec<&RefPreferences>>();
-                        if !not_in_scope.is_empty() {
+                        if values
+                            .iter().any(|value| !pref_in_scope(scope.clone(), value.get_type())) {
                             tracing::info!(
                         "@LOG: PreferenceReader::put_preferences() debug scope: {:?}, values: {:?}",
                         scope,
@@ -125,12 +123,12 @@ impl PreferenceReader {
                             .collect::<Vec<i32>>();
                         // replace all prefs in given namespace
                         if !all_pref_ids_in_namespace.is_empty() {
-                            delete(AccountPrefSchema::account_pref)
+                            _ = delete(AccountPrefSchema::account_pref)
                                 .filter(AccountPrefSchema::id.eq_any(all_pref_ids_in_namespace))
                                 .execute(conn)?;
                         }
                         if !put_prefs.is_empty() {
-                            insert_into(AccountPrefSchema::account_pref)
+                            _ = insert_into(AccountPrefSchema::account_pref)
                                 .values(
                                     put_prefs
                                         .into_iter()

@@ -26,7 +26,8 @@ pub async fn store_refresh_token(
 
     let exp = from_micros_to_utc((payload.exp.as_millis() / 1000) as i64);
 
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             insert_into(RefreshTokenSchema::refresh_token)
@@ -149,7 +150,7 @@ pub async fn delete_expired_refresh_tokens(
     db.get()
         .await?
         .interact(move |conn| {
-            delete(RefreshTokenSchema::refresh_token)
+            _ = delete(RefreshTokenSchema::refresh_token)
                 .filter(RefreshTokenSchema::did.eq(did))
                 .filter(RefreshTokenSchema::expiresAt.le(now))
                 .execute(conn)?;
@@ -176,22 +177,24 @@ pub async fn add_refresh_grace_period(
             } = opts;
             use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
 
-            update(RefreshTokenSchema::refresh_token)
-                .filter(RefreshTokenSchema::id.eq(id))
-                .filter(
-                    RefreshTokenSchema::nextId
-                        .is_null()
-                        .or(RefreshTokenSchema::nextId.eq(&next_id)),
-                )
-                .set((
-                    RefreshTokenSchema::expiresAt.eq(expires_at),
-                    RefreshTokenSchema::nextId.eq(&next_id),
-                ))
-                .returning(models::RefreshToken::as_select())
-                .get_results(conn)
-                .map_err(|error| {
-                    anyhow::Error::new(AuthHelperError::ConcurrentRefresh).context(error)
-                })?;
+            drop(
+                update(RefreshTokenSchema::refresh_token)
+                    .filter(RefreshTokenSchema::id.eq(id))
+                    .filter(
+                        RefreshTokenSchema::nextId
+                            .is_null()
+                            .or(RefreshTokenSchema::nextId.eq(&next_id)),
+                    )
+                    .set((
+                        RefreshTokenSchema::expiresAt.eq(expires_at),
+                        RefreshTokenSchema::nextId.eq(&next_id),
+                    ))
+                    .returning(models::RefreshToken::as_select())
+                    .get_results(conn)
+                    .map_err(|error| {
+                        anyhow::Error::new(AuthHelperError::ConcurrentRefresh).context(error)
+                    })?,
+            );
             Ok(())
         })
         .await

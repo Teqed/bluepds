@@ -20,7 +20,8 @@ pub async fn update_root(
 
     let now = rsky_common::now();
 
-    db.get()
+    _ = db
+        .get()
         .await?
         .interact(move |conn| {
             insert_into(RepoRootSchema::repo_root)

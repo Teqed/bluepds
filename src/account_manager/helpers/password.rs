@@ -156,7 +156,7 @@ pub async fn update_user_password(
     db.get()
         .await?
         .interact(move |conn| {
-            update(AccountSchema::account)
+            _ = update(AccountSchema::account)
                 .filter(AccountSchema::did.eq(opts.did))
                 .set(AccountSchema::password.eq(opts.password_encrypted))
                 .execute(conn)?;
@@ -181,7 +181,7 @@ pub async fn delete_app_password(
     db.get()
         .await?
         .interact(move |conn| {
-            delete(AppPasswordSchema::app_password)
+            _ = delete(AppPasswordSchema::app_password)
                 .filter(AppPasswordSchema::did.eq(did))
                 .filter(AppPasswordSchema::name.eq(name))
                 .execute(conn)?;

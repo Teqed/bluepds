@@ -1,3 +1,4 @@
+#![allow(unnameable_types, unused_qualifications)]
 pub mod pds {
 
     // Legacy tables

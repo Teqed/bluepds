@@ -437,13 +437,13 @@ async fn run() -> anyhow::Result<()> {
             let path_blob = path_repo.replace("repo", "blob");
             let actor_blob_pool =
                 establish_pool(&path_blob).context("failed to create database connection pool")?;
-            actor_pools.insert(
+            drop(actor_pools.insert(
                 did.to_string(),
                 ActorPools {
                     repo: actor_repo_pool,
                     blob: actor_blob_pool,
                 },
-            );
+            ));
         }
     }
     // Apply pending migrations
@@ -494,11 +494,6 @@ async fn run() -> anyhow::Result<()> {
         total_count: i32,
     }
 
-    // let result = diesel::sql_query(
-    //     "SELECT (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites) AS total_count",
-    // )
-    // .get_result::<TotalCount>(conn)
-    // .context("failed to query database")?;
     let result = conn.interact(move |conn| {
         diesel::sql_query(
             "SELECT (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites) AS total_count",
@@ -515,15 +510,18 @@ async fn run() -> anyhow::Result<()> {
         let uuid = Uuid::new_v4().to_string();
 
         let uuid_clone = uuid.clone();
-        conn.interact(move |conn| {
-            diesel::sql_query(
+        _ = conn
+            .interact(move |conn| {
+                diesel::sql_query(
             "INSERT INTO invites (id, did, count, created_at) VALUES (?, NULL, 1, datetime('now'))",
         )
         .bind::<diesel::sql_types::Text, _>(uuid_clone)
         .execute(conn)
         .context("failed to create new invite code")
         .expect("should be able to create invite code")
-        });
+            })
+            .await
+            .expect("should be able to create invite code");
 
         // N.B: This is a sensitive message, so we're bypassing `tracing` here and
         // logging it directly to console.

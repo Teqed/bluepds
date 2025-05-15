@@ -58,7 +58,7 @@ impl BlobReader {
             deadpool_diesel::sqlite::Object,
         >,
     ) -> Self {
-        BlobReader {
+        Self {
             did: blobstore.did.clone(),
             blobstore,
             db,
@@ -158,11 +158,7 @@ impl BlobReader {
             size,
             cid,
             mime_type,
-            width: if let Some(ref info) = img_info {
-                Some(info.width as i32)
-            } else {
-                None
-            },
+            width: img_info.as_ref().map(|info| info.width as i32),
             height: if let Some(info) = img_info {
                 Some(info.height as i32)
             } else {
@@ -207,12 +203,12 @@ impl BlobReader {
         SET \"tempKey\" = EXCLUDED.\"tempKey\" \
             WHERE pds.blob.\"tempKey\" is not null;");
             #[expect(trivial_casts)]
-            upsert
+            let _ = upsert
                 .bind::<Text, _>(&cid.to_string())
                 .bind::<Text, _>(&did)
                 .bind::<Text, _>(&mime_type)
                 .bind::<Integer, _>(size as i32)
-                .bind::<Nullable<Text>, _>(Some(temp_key.clone()))
+                .bind::<Nullable<Text>, _>(Some(temp_key))
                 .bind::<Nullable<Integer>, _>(width)
                 .bind::<Nullable<Integer>, _>(height)
                 .bind::<Text, _>(created_at)
@@ -227,28 +223,31 @@ impl BlobReader {
     pub async fn process_write_blobs(&self, writes: Vec<PreparedWrite>) -> Result<()> {
         self.delete_dereferenced_blobs(writes.clone()).await?;
 
-        let _ = stream::iter(writes)
-            .then(|write| async move {
-                Ok::<(), anyhow::Error>(match write {
-                    PreparedWrite::Create(w) => {
-                        for blob in w.blobs {
-                            self.verify_blob_and_make_permanent(blob.clone()).await?;
-                            self.associate_blob(blob, w.uri.clone()).await?;
+        drop(
+            stream::iter(writes)
+                .then(async move |write| {
+                    match write {
+                        PreparedWrite::Create(w) => {
+                            for blob in w.blobs {
+                                self.verify_blob_and_make_permanent(blob.clone()).await?;
+                                self.associate_blob(blob, w.uri.clone()).await?;
+                            }
                         }
-                    }
-                    PreparedWrite::Update(w) => {
-                        for blob in w.blobs {
-                            self.verify_blob_and_make_permanent(blob.clone()).await?;
-                            self.associate_blob(blob, w.uri.clone()).await?;
+                        PreparedWrite::Update(w) => {
+                            for blob in w.blobs {
+                                self.verify_blob_and_make_permanent(blob.clone()).await?;
+                                self.associate_blob(blob, w.uri.clone()).await?;
+                            }
                         }
-                    }
-                    _ => (),
+                        _ => (),
+                    };
+                    Ok::<(), anyhow::Error>(())
                 })
-            })
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?,
+        );
 
         Ok(())
     }
@@ -295,7 +294,8 @@ impl BlobReader {
 
         // Now perform the delete
         let uris_clone = uris.clone();
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {
@@ -354,7 +354,8 @@ impl BlobReader {
         // Delete from the blob table
         let cids = cids_to_delete.clone();
         let did_clone = self.did.clone();
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {
@@ -368,17 +369,17 @@ impl BlobReader {
 
         // Delete from blob storage
         // Ideally we'd use a background queue here, but for now:
-        let _ = stream::iter(cids_to_delete)
-            .then(|cid| async move {
-                match Cid::from_str(&cid) {
+        drop(
+            stream::iter(cids_to_delete)
+                .then(async move |cid| match Cid::from_str(&cid) {
                     Ok(cid) => self.blobstore.delete(cid.to_string()).await,
                     Err(e) => Err(anyhow::Error::new(e)),
-                }
-            })
-            .collect::<Vec<_>>()
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?;
+                })
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>, _>>()?,
+        );
 
         Ok(())
     }
@@ -412,7 +413,8 @@ impl BlobReader {
                     .make_permanent(temp_key.clone(), blob.cid)
                     .await?;
             }
-            self.db
+            _ = self
+                .db
                 .get()
                 .await?
                 .interact(move |conn| {
@@ -436,7 +438,8 @@ impl BlobReader {
         let cid = blob.cid.to_string();
         let did = self.did.clone();
 
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {
@@ -628,16 +631,20 @@ impl BlobReader {
 
                 match res {
                     None => Ok(None),
-                    Some(res) => match res.takedown_ref {
-                        None => Ok(Some(StatusAttr {
-                            applied: false,
-                            r#ref: None,
-                        })),
-                        Some(takedown_ref) => Ok(Some(StatusAttr {
-                            applied: true,
-                            r#ref: Some(takedown_ref),
-                        })),
-                    },
+                    Some(res) => res.takedown_ref.map_or_else(
+                        || {
+                            Ok(Some(StatusAttr {
+                                applied: false,
+                                r#ref: None,
+                            }))
+                        },
+                        |takedown_ref| {
+                            Ok(Some(StatusAttr {
+                                applied: true,
+                                r#ref: Some(takedown_ref),
+                            }))
+                        },
+                    ),
                 }
             })
             .await
@@ -649,21 +656,19 @@ impl BlobReader {
         use rsky_pds::schema::pds::blob::dsl as BlobSchema;
 
         let takedown_ref: Option<String> = match takedown.applied {
-            true => match takedown.r#ref {
-                Some(takedown_ref) => Some(takedown_ref),
-                None => Some(now()),
-            },
+            true => takedown.r#ref.map_or_else(|| Some(now()), Some),
             false => None,
         };
 
         let blob_cid = blob.to_string();
         let did_clone = self.did.clone();
 
-        self.db
+        _ = self
+            .db
             .get()
             .await?
             .interact(move |conn| {
-                update(BlobSchema::blob)
+                _ = update(BlobSchema::blob)
                     .filter(BlobSchema::cid.eq(blob_cid))
                     .filter(BlobSchema::did.eq(did_clone))
                     .set(BlobSchema::takedownRef.eq(takedown_ref))

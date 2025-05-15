@@ -66,7 +66,7 @@ pub type AccountManagerCreator = Box<
 >;
 
 impl AccountManager {
-    pub fn new(
+    pub const fn new(
         db: deadpool_diesel::Pool<
             deadpool_diesel::Manager<SqliteConnection>,
             deadpool_diesel::sqlite::Object,
@@ -81,7 +81,7 @@ impl AccountManager {
                 deadpool_diesel::Manager<SqliteConnection>,
                 deadpool_diesel::sqlite::Object,
             >|
-                  -> AccountManager { AccountManager::new(db) },
+                  -> Self { Self::new(db) },
         )
     }
 
@@ -153,7 +153,7 @@ impl AccountManager {
         let (access_jwt, refresh_jwt) = auth::create_tokens(CreateTokensOpts {
             did: did.clone(),
             jwt_key,
-            service_did: env::var("PDS_SERVICE_DID").unwrap(),
+            service_did: env::var("PDS_SERVICE_DID").expect("PDS_SERVICE_DID not set"),
             scope: Some(AuthScope::Access),
             jti: None,
             expires_in: None,
@@ -246,7 +246,7 @@ impl AccountManager {
         let (access_jwt, refresh_jwt) = auth::create_tokens(CreateTokensOpts {
             did,
             jwt_key,
-            service_did: env::var("PDS_SERVICE_DID").unwrap(),
+            service_did: env::var("PDS_SERVICE_DID").expect("PDS_SERVICE_DID not set"),
             scope: Some(scope),
             jti: None,
             expires_in: None,
@@ -289,15 +289,16 @@ impl AccountManager {
             let next_id = token.next_id.unwrap_or_else(auth::get_refresh_token_id);
 
             let secp = Secp256k1::new();
-            let private_key = env::var("PDS_JWT_KEY_K256_PRIVATE_KEY_HEX").unwrap();
+            let private_key = env::var("PDS_JWT_KEY_K256_PRIVATE_KEY_HEX")
+                .expect("PDS_JWT_KEY_K256_PRIVATE_KEY_HEX not set");
             let secret_key =
-                SecretKey::from_slice(&hex::decode(private_key.as_bytes()).unwrap()).unwrap();
+                SecretKey::from_slice(&hex::decode(private_key.as_bytes()).expect("Invalid key"))?;
             let jwt_key = Keypair::from_secret_key(&secp, &secret_key);
 
             let (access_jwt, refresh_jwt) = auth::create_tokens(CreateTokensOpts {
                 did: token.did,
                 jwt_key,
-                service_did: env::var("PDS_SERVICE_DID").unwrap(),
+                service_did: env::var("PDS_SERVICE_DID").expect("PDS_SERVICE_DID not set"),
                 scope: Some(if token.app_password_name.is_none() {
                     AuthScope::Access
                 } else {
