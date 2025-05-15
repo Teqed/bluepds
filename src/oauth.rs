@@ -359,31 +359,6 @@ async fn par(
         .context("failed to compute expiration time")?
         .timestamp();
 
-    // _ = sqlx::query!(
-    //     r#"
-    //     INSERT INTO oauth_par_requests (
-    //         request_uri, client_id, response_type, code_challenge, code_challenge_method,
-    //         state, login_hint, scope, redirect_uri, response_mode, display,
-    //         created_at, expires_at
-    //     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    //     "#,
-    //     request_uri,
-    //     client_id,
-    //     response_type,
-    //     code_challenge,
-    //     code_challenge_method,
-    //     state,
-    //     login_hint,
-    //     scope,
-    //     redirect_uri,
-    //     response_mode,
-    //     display,
-    //     created_at,
-    //     expires_at
-    // )
-    // .execute(&db)
-    // .await
-    // .context("failed to store PAR request")?;
     use crate::schema::pds::oauth_par_requests::dsl as ParRequestSchema;
     let client_id = client_id.to_owned();
     let request_uri_cloned = request_uri.to_owned();
@@ -449,19 +424,6 @@ async fn authorize(
     let timestamp = chrono::Utc::now().timestamp();
 
     // Retrieve the PAR request from the database
-    // let par_request = sqlx::query!(
-    //     r#"
-    //     SELECT * FROM oauth_par_requests
-    //     WHERE request_uri = ? AND client_id = ? AND expires_at > ?
-    //     "#,
-    //     request_uri,
-    //     client_id,
-    //     timestamp
-    // )
-    // .fetch_optional(&db)
-    // .await
-    // .context("failed to query PAR request")?
-    // .context("PAR request not found or expired")?;
     use crate::schema::pds::oauth_par_requests::dsl as ParRequestSchema;
 
     let request_uri_clone = request_uri.to_owned();
@@ -575,37 +537,7 @@ async fn authorize_signin(
     let timestamp = chrono::Utc::now().timestamp();
 
     // Retrieve the PAR request
-    // let par_request = sqlx::query!(
-    //     r#"
-    //     SELECT * FROM oauth_par_requests
-    //     WHERE request_uri = ? AND client_id = ? AND expires_at > ?
-    //     "#,
-    //     request_uri,
-    //     client_id,
-    //     timestamp
-    // )
-    // .fetch_optional(&db)
-    // .await
-    // .context("failed to query PAR request")?
-    // .context("PAR request not found or expired")?;
     use crate::schema::pds::oauth_par_requests::dsl as ParRequestSchema;
-    // diesel::table! {
-    //     pds.oauth_par_requests (request_uri) {
-    //         request_uri -> Varchar,
-    //         client_id -> Varchar,
-    //         response_type -> Varchar,
-    //         code_challenge -> Varchar,
-    //         code_challenge_method -> Varchar,
-    //         state -> Nullable<Varchar>,
-    //         login_hint -> Nullable<Varchar>,
-    //         scope -> Nullable<Varchar>,
-    //         redirect_uri -> Nullable<Varchar>,
-    //         response_mode -> Nullable<Varchar>,
-    //         display -> Nullable<Varchar>,
-    //         created_at -> Int8,
-    //         expires_at -> Int8,
-    //     }
-    // }
     #[derive(Queryable, Selectable)]
     #[diesel(table_name = crate::schema::pds::oauth_par_requests)]
     #[diesel(check_for_backend(sqlite::Sqlite))]
@@ -720,27 +652,6 @@ async fn authorize_signin(
         .context("failed to compute expiration time")?
         .timestamp();
 
-    // _ = sqlx::query!(
-    //     r#"
-    //     INSERT INTO oauth_authorization_codes (
-    //         code, client_id, subject, code_challenge, code_challenge_method,
-    //         redirect_uri, scope, created_at, expires_at, used
-    //     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    //     "#,
-    //     code,
-    //     client_id,
-    //     account.did,
-    //     par_request.code_challenge,
-    //     par_request.code_challenge_method,
-    //     redirect_uri,
-    //     par_request.scope,
-    //     created_at,
-    //     expires_at,
-    //     false
-    // )
-    // .execute(&db)
-    // .await
-    // .context("failed to store authorization code")?;
     use crate::schema::pds::oauth_authorization_codes::dsl as AuthCodeSchema;
     let code_cloned = code.to_owned();
     let client_id = client_id.to_owned();
@@ -971,11 +882,6 @@ async fn verify_dpop_proof(
     }
 
     // 11. Check for replay attacks via JTI tracking
-    // let jti_used =
-    //     sqlx::query_scalar!(r#"SELECT COUNT(*) FROM oauth_used_jtis WHERE jti = ?"#, jti)
-    //         .fetch_one(db)
-    //         .await
-    //         .context("failed to check JTI")?;
     use crate::schema::pds::oauth_used_jtis::dsl as JtiSchema;
     let jti_clone = jti.to_owned();
     let jti_used = db
@@ -1002,19 +908,6 @@ async fn verify_dpop_proof(
     }
 
     // 12. Store the JTI to prevent replay attacks
-    // _ = sqlx::query!(
-    //     r#"
-    //     INSERT INTO oauth_used_jtis (jti, issuer, created_at, expires_at)
-    //     VALUES (?, ?, ?, ?)
-    //     "#,
-    //     jti,
-    //     thumbprint, // Use thumbprint as issuer identifier
-    //     now,
-    //     exp
-    // )
-    // .execute(db)
-    // .await
-    // .context("failed to store JTI")?;
     let jti_cloned = jti.to_owned();
     let issuer = thumbprint.to_owned();
     let created_at = now;
@@ -1039,10 +932,6 @@ async fn verify_dpop_proof(
 
     // 13. Cleanup expired JTIs periodically (1% chance on each request)
     if thread_rng().gen_range(0_i32..100_i32) == 0_i32 {
-        // _ = sqlx::query!(r#"DELETE FROM oauth_used_jtis WHERE expires_at < ?"#, now)
-        //     .execute(db)
-        //     .await
-        //     .context("failed to clean up expired JTIs")?;
         let now_clone = now.to_owned();
         _ = db
             .get()
@@ -1124,7 +1013,7 @@ async fn token(
         == "private_key_jwt";
 
     // Verify DPoP proof
-    let dpop_thumbprint = verify_dpop_proof(
+    let dpop_thumbprint_res = verify_dpop_proof(
         dpop_token,
         "POST",
         &format!("https://{}/oauth/token", config.host_name),
@@ -1170,23 +1059,17 @@ async fn token(
         // }
     } else {
         // Rule 2: For public clients, check if this DPoP key has been used before
-        // let is_key_reused = sqlx::query_scalar!(
-        //     r#"SELECT COUNT(*) FROM oauth_refresh_tokens WHERE dpop_thumbprint = ? AND client_id = ?"#,
-        //     dpop_thumbprint,
-        //     client_id
-        // )
-        // .fetch_one(&db)
-        // .await
-        // .context("failed to check key usage history")? > 0;
         use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
+        let dpop_thumbprint_clone = dpop_thumbprint_res.to_owned();
+        let client_id_clone = client_id.to_owned();
         let is_key_reused = db
             .get()
             .await
             .expect("Failed to get database connection")
             .interact(move |conn| {
                 RefreshTokenSchema::oauth_refresh_tokens
-                    .filter(RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint))
-                    .filter(RefreshTokenSchema::client_id.eq(client_id))
+                    .filter(RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint_clone))
+                    .filter(RefreshTokenSchema::client_id.eq(client_id_clone))
                     .count()
                     .get_result::<i64>(conn)
                     .optional()
@@ -1219,36 +1102,8 @@ async fn token(
             let timestamp = chrono::Utc::now().timestamp();
 
             // Retrieve and validate the authorization code
-            // let auth_code = sqlx::query!(
-            //     r#"
-            //     SELECT * FROM oauth_authorization_codes
-            //     WHERE code = ? AND client_id = ? AND redirect_uri = ? AND expires_at > ? AND used = FALSE
-            //     "#,
-            //     code,
-            //     client_id,
-            //     redirect_uri,
-            //     timestamp
-            // )
-            // .fetch_optional(&db)
-            // .await
-            // .context("failed to query authorization code")?
-            // .context("authorization code not found, expired, or already used")?;
             use crate::schema::pds::oauth_authorization_codes::dsl as AuthCodeSchema;
-            // diesel::table! {
-            //     pds.oauth_authorization_codes (code) {
-            //         code -> Varchar,
-            //         client_id -> Varchar,
-            //         subject -> Varchar,
-            //         code_challenge -> Varchar,
-            //         code_challenge_method -> Varchar,
-            //         redirect_uri -> Varchar,
-            //         scope -> Nullable<Varchar>,
-            //         created_at -> Int8,
-            //         expires_at -> Int8,
-            //         used -> Bool,
-            //     }
-            // }
-            #[derive(Queryable, Selectable)]
+            #[derive(Queryable, Selectable, Serialize)]
             #[diesel(table_name = crate::schema::pds::oauth_authorization_codes)]
             #[diesel(check_for_backend(sqlite::Sqlite))]
             struct AuthCode {
@@ -1263,15 +1118,18 @@ async fn token(
                 expires_at: i64,
                 used: bool,
             }
+            let code_clone = code.to_owned();
+            let client_id_clone = client_id.to_owned();
+            let redirect_uri_clone = redirect_uri.to_owned();
             let auth_code = db
                 .get()
                 .await
                 .expect("Failed to get database connection")
                 .interact(move |conn| {
                     AuthCodeSchema::oauth_authorization_codes
-                        .filter(AuthCodeSchema::code.eq(code))
-                        .filter(AuthCodeSchema::client_id.eq(client_id))
-                        .filter(AuthCodeSchema::redirect_uri.eq(redirect_uri))
+                        .filter(AuthCodeSchema::code.eq(code_clone))
+                        .filter(AuthCodeSchema::client_id.eq(client_id_clone))
+                        .filter(AuthCodeSchema::redirect_uri.eq(redirect_uri_clone))
                         .filter(AuthCodeSchema::expires_at.gt(timestamp))
                         .filter(AuthCodeSchema::used.eq(false))
                         .first::<AuthCode>(conn)
@@ -1290,13 +1148,6 @@ async fn token(
             )?;
 
             // Mark the code as used
-            // _ = sqlx::query!(
-            //     r#"UPDATE oauth_authorization_codes SET used = TRUE WHERE code = ?"#,
-            //     code
-            // )
-            // .execute(&db)
-            // .await
-            // .context("failed to mark code as used")?;
             let code_cloned = code.to_owned();
             _ = db
                 .get()
@@ -1334,7 +1185,7 @@ async fn token(
                 "exp": access_token_expires_at,
                 "iat": now,
                 "cnf": {
-                    "jkt": dpop_thumbprint // Rule 1: Bind to DPoP key
+                    "jkt": dpop_thumbprint_res // Rule 1: Bind to DPoP key
                 },
                 "scope": auth_code.scope
             });
@@ -1350,7 +1201,7 @@ async fn token(
                 "exp": refresh_token_expires_at,
                 "iat": now,
                 "cnf": {
-                    "jkt": dpop_thumbprint // Rule 1: Bind to DPoP key
+                    "jkt": dpop_thumbprint_res // Rule 1: Bind to DPoP key
                 },
                 "scope": auth_code.scope
             });
@@ -1359,29 +1210,11 @@ async fn token(
                 .context("failed to sign refresh token")?;
 
             // Store the refresh token with DPoP binding
-            // _ = sqlx::query!(
-            //     r#"
-            //     INSERT INTO oauth_refresh_tokens (
-            //         token, client_id, subject, dpop_thumbprint, scope, created_at, expires_at, revoked
-            //     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            //     "#,
-            //     refresh_token,
-            //     client_id,
-            //     auth_code.subject,
-            //     dpop_thumbprint,
-            //     auth_code.scope,
-            //     now,
-            //     refresh_token_expires_at,
-            //     false
-            // )
-            // .execute(&db)
-            // .await
-            // .context("failed to store refresh token")?;
             use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
             let refresh_token_cloned = refresh_token.to_owned();
             let client_id_cloned = client_id.to_owned();
             let subject = auth_code.subject.to_owned();
-            let dpop_thumbprint_cloned = dpop_thumbprint.to_owned();
+            let dpop_thumbprint_cloned = dpop_thumbprint_res.to_owned();
             let scope = auth_code.scope.to_owned();
             let created_at = now;
             let expires_at = refresh_token_expires_at;
@@ -1427,34 +1260,8 @@ async fn token(
 
             // Rules 7 & 8: Verify refresh token and DPoP consistency
             // Retrieve the refresh token
-            // let token_data = sqlx::query!(
-            //     r#"
-            //     SELECT * FROM oauth_refresh_tokens
-            //     WHERE token = ? AND client_id = ? AND expires_at > ? AND revoked = FALSE AND dpop_thumbprint = ?
-            //     "#,
-            //     refresh_token,
-            //     client_id,
-            //     timestamp,
-            //     dpop_thumbprint // Rule 8: Must use same DPoP key
-            // )
-            // .fetch_optional(&db)
-            // .await
-            // .context("failed to query refresh token")?
-            // .context("refresh token not found, expired, revoked, or invalid for this DPoP key")?;
             use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
-            // diesel::table! {
-            //     pds.oauth_refresh_tokens (token) {
-            //         token -> Varchar,
-            //         client_id -> Varchar,
-            //         subject -> Varchar,
-            //         dpop_thumbprint -> Varchar,
-            //         scope -> Nullable<Varchar>,
-            //         created_at -> Int8,
-            //         expires_at -> Int8,
-            //         revoked -> Bool,
-            //     }
-            // }
-            #[derive(Queryable, Selectable)]
+            #[derive(Queryable, Selectable, Serialize)]
             #[diesel(table_name = crate::schema::pds::oauth_refresh_tokens)]
             #[diesel(check_for_backend(sqlite::Sqlite))]
             struct TokenData {
@@ -1467,17 +1274,20 @@ async fn token(
                 expires_at: i64,
                 revoked: bool,
             }
+            let dpop_thumbprint_clone = dpop_thumbprint_res.to_owned();
+            let refresh_token_clone = refresh_token.to_owned();
+            let client_id_clone = client_id.to_owned();
             let token_data = db
                 .get()
                 .await
                 .expect("Failed to get database connection")
                 .interact(move |conn| {
                     RefreshTokenSchema::oauth_refresh_tokens
-                        .filter(RefreshTokenSchema::token.eq(refresh_token))
-                        .filter(RefreshTokenSchema::client_id.eq(client_id))
+                        .filter(RefreshTokenSchema::token.eq(refresh_token_clone))
+                        .filter(RefreshTokenSchema::client_id.eq(client_id_clone))
                         .filter(RefreshTokenSchema::expires_at.gt(timestamp))
                         .filter(RefreshTokenSchema::revoked.eq(false))
-                        .filter(RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint))
+                        .filter(RefreshTokenSchema::dpop_thumbprint.eq(dpop_thumbprint_clone))
                         .first::<TokenData>(conn)
                         .optional()
                 })
@@ -1491,17 +1301,8 @@ async fn token(
                 let client_still_advertises_key = true; // Implement actual check against client jwks
                 if !client_still_advertises_key {
                     // Revoke all tokens bound to this key
-                    // _ = sqlx::query!(
-                    //     r#"UPDATE oauth_refresh_tokens SET revoked = TRUE
-                    //     WHERE client_id = ? AND dpop_thumbprint = ?"#,
-                    //     client_id,
-                    //     dpop_thumbprint
-                    // )
-                    // .execute(&db)
-                    // .await
-                    // .context("failed to revoke tokens")?;
                     let client_id_cloned = client_id.to_owned();
-                    let dpop_thumbprint_cloned = dpop_thumbprint.to_owned();
+                    let dpop_thumbprint_cloned = dpop_thumbprint_res.to_owned();
                     _ = db
                         .get()
                         .await
@@ -1527,13 +1328,6 @@ async fn token(
             }
 
             // Rotate the refresh token
-            // _ = sqlx::query!(
-            //     r#"UPDATE oauth_refresh_tokens SET revoked = TRUE WHERE token = ?"#,
-            //     refresh_token
-            // )
-            // .execute(&db)
-            // .await
-            // .context("failed to revoke old refresh token")?;
             let refresh_token_cloned = refresh_token.to_owned();
             _ = db
                 .get()
@@ -1566,7 +1360,7 @@ async fn token(
                 "exp": access_token_expires_at,
                 "iat": now,
                 "cnf": {
-                    "jkt": dpop_thumbprint
+                    "jkt": dpop_thumbprint_res
                 },
                 "scope": token_data.scope
             });
@@ -1582,7 +1376,7 @@ async fn token(
                 "exp": refresh_token_expires_at,
                 "iat": now,
                 "cnf": {
-                    "jkt": dpop_thumbprint
+                    "jkt": dpop_thumbprint_res
                 },
                 "scope": token_data.scope
             });
@@ -1591,28 +1385,10 @@ async fn token(
                 .context("failed to sign refresh token")?;
 
             // Store the new refresh token
-            // _ = sqlx::query!(
-            //     r#"
-            //     INSERT INTO oauth_refresh_tokens (
-            //         token, client_id, subject, dpop_thumbprint, scope, created_at, expires_at, revoked
-            //     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            //     "#,
-            //     new_refresh_token,
-            //     client_id,
-            //     token_data.subject,
-            //     dpop_thumbprint,
-            //     token_data.scope,
-            //     now,
-            //     refresh_token_expires_at,
-            //     false
-            // )
-            // .execute(&db)
-            // .await
-            // .context("failed to store refresh token")?;
             let new_refresh_token_cloned = new_refresh_token.to_owned();
             let client_id_cloned = client_id.to_owned();
             let subject = token_data.subject.to_owned();
-            let dpop_thumbprint_cloned = dpop_thumbprint.to_owned();
+            let dpop_thumbprint_cloned = dpop_thumbprint_res.to_owned();
             let scope = token_data.scope.to_owned();
             let created_at = now;
             let expires_at = refresh_token_expires_at;
@@ -1732,13 +1508,6 @@ async fn revoke(
     }
 
     // Revoke the token
-    // _ = sqlx::query!(
-    //     r#"UPDATE oauth_refresh_tokens SET revoked = TRUE WHERE token = ?"#,
-    //     token
-    // )
-    // .execute(&db)
-    // .await
-    // .context("failed to revoke token")?;
     use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
     let token_cloned = token.to_owned();
     _ = db
@@ -1807,14 +1576,6 @@ async fn introspect(
 
     // For refresh tokens, check if it's been revoked
     if is_refresh_token {
-        // let is_revoked = sqlx::query_scalar!(
-        //     r#"SELECT revoked FROM oauth_refresh_tokens WHERE token = ?"#,
-        //     token
-        // )
-        // .fetch_optional(&db)
-        // .await
-        // .context("failed to query token")?
-        // .unwrap_or(true);
         use crate::schema::pds::oauth_refresh_tokens::dsl as RefreshTokenSchema;
         let token_cloned = token.to_owned();
         let is_revoked = db
