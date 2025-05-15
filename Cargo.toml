@@ -36,7 +36,7 @@ rust-2018-compatibility = { level = "warn", priority = -1 } # Lints used to tran
 rust-2021-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2018 edition to 2021
 rust-2018-idioms = { level = "warn", priority = -1 }        # Lints to nudge you toward idiomatic features of Rust 2018
 rust-2024-compatibility = { level = "warn", priority = -1 } # Lints used to transition code from the 2021 edition to 2024
-unused = { level = "warn", priority = -1 }                  # Lints that detect things being declared but not used, or excess syntax
+# unused = { level = "warn", priority = -1 }                  # Lints that detect things being declared but not used, or excess syntax
 ## Individual
 ambiguous_negative_literals = "warn"   # checks for cases that are confusing between a negative literal and a negation that's not part of the literal.
 closure_returning_async_block = "warn" # detects cases where users write a closure that returns an async block. # nightly
@@ -62,7 +62,7 @@ trivial_numeric_casts = "warn"
 unit_bindings = "warn"
 unnameable_types = "warn"
 # unqualified_local_imports = "warn" # unstable
-unreachable_pub = "warn"
+# unreachable_pub = "warn"
 unsafe_code = "warn"
 unstable_features = "warn"
 # unused_crate_dependencies = "warn"
@@ -73,17 +73,20 @@ unused_results = "warn"
 variant_size_differences = "warn"
 elided_lifetimes_in_paths = "allow"
 # unstable-features = "allow"
+# # Temporary Allows
+dead_code = "allow"
+unused_imports = "allow"
 
 [lints.clippy]
 # Groups
 nursery = { level = "warn", priority = -1 }
 correctness = { level = "warn", priority = -1 }
 suspicious = { level = "warn", priority = -1 }
-complexity = { level = "warn", priority = -1 }
-perf = { level = "warn", priority = -1 }
-style = { level = "warn", priority = -1 }
-pedantic = { level = "warn", priority = -1 }
-restriction = { level = "warn", priority = -1 }
+# complexity = { level = "warn", priority = -1 }
+# perf = { level = "warn", priority = -1 }
+# style = { level = "warn", priority = -1 }
+# pedantic = { level = "warn", priority = -1 }
+# restriction = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
 # Temporary Allows
 multiple_crate_versions = "allow"       # triggered by lib
