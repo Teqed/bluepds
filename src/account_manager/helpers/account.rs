@@ -2,6 +2,8 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
+use crate::schema::pds::account::dsl as AccountSchema;
+use crate::schema::pds::actor::dsl as ActorSchema;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::offset::Utc as UtcOffset;
@@ -15,8 +17,6 @@ pub(crate) use rsky_pds::account_manager::helpers::account::{
     AccountStatus, ActorAccount, ActorJoinAccount, AvailabilityFlags, FormattedAccountStatus,
     GetAccountAdminStatusOutput, format_account_status,
 };
-use rsky_pds::schema::pds::account::dsl as AccountSchema;
-use rsky_pds::schema::pds::actor::dsl as ActorSchema;
 use std::ops::Add;
 use std::time::SystemTime;
 use thiserror::Error;
@@ -253,9 +253,9 @@ pub async fn delete_account(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::email_token::dsl as EmailTokenSchema;
-    use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
-    use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
+    use crate::schema::pds::email_token::dsl as EmailTokenSchema;
+    use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
+    use crate::schema::pds::repo_root::dsl as RepoRootSchema;
 
     let did = did.to_owned();
     _ = db
@@ -410,7 +410,7 @@ pub async fn update_handle(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::actor;
+    use crate::schema::pds::actor;
 
     let actor2 = diesel::alias!(actor as actor2);
 

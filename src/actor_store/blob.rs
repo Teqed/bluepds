@@ -67,7 +67,7 @@ impl BlobReader {
 
     /// Get metadata for a blob by CID
     pub async fn get_blob_metadata(&self, cid: Cid) -> Result<GetBlobMetadataOutput> {
-        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::pds::blob::dsl as BlobSchema;
 
         let did = self.did.clone();
         let found = self
@@ -112,7 +112,7 @@ impl BlobReader {
 
     /// Get all records that reference a specific blob
     pub async fn get_records_for_blob(&self, cid: Cid) -> Result<Vec<String>> {
-        use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
+        use crate::schema::pds::record_blob::dsl as RecordBlobSchema;
 
         let did = self.did.clone();
         let res = self
@@ -169,7 +169,7 @@ impl BlobReader {
 
     /// Track a blob that hasn't been associated with any records yet
     pub async fn track_untethered_blob(&self, metadata: BlobMetadata) -> Result<BlobRef> {
-        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::pds::blob::dsl as BlobSchema;
 
         let did = self.did.clone();
         self.db.get().await?.interact(move |conn| {
@@ -254,8 +254,8 @@ impl BlobReader {
 
     /// Delete blobs that are no longer referenced by any records
     pub async fn delete_dereferenced_blobs(&self, writes: Vec<PreparedWrite>) -> Result<()> {
-        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
-        use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
+        use crate::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::pds::record_blob::dsl as RecordBlobSchema;
 
         // Extract URIs
         let uris: Vec<String> = writes
@@ -386,7 +386,7 @@ impl BlobReader {
 
     /// Verify a blob and make it permanent
     pub async fn verify_blob_and_make_permanent(&self, blob: PreparedBlobRef) -> Result<()> {
-        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::pds::blob::dsl as BlobSchema;
 
         let found = self
             .db
@@ -433,7 +433,7 @@ impl BlobReader {
 
     /// Associate a blob with a record
     pub async fn associate_blob(&self, blob: PreparedBlobRef, record_uri: String) -> Result<()> {
-        use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
+        use crate::schema::pds::record_blob::dsl as RecordBlobSchema;
 
         let cid = blob.cid.to_string();
         let did = self.did.clone();
@@ -460,7 +460,7 @@ impl BlobReader {
 
     /// Count all blobs for this actor
     pub async fn blob_count(&self) -> Result<i64> {
-        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::pds::blob::dsl as BlobSchema;
 
         let did = self.did.clone();
         self.db
@@ -479,7 +479,7 @@ impl BlobReader {
 
     /// Count blobs associated with records
     pub async fn record_blob_count(&self) -> Result<i64> {
-        use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
+        use crate::schema::pds::record_blob::dsl as RecordBlobSchema;
 
         let did = self.did.clone();
         self.db
@@ -501,8 +501,8 @@ impl BlobReader {
         &self,
         opts: ListMissingBlobsOpts,
     ) -> Result<Vec<ListMissingBlobsRefRecordBlob>> {
-        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
-        use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
+        use crate::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::pds::record_blob::dsl as RecordBlobSchema;
 
         let did = self.did.clone();
         self.db
@@ -563,8 +563,8 @@ impl BlobReader {
 
     /// List all blobs with optional filtering
     pub async fn list_blobs(&self, opts: ListBlobsOpts) -> Result<Vec<String>> {
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
-        use rsky_pds::schema::pds::record_blob::dsl as RecordBlobSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::record_blob::dsl as RecordBlobSchema;
 
         let ListBlobsOpts {
             since,
@@ -617,7 +617,7 @@ impl BlobReader {
 
     /// Get the takedown status of a blob
     pub async fn get_blob_takedown_status(&self, cid: Cid) -> Result<Option<StatusAttr>> {
-        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::pds::blob::dsl as BlobSchema;
 
         self.db
             .get()
@@ -653,7 +653,7 @@ impl BlobReader {
 
     /// Update the takedown status of a blob
     pub async fn update_blob_takedown_status(&self, blob: Cid, takedown: StatusAttr) -> Result<()> {
-        use rsky_pds::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::pds::blob::dsl as BlobSchema;
 
         let takedown_ref: Option<String> = match takedown.applied {
             true => takedown.r#ref.map_or_else(|| Some(now()), Some),

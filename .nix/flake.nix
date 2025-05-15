@@ -26,6 +26,7 @@
           git
           nixd
           direnv
+          libpq
         ];
       overlays = [ (import rust-overlay) ];
       pkgs = import nixpkgs {
@@ -41,7 +42,7 @@
       nativeBuildInputs = with pkgs; [ rust pkg-config ];
     in
     with pkgs;
-    {      
+    {
       devShells.default = mkShell {
         inherit buildInputs nativeBuildInputs;
         LD_LIBRARY_PATH = nixpkgs.legacyPackages.x86_64-linux.lib.makeLibraryPath buildInputs;

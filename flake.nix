@@ -22,7 +22,7 @@
             "rust-analyzer"
           ];
         }));
-        
+
         inherit (pkgs) lib;
         unfilteredRoot = ./.; # The original, unfiltered source
         src = lib.fileset.toSource {
@@ -109,6 +109,7 @@
             git
             nixd
             direnv
+            libpq
           ];
         };
       })

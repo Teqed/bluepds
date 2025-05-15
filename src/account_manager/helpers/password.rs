@@ -21,7 +21,7 @@ pub async fn verify_account_password(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<bool> {
-    use rsky_pds::schema::pds::account::dsl as AccountSchema;
+    use crate::schema::pds::account::dsl as AccountSchema;
 
     let did = did.to_owned();
     let found = db
@@ -51,7 +51,7 @@ pub async fn verify_app_password(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<Option<String>> {
-    use rsky_pds::schema::pds::app_password::dsl as AppPasswordSchema;
+    use crate::schema::pds::app_password::dsl as AppPasswordSchema;
 
     let did = did.to_owned();
     let password = password.to_owned();
@@ -91,7 +91,7 @@ pub async fn create_app_password(
     let password = chunks.join("-");
     let password_encrypted = hash_app_password(&did, &password).await?;
 
-    use rsky_pds::schema::pds::app_password::dsl as AppPasswordSchema;
+    use crate::schema::pds::app_password::dsl as AppPasswordSchema;
 
     let created_at = now();
 
@@ -129,7 +129,7 @@ pub async fn list_app_passwords(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<Vec<(String, String)>> {
-    use rsky_pds::schema::pds::app_password::dsl as AppPasswordSchema;
+    use crate::schema::pds::app_password::dsl as AppPasswordSchema;
 
     let did = did.to_owned();
     db.get()
@@ -151,7 +151,7 @@ pub async fn update_user_password(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::account::dsl as AccountSchema;
+    use crate::schema::pds::account::dsl as AccountSchema;
 
     db.get()
         .await?
@@ -174,7 +174,7 @@ pub async fn delete_app_password(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::app_password::dsl as AppPasswordSchema;
+    use crate::schema::pds::app_password::dsl as AppPasswordSchema;
 
     let did = did.to_owned();
     let name = name.to_owned();

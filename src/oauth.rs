@@ -577,8 +577,8 @@ async fn authorize_signin(
         .expect("Failed to query PAR request");
 
     // Authenticate the user
-    use rsky_pds::schema::pds::account::dsl as AccountSchema;
-    use rsky_pds::schema::pds::actor::dsl as ActorSchema;
+    use crate::schema::pds::account::dsl as AccountSchema;
+    use crate::schema::pds::actor::dsl as ActorSchema;
     let username_clone = username.to_owned();
     let account = db
         .get()

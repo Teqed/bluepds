@@ -43,7 +43,7 @@ impl RecordReader {
 
     /// Count the total number of records.
     pub(crate) async fn record_count(&mut self) -> Result<i64> {
-        use rsky_pds::schema::pds::record::dsl::*;
+        use crate::schema::pds::record::dsl::*;
 
         let other_did = self.did.clone();
         self.db
@@ -59,7 +59,7 @@ impl RecordReader {
 
     /// List all collections in the repository.
     pub(crate) async fn list_collections(&self) -> Result<Vec<String>> {
-        use rsky_pds::schema::pds::record::dsl::*;
+        use crate::schema::pds::record::dsl::*;
 
         let other_did = self.did.clone();
         self.db
@@ -90,8 +90,8 @@ impl RecordReader {
         rkey_end: Option<String>,
         include_soft_deleted: Option<bool>,
     ) -> Result<Vec<RecordsForCollection>> {
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
-        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         let include_soft_deleted: bool = include_soft_deleted.unwrap_or(false);
         let mut builder = RecordSchema::record
@@ -149,8 +149,8 @@ impl RecordReader {
         cid: Option<String>,
         include_soft_deleted: Option<bool>,
     ) -> Result<Option<GetRecord>> {
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
-        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         let include_soft_deleted: bool = include_soft_deleted.unwrap_or(false);
         let mut builder = RecordSchema::record
@@ -191,7 +191,7 @@ impl RecordReader {
         cid: Option<String>,
         include_soft_deleted: Option<bool>,
     ) -> Result<bool> {
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
 
         let include_soft_deleted: bool = include_soft_deleted.unwrap_or(false);
         let mut builder = RecordSchema::record
@@ -219,7 +219,7 @@ impl RecordReader {
         &self,
         uri: String,
     ) -> Result<Option<StatusAttr>> {
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
 
         let res = self
             .db
@@ -257,7 +257,7 @@ impl RecordReader {
 
     /// Get the current CID for a record URI.
     pub(crate) async fn get_current_record_cid(&self, uri: String) -> Result<Option<Cid>> {
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
 
         let res = self
             .db
@@ -286,8 +286,8 @@ impl RecordReader {
         path: String,
         link_to: String,
     ) -> Result<Vec<Record>> {
-        use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::backlink::dsl as BacklinkSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
 
         let res = self
             .db
@@ -385,7 +385,7 @@ impl RecordReader {
             bail!("Expected indexed URI to contain a record key")
         }
 
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
 
         // Track current version of record
         let (record, uri) = self
@@ -426,8 +426,8 @@ impl RecordReader {
     #[tracing::instrument(skip_all)]
     pub(crate) async fn delete_record(&self, uri: &AtUri) -> Result<()> {
         tracing::debug!("@LOG DEBUG RecordReader::delete_record, deleting indexed record {uri}");
-        use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::backlink::dsl as BacklinkSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
         let uri = uri.to_string();
         self.db
             .get()
@@ -450,7 +450,7 @@ impl RecordReader {
 
     /// Remove backlinks for a URI.
     pub(crate) async fn remove_backlinks_by_uri(&self, uri: &AtUri) -> Result<()> {
-        use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
+        use crate::schema::pds::backlink::dsl as BacklinkSchema;
         let uri = uri.to_string();
         self.db
             .get()
@@ -470,7 +470,7 @@ impl RecordReader {
         if backlinks.is_empty() {
             Ok(())
         } else {
-            use rsky_pds::schema::pds::backlink::dsl as BacklinkSchema;
+            use crate::schema::pds::backlink::dsl as BacklinkSchema;
             self.db
                 .get()
                 .await?
@@ -491,7 +491,7 @@ impl RecordReader {
         uri: &AtUri,
         takedown: StatusAttr,
     ) -> Result<()> {
-        use rsky_pds::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::pds::record::dsl as RecordSchema;
 
         let takedown_ref: Option<String> = match takedown.applied {
             true => takedown

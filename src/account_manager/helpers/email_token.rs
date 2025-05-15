@@ -17,7 +17,7 @@ pub async fn create_email_token(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<String> {
-    use rsky_pds::schema::pds::email_token::dsl as EmailTokenSchema;
+    use crate::schema::pds::email_token::dsl as EmailTokenSchema;
     let token = get_random_token().to_uppercase();
     let now = rsky_common::now();
 
@@ -56,7 +56,7 @@ pub async fn assert_valid_token(
     >,
 ) -> Result<()> {
     let expiration_len = expiration_len.unwrap_or(MINUTE * 15);
-    use rsky_pds::schema::pds::email_token::dsl as EmailTokenSchema;
+    use crate::schema::pds::email_token::dsl as EmailTokenSchema;
 
     let did = did.to_owned();
     let token = token.to_owned();
@@ -96,7 +96,7 @@ pub async fn assert_valid_token_and_find_did(
     >,
 ) -> Result<String> {
     let expiration_len = expiration_len.unwrap_or(MINUTE * 15);
-    use rsky_pds::schema::pds::email_token::dsl as EmailTokenSchema;
+    use crate::schema::pds::email_token::dsl as EmailTokenSchema;
 
     let token = token.to_owned();
     let res = db
@@ -210,7 +210,7 @@ pub async fn delete_email_token(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::email_token::dsl as EmailTokenSchema;
+    use crate::schema::pds::email_token::dsl as EmailTokenSchema;
     let did = did.to_owned();
     _ = db
         .get()
@@ -233,7 +233,7 @@ pub async fn delete_all_email_tokens(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::email_token::dsl as EmailTokenSchema;
+    use crate::schema::pds::email_token::dsl as EmailTokenSchema;
 
     let did = did.to_owned();
     _ = db

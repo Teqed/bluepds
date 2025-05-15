@@ -16,7 +16,7 @@ pub async fn update_root(
     >,
 ) -> Result<()> {
     // @TODO balance risk of a race in the case of a long retry
-    use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
+    use crate::schema::pds::repo_root::dsl as RepoRootSchema;
 
     let now = rsky_common::now();
 

@@ -36,7 +36,7 @@ impl PreferenceReader {
         namespace: Option<String>,
         scope: AuthScope,
     ) -> Result<Vec<RefPreferences>> {
-        use rsky_pds::schema::pds::account_pref::dsl as AccountPrefSchema;
+        use crate::schema::pds::account_pref::dsl as AccountPrefSchema;
 
         let did = self.did.clone();
         self.db
@@ -99,7 +99,7 @@ impl PreferenceReader {
                             bail!("Do not have authorization to set preferences.");
                         }
                         // get all current prefs for user and prep new pref rows
-                        use rsky_pds::schema::pds::account_pref::dsl as AccountPrefSchema;
+                        use crate::schema::pds::account_pref::dsl as AccountPrefSchema;
                         let all_prefs = AccountPrefSchema::account_pref
                             .filter(AccountPrefSchema::did.eq(&did))
                             .select(AccountPref::as_select())

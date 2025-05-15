@@ -53,7 +53,7 @@ impl ReadableBlockstore for SqlRepoReader {
         let cid = *cid;
 
         Box::pin(async move {
-            use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+            use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
             let cached = {
                 let cache_guard = self.cache.read().await;
                 cache_guard.get(cid).cloned()
@@ -104,7 +104,7 @@ impl ReadableBlockstore for SqlRepoReader {
         let did: String = self.did.clone();
 
         Box::pin(async move {
-            use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+            use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
             let cached = {
                 let mut cache_guard = self.cache.write().await;
                 cache_guard.get_many(cids)?
@@ -202,7 +202,7 @@ impl RepoStorage for SqlRepoReader {
         let did: String = self.did.clone();
         let bytes_cloned = bytes.clone();
         Box::pin(async move {
-            use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+            use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
 
             _ = self
                 .db
@@ -235,7 +235,7 @@ impl RepoStorage for SqlRepoReader {
         let did: String = self.did.clone();
 
         Box::pin(async move {
-            use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+            use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
 
             let blocks: Vec<RepoBlock> = to_put
                 .map
@@ -277,7 +277,7 @@ impl RepoStorage for SqlRepoReader {
         let now: String = self.now.clone();
 
         Box::pin(async move {
-            use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
+            use crate::schema::pds::repo_root::dsl as RepoRootSchema;
 
             let is_create = is_create.unwrap_or(false);
             if is_create {
@@ -381,7 +381,7 @@ impl SqlRepoReader {
         let did: String = self.did.clone();
         let since = since.clone();
         let cursor = cursor.clone();
-        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+        use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         Ok(self
             .db
@@ -418,7 +418,7 @@ impl SqlRepoReader {
 
     pub async fn count_blocks(&self) -> Result<i64> {
         let did: String = self.did.clone();
-        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+        use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         let res = self
             .db
@@ -439,7 +439,7 @@ impl SqlRepoReader {
     /// Proactively cache all blocks from a particular commit (to prevent multiple roundtrips)
     pub async fn cache_rev(&mut self, rev: String) -> Result<()> {
         let did: String = self.did.clone();
-        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+        use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         let result: Vec<(String, Vec<u8>)> = self
             .db
@@ -465,7 +465,7 @@ impl SqlRepoReader {
             return Ok(());
         }
         let did: String = self.did.clone();
-        use rsky_pds::schema::pds::repo_block::dsl as RepoBlockSchema;
+        use crate::schema::pds::repo_block::dsl as RepoBlockSchema;
 
         let cid_strings: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();
         _ = self
@@ -483,7 +483,7 @@ impl SqlRepoReader {
 
     pub async fn get_root_detailed(&self) -> Result<CidAndRev> {
         let did: String = self.did.clone();
-        use rsky_pds::schema::pds::repo_root::dsl as RepoRootSchema;
+        use crate::schema::pds::repo_root::dsl as RepoRootSchema;
 
         let res = self
             .db

@@ -130,7 +130,7 @@ async fn validate_bearer_token(token: &str, state: &AppState) -> Result<Authenti
 
     // Extract subject (DID)
     if let Some(did) = claims.get("sub").and_then(serde_json::Value::as_str) {
-        use rsky_pds::schema::pds::account::dsl as AccountSchema;
+        use crate::schema::pds::account::dsl as AccountSchema;
         let did_clone = did.to_owned();
 
         let _did = state
@@ -395,7 +395,7 @@ async fn validate_dpop_token(
 
     // Extract subject (DID) from access token
     if let Some(did) = claims.get("sub").and_then(|v| v.as_str()) {
-        use rsky_pds::schema::pds::account::dsl as AccountSchema;
+        use crate::schema::pds::account::dsl as AccountSchema;
 
         let did_clone = did.to_owned();
 

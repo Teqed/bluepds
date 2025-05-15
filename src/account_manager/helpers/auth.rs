@@ -22,7 +22,7 @@ pub async fn store_refresh_token(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
+    use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
 
     let exp = from_micros_to_utc((payload.exp.as_millis() / 1000) as i64);
 
@@ -53,7 +53,7 @@ pub async fn revoke_refresh_token(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<bool> {
-    use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
+    use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
     db.get()
         .await?
         .interact(move |conn| {
@@ -74,7 +74,7 @@ pub async fn revoke_refresh_tokens_by_did(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<bool> {
-    use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
+    use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
     let did = did.to_owned();
     db.get()
         .await?
@@ -97,7 +97,7 @@ pub async fn revoke_app_password_refresh_token(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<bool> {
-    use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
+    use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
 
     let did = did.to_owned();
     let app_pass_name = app_pass_name.to_owned();
@@ -122,7 +122,7 @@ pub async fn get_refresh_token(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<Option<models::RefreshToken>> {
-    use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
+    use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
     let id = id.to_owned();
     db.get()
         .await?
@@ -144,7 +144,7 @@ pub async fn delete_expired_refresh_tokens(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
+    use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
     let did = did.to_owned();
 
     db.get()
@@ -175,7 +175,7 @@ pub async fn add_refresh_grace_period(
                 expires_at,
                 next_id,
             } = opts;
-            use rsky_pds::schema::pds::refresh_token::dsl as RefreshTokenSchema;
+            use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
 
             drop(
                 update(RefreshTokenSchema::refresh_token)

@@ -23,9 +23,9 @@ pub async fn ensure_invite_is_available(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::actor::dsl as ActorSchema;
-    use rsky_pds::schema::pds::invite_code::dsl as InviteCodeSchema;
-    use rsky_pds::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
+    use crate::schema::pds::actor::dsl as ActorSchema;
+    use crate::schema::pds::invite_code::dsl as InviteCodeSchema;
+    use crate::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
 
     db.get().await?.interact(move |conn| {
         let invite: Option<models::InviteCode> = InviteCodeSchema::invite_code
@@ -72,7 +72,7 @@ pub async fn record_invite_use(
     >,
 ) -> Result<()> {
     if let Some(invite_code) = invite_code {
-        use rsky_pds::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
+        use crate::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
 
         _ = db
             .get()
@@ -100,7 +100,7 @@ pub async fn create_invite_codes(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::invite_code::dsl as InviteCodeSchema;
+    use crate::schema::pds::invite_code::dsl as InviteCodeSchema;
     let created_at = rsky_common::now();
 
     _ = db
@@ -144,7 +144,7 @@ pub async fn create_account_invite_codes(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<Vec<CodeDetail>> {
-    use rsky_pds::schema::pds::invite_code::dsl as InviteCodeSchema;
+    use crate::schema::pds::invite_code::dsl as InviteCodeSchema;
 
     let for_account = for_account.to_owned();
     let rows = db
@@ -201,7 +201,7 @@ pub async fn get_account_invite_codes(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<Vec<CodeDetail>> {
-    use rsky_pds::schema::pds::invite_code::dsl as InviteCodeSchema;
+    use crate::schema::pds::invite_code::dsl as InviteCodeSchema;
 
     let did = did.to_owned();
     let res: Vec<models::InviteCode> = db
@@ -239,7 +239,7 @@ pub async fn get_invite_codes_uses_v2(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<BTreeMap<String, Vec<CodeUse>>> {
-    use rsky_pds::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
+    use crate::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
 
     let mut uses: BTreeMap<String, Vec<CodeUse>> = BTreeMap::new();
     if !codes.is_empty() {
@@ -282,8 +282,8 @@ pub async fn get_invited_by_for_accounts(
     if dids.is_empty() {
         return Ok(BTreeMap::new());
     }
-    use rsky_pds::schema::pds::invite_code::dsl as InviteCodeSchema;
-    use rsky_pds::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
+    use crate::schema::pds::invite_code::dsl as InviteCodeSchema;
+    use crate::schema::pds::invite_code_use::dsl as InviteCodeUseSchema;
 
     let dids = dids.clone();
     let res: Vec<models::InviteCode> = db
@@ -339,7 +339,7 @@ pub async fn set_account_invites_disabled(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::account::dsl as AccountSchema;
+    use crate::schema::pds::account::dsl as AccountSchema;
 
     let disabled: i16 = if disabled { 1 } else { 0 };
     let did = did.to_owned();
@@ -364,7 +364,7 @@ pub async fn disable_invite_codes(
         deadpool_diesel::sqlite::Object,
     >,
 ) -> Result<()> {
-    use rsky_pds::schema::pds::invite_code::dsl as InviteCodeSchema;
+    use crate::schema::pds::invite_code::dsl as InviteCodeSchema;
 
     let DisableInviteCodesOpts { codes, accounts } = opts;
     if !codes.is_empty() {
