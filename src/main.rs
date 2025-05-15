@@ -12,6 +12,7 @@ mod metrics;
 mod mmap;
 mod oauth;
 mod plc;
+mod schema;
 #[cfg(test)]
 mod tests;
 

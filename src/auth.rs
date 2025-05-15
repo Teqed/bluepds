@@ -130,22 +130,22 @@ async fn validate_bearer_token(token: &str, state: &AppState) -> Result<Authenti
 
     // Extract subject (DID)
     if let Some(did) = claims.get("sub").and_then(serde_json::Value::as_str) {
-        use crate::schema::accounts::dsl as AccountSchema;
+        use rsky_pds::schema::pds::account::dsl as AccountSchema;
+        let did_clone = did.to_owned();
 
-        let _status = state
+        let _did = state
             .db
             .get()
             .await
             .expect("failed to get db connection")
             .interact(move |conn| {
-                AccountSchema::accounts
-                    .filter(AccountSchema::did.eq(did.to_string()))
-                    .select(AccountSchema::status)
+                AccountSchema::account
+                    .filter(AccountSchema::did.eq(did_clone))
+                    .select(AccountSchema::did)
                     .first::<String>(conn)
             })
             .await
-            .with_context(|| format!("failed to query account {did}"))
-            .context("should fetch account status")?;
+            .expect("failed to query account");
 
         Ok(AuthenticatedUser {
             did: did.to_owned(),
@@ -338,7 +338,7 @@ async fn validate_dpop_token(
 
     let timestamp = chrono::Utc::now().timestamp();
 
-    use crate::schema::oauth_used_jtis::dsl as JtiSchema;
+    use crate::schema::pds::oauth_used_jtis::dsl as JtiSchema;
 
     // Check if JTI has been used before
     let jti_string = jti.to_string();
@@ -354,7 +354,8 @@ async fn validate_dpop_token(
                 .get_result::<i64>(conn)
         })
         .await
-        .context("failed to check JTI")?;
+        .expect("failed to query JTI")
+        .expect("failed to get JTI count");
 
     if jti_used > 0 {
         return Err(Error::with_status(
@@ -389,26 +390,29 @@ async fn validate_dpop_token(
                 .execute(conn)
         })
         .await
-        .context("failed to store JTI")?;
+        .expect("failed to insert JTI")
+        .expect("failed to insert JTI");
 
     // Extract subject (DID) from access token
-    if let Some(did) = claims.get("sub").and_then(|v| v.as_str) {
-        use crate::schema::accounts::dsl as AccountSchema;
+    if let Some(did) = claims.get("sub").and_then(|v| v.as_str()) {
+        use rsky_pds::schema::pds::account::dsl as AccountSchema;
 
-        let _status = state
+        let did_clone = did.to_owned();
+
+        let _did = state
             .db
             .get()
             .await
             .expect("failed to get db connection")
             .interact(move |conn| {
-                AccountSchema::accounts
-                    .filter(AccountSchema::did.eq(did.to_string()))
-                    .select(AccountSchema::status)
+                AccountSchema::account
+                    .filter(AccountSchema::did.eq(did_clone))
+                    .select(AccountSchema::did)
                     .first::<String>(conn)
             })
             .await
-            .with_context(|| format!("failed to query account {did}"))
-            .context("should fetch account status")?;
+            .expect("failed to query account")
+            .expect("failed to get account");
 
         Ok(AuthenticatedUser {
             did: did.to_owned(),
