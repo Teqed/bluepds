@@ -11,6 +11,7 @@ pub mod error;
 mod firehose;
 mod metrics;
 mod mmap;
+mod models;
 mod oauth;
 mod plc;
 mod schema;

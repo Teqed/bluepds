@@ -4,19 +4,66 @@
 //!
 //! Modified for SQLite backend
 
+use crate::models::pds::{Backlink, Record, RepoBlock};
 use anyhow::{Result, bail};
 use cidv10::Cid;
 use diesel::result::Error;
 use diesel::*;
 use futures::stream::{self, StreamExt};
 use rsky_lexicon::com::atproto::admin::StatusAttr;
-use rsky_pds::actor_store::record::{GetRecord, RecordsForCollection, get_backlinks};
-use rsky_pds::models::{Backlink, Record, RepoBlock};
-use rsky_repo::types::{RepoRecord, WriteOpAction};
+use rsky_pds::actor_store::record::{GetRecord, RecordsForCollection};
+use rsky_repo::storage::Ipld;
+use rsky_repo::types::{Ids, Lex, RepoRecord, WriteOpAction};
 use rsky_repo::util::cbor_to_lex_record;
 use rsky_syntax::aturi::AtUri;
+use rsky_syntax::aturi_validation::ensure_valid_at_uri;
+use rsky_syntax::did::ensure_valid_did;
+use serde_json::Value as JsonValue;
 use std::env;
 use std::str::FromStr;
+
+// @NOTE in the future this can be replaced with a more generic routine that pulls backlinks based on lex docs.
+// For now, we just want to ensure we're tracking links from follows, blocks, likes, and reposts.
+pub fn get_backlinks(uri: &AtUri, record: &RepoRecord) -> Result<Vec<Backlink>> {
+    if let Some(Lex::Ipld(Ipld::Json(JsonValue::String(record_type)))) = record.get("$type") {
+        if record_type == Ids::AppBskyGraphFollow.as_str()
+            || record_type == Ids::AppBskyGraphBlock.as_str()
+        {
+            if let Some(Lex::Ipld(Ipld::Json(JsonValue::String(subject)))) = record.get("subject") {
+                match ensure_valid_did(uri) {
+                    Ok(_) => {
+                        return Ok(vec![Backlink {
+                            uri: uri.to_string(),
+                            path: "subject".to_owned(),
+                            link_to: subject.clone(),
+                        }]);
+                    }
+                    Err(e) => bail!("get_backlinks Error: invalid did {}", e),
+                };
+            }
+        } else if record_type == Ids::AppBskyFeedLike.as_str()
+            || record_type == Ids::AppBskyFeedRepost.as_str()
+        {
+            if let Some(Lex::Map(ref_object)) = record.get("subject") {
+                if let Some(Lex::Ipld(Ipld::Json(JsonValue::String(subject_uri)))) =
+                    ref_object.get("uri")
+                {
+                    match ensure_valid_at_uri(uri) {
+                        Ok(_) => {
+                            return Ok(vec![Backlink {
+                                uri: uri.to_string(),
+                                path: "subject.uri".to_owned(),
+                                link_to: subject_uri.clone(),
+                            }]);
+                        }
+                        Err(e) => bail!("get_backlinks Error: invalid AtUri {}", e),
+                    };
+                }
+            }
+        }
+    }
+    Ok(Vec::new())
+}
 
 /// Combined handler for record operations with both read and write capabilities.
 pub(crate) struct RecordReader {

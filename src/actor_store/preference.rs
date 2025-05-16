@@ -4,13 +4,13 @@
 //!
 //! Modified for SQLite backend
 
+use crate::models::pds::AccountPref;
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_lexicon::app::bsky::actor::RefPreferences;
 use rsky_pds::actor_store::preference::pref_match_namespace;
 use rsky_pds::actor_store::preference::util::pref_in_scope;
 use rsky_pds::auth_verifier::AuthScope;
-use rsky_pds::models::AccountPref;
 
 pub struct PreferenceReader {
     pub did: String,

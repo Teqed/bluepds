@@ -5,6 +5,7 @@
 
 pub mod pds {
 
+    #![allow(unnameable_types, unused_qualifications)]
     use anyhow::{Result, bail};
     use chrono::DateTime;
     use chrono::offset::Utc;
@@ -155,6 +156,7 @@ pub mod pds {
     #[derive(
         Queryable,
         Identifiable,
+        Insertable,
         Selectable,
         Clone,
         Debug,
@@ -167,9 +169,10 @@ pub mod pds {
     #[diesel(check_for_backend(Sqlite))]
     pub struct AccountPref {
         pub id: i32,
-        pub did: String,
         pub name: String,
-        pub valueJson: Option<String>,
+        #[diesel(column_name = valueJson)]
+        #[serde(rename = "valueJson")]
+        pub value_json: Option<String>,
     }
 
     #[derive(
@@ -189,10 +192,18 @@ pub mod pds {
     pub struct Actor {
         pub did: String,
         pub handle: Option<String>,
-        pub createdAt: String,
-        pub takedownRef: Option<String>,
-        pub deactivatedAt: Option<String>,
-        pub deleteAfter: Option<String>,
+        #[diesel(column_name = createdAt)]
+        #[serde(rename = "createdAt")]
+        pub created_at: String,
+        #[diesel(column_name = takedownRef)]
+        #[serde(rename = "takedownRef")]
+        pub takedown_ref: Option<String>,
+        #[diesel(column_name = deactivatedAt)]
+        #[serde(rename = "deactivatedAt")]
+        pub deactivated_at: Option<String>,
+        #[diesel(column_name = deleteAfter)]
+        #[serde(rename = "deleteAfter")]
+        pub delete_after: Option<String>,
     }
 
     #[derive(
@@ -213,36 +224,15 @@ pub mod pds {
         pub did: String,
         pub name: String,
         pub password: String,
-        pub createdAt: String,
+        #[diesel(column_name = createdAt)]
+        #[serde(rename = "createdAt")]
+        pub created_at: String,
     }
 
     #[derive(
         Queryable,
         Identifiable,
-        Selectable,
-        Clone,
-        Debug,
-        PartialEq,
-        Default,
-        Serialize,
-        Deserialize,
-    )]
-    #[diesel(table_name = crate::schema::pds::authorization_request)]
-    #[diesel(check_for_backend(Sqlite))]
-    pub struct AuthorizationRequest {
-        pub id: String,
-        pub did: Option<String>,
-        pub deviceId: Option<String>,
-        pub clientId: String,
-        pub clientAuth: String,
-        pub parameters: String,
-        pub expiresAt: DateTime<Utc>,
-        pub code: Option<String>,
-    }
-
-    #[derive(
-        Queryable,
-        Identifiable,
+        Insertable,
         Selectable,
         Clone,
         Debug,
@@ -257,7 +247,9 @@ pub mod pds {
     pub struct Backlink {
         pub uri: String,
         pub path: String,
-        pub linkTo: String,
+        #[diesel(column_name = linkTo)]
+        #[serde(rename = "linkTo")]
+        pub link_to: String,
     }
 
     #[derive(
@@ -271,62 +263,28 @@ pub mod pds {
         Serialize,
         Deserialize,
     )]
-    #[diesel(primary_key(cid, did))]
+    #[diesel(treat_none_as_null = true)]
+    #[diesel(primary_key(cid))]
     #[diesel(table_name = crate::schema::pds::blob)]
     #[diesel(check_for_backend(Sqlite))]
     pub struct Blob {
         pub cid: String,
         pub did: String,
-        pub mimeType: String,
+        #[diesel(column_name = mimeType)]
+        #[serde(rename = "mimeType")]
+        pub mime_type: String,
         pub size: i32,
-        pub tempKey: Option<String>,
+        #[diesel(column_name = tempKey)]
+        #[serde(rename = "tempKey")]
+        pub temp_key: Option<String>,
         pub width: Option<i32>,
         pub height: Option<i32>,
-        pub createdAt: String,
-        pub takedownRef: Option<String>,
-    }
-
-    #[derive(
-        Queryable,
-        Identifiable,
-        Selectable,
-        Clone,
-        Debug,
-        PartialEq,
-        Default,
-        Serialize,
-        Deserialize,
-    )]
-    #[diesel(table_name = crate::schema::pds::device)]
-    #[diesel(check_for_backend(Sqlite))]
-    pub struct Device {
-        pub id: String,
-        pub sessionId: Option<String>,
-        pub userAgent: Option<String>,
-        pub ipAddress: String,
-        pub lastSeenAt: DateTime<Utc>,
-    }
-
-    #[derive(
-        Queryable,
-        Identifiable,
-        Selectable,
-        Clone,
-        Debug,
-        PartialEq,
-        Default,
-        Serialize,
-        Deserialize,
-    )]
-    #[diesel(primary_key(deviceId, did))]
-    #[diesel(table_name = crate::schema::pds::device_account)]
-    #[diesel(check_for_backend(Sqlite))]
-    pub struct DeviceAccount {
-        pub did: String,
-        pub deviceId: String,
-        pub authenticatedAt: DateTime<Utc>,
-        pub remember: bool,
-        pub authorizedClients: String,
+        #[diesel(column_name = createdAt)]
+        #[serde(rename = "createdAt")]
+        pub created_at: String,
+        #[diesel(column_name = takedownRef)]
+        #[serde(rename = "takedownRef")]
+        pub takedown_ref: Option<String>,
     }
 
     #[derive(
@@ -346,7 +304,78 @@ pub mod pds {
     pub struct DidDoc {
         pub did: String,
         pub doc: String,
-        pub updatedAt: i64,
+        #[diesel(column_name = updatedAt)]
+        #[serde(rename = "updatedAt")]
+        pub updated_at: i64,
+    }
+
+    #[derive(
+        Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize, AsExpression,
+    )]
+    #[diesel(sql_type = Text)]
+    pub enum EmailTokenPurpose {
+        #[default]
+        ConfirmEmail,
+        UpdateEmail,
+        ResetPassword,
+        DeleteAccount,
+        PlcOperation,
+    }
+
+    impl EmailTokenPurpose {
+        pub fn as_str(&self) -> &'static str {
+            match self {
+                EmailTokenPurpose::ConfirmEmail => "confirm_email",
+                EmailTokenPurpose::UpdateEmail => "update_email",
+                EmailTokenPurpose::ResetPassword => "reset_password",
+                EmailTokenPurpose::DeleteAccount => "delete_account",
+                EmailTokenPurpose::PlcOperation => "plc_operation",
+            }
+        }
+
+        pub fn from_str(s: &str) -> Result<Self> {
+            match s {
+                "confirm_email" => Ok(EmailTokenPurpose::ConfirmEmail),
+                "update_email" => Ok(EmailTokenPurpose::UpdateEmail),
+                "reset_password" => Ok(EmailTokenPurpose::ResetPassword),
+                "delete_account" => Ok(EmailTokenPurpose::DeleteAccount),
+                "plc_operation" => Ok(EmailTokenPurpose::PlcOperation),
+                _ => bail!("Unable to parse as EmailTokenPurpose: `{s:?}`"),
+            }
+        }
+    }
+
+    impl<DB> Queryable<sql_types::Text, DB> for EmailTokenPurpose
+    where
+        DB: backend::Backend,
+        String: deserialize::FromSql<sql_types::Text, DB>,
+    {
+        type Row = String;
+
+        fn build(s: String) -> deserialize::Result<Self> {
+            Ok(Self::from_str(&s)?)
+        }
+    }
+
+    impl serialize::ToSql<sql_types::Text, sqlite::Sqlite> for EmailTokenPurpose
+    where
+        String: serialize::ToSql<sql_types::Text, sqlite::Sqlite>,
+    {
+        fn to_sql<'lifetime>(
+            &'lifetime self,
+            out: &mut serialize::Output<'lifetime, '_, sqlite::Sqlite>,
+        ) -> serialize::Result {
+            serialize::ToSql::<sql_types::Text, sqlite::Sqlite>::to_sql(
+                match self {
+                    Self::ConfirmEmail => "confirm_email",
+                    Self::UpdateEmail => "update_email",
+                    Self::ResetPassword => "reset_password",
+                    Self::DeleteAccount => "delete_account",
+                    Self::PlcOperation => "plc_operation",
+                },
+                out,
+            )
+        }
     }
 
     #[derive(
@@ -364,15 +393,18 @@ pub mod pds {
     #[diesel(table_name = crate::schema::pds::email_token)]
     #[diesel(check_for_backend(Sqlite))]
     pub struct EmailToken {
-        pub purpose: String,
+        pub purpose: EmailTokenPurpose,
         pub did: String,
         pub token: String,
-        pub requestedAt: String,
+        #[diesel(column_name = requestedAt)]
+        #[serde(rename = "requestedAt")]
+        pub requested_at: String,
     }
 
     #[derive(
         Queryable,
         Identifiable,
+        Insertable,
         Selectable,
         Clone,
         Debug,
@@ -386,11 +418,19 @@ pub mod pds {
     #[diesel(check_for_backend(Sqlite))]
     pub struct InviteCode {
         pub code: String,
-        pub availableUses: i32,
+        #[diesel(column_name = availableUses)]
+        #[serde(rename = "availableUses")]
+        pub available_uses: i32,
         pub disabled: i16,
-        pub forAccount: String,
-        pub createdBy: String,
-        pub createdAt: String,
+        #[diesel(column_name = forAccount)]
+        #[serde(rename = "forAccount")]
+        pub for_account: String,
+        #[diesel(column_name = createdBy)]
+        #[serde(rename = "createdBy")]
+        pub created_by: String,
+        #[diesel(column_name = createdAt)]
+        #[serde(rename = "createdAt")]
+        pub created_at: String,
     }
 
     #[derive(
@@ -409,13 +449,18 @@ pub mod pds {
     #[diesel(check_for_backend(Sqlite))]
     pub struct InviteCodeUse {
         pub code: String,
-        pub usedBy: String,
-        pub usedAt: String,
+        #[diesel(column_name = usedBy)]
+        #[serde(rename = "usedBy")]
+        pub used_by: String,
+        #[diesel(column_name = usedAt)]
+        #[serde(rename = "usedAt")]
+        pub used_at: String,
     }
 
     #[derive(
         Queryable,
         Identifiable,
+        Insertable,
         Selectable,
         Clone,
         Debug,
@@ -433,12 +478,19 @@ pub mod pds {
         pub did: String,
         pub collection: String,
         pub rkey: String,
-        pub repoRev: Option<String>,
-        pub indexedAt: String,
-        pub takedownRef: Option<String>,
+        #[diesel(column_name = repoRev)]
+        #[serde(rename = "repoRev")]
+        pub repo_rev: Option<String>,
+        #[diesel(column_name = indexedAt)]
+        #[serde(rename = "indexedAt")]
+        pub indexed_at: String,
+        #[diesel(column_name = takedownRef)]
+        #[serde(rename = "takedownRef")]
+        pub takedown_ref: Option<String>,
     }
 
     #[derive(
+        QueryableByName,
         Queryable,
         Identifiable,
         Selectable,
@@ -453,8 +505,13 @@ pub mod pds {
     #[diesel(table_name = crate::schema::pds::record_blob)]
     #[diesel(check_for_backend(Sqlite))]
     pub struct RecordBlob {
-        pub blobCid: String,
-        pub recordUri: String,
+        #[diesel(column_name = blobCid, sql_type = Text)]
+        #[serde(rename = "blobCid")]
+        pub blob_cid: String,
+        #[diesel(column_name = recordUri, sql_type = Text)]
+        #[serde(rename = "recordUri")]
+        pub record_uri: String,
+        #[diesel(sql_type = Text)]
         pub did: String,
     }
 
@@ -489,6 +546,7 @@ pub mod pds {
         Queryable,
         Identifiable,
         Selectable,
+        Insertable,
         Clone,
         Debug,
         PartialEq,
@@ -496,14 +554,18 @@ pub mod pds {
         Serialize,
         Deserialize,
     )]
-    #[diesel(primary_key(cid, did))]
+    #[diesel(primary_key(cid))]
     #[diesel(table_name = crate::schema::pds::repo_block)]
     #[diesel(check_for_backend(Sqlite))]
     pub struct RepoBlock {
+        #[diesel(sql_type = Text)]
         pub cid: String,
         pub did: String,
-        pub repoRev: String,
+        #[diesel(column_name = repoRev)]
+        #[serde(rename = "repoRev")]
+        pub repo_rev: String,
         pub size: i32,
+        #[diesel(sql_type = Bytea)]
         pub content: Vec<u8>,
     }
 
@@ -525,13 +587,16 @@ pub mod pds {
         pub did: String,
         pub cid: String,
         pub rev: String,
-        pub indexedAt: String,
+        #[diesel(column_name = indexedAt)]
+        #[serde(rename = "indexedAt")]
+        pub indexed_at: String,
     }
 
     #[derive(
         Queryable,
         Identifiable,
         Selectable,
+        Insertable,
         Clone,
         Debug,
         PartialEq,
@@ -543,17 +608,38 @@ pub mod pds {
     #[diesel(table_name = crate::schema::pds::repo_seq)]
     #[diesel(check_for_backend(Sqlite))]
     pub struct RepoSeq {
-        pub seq: i64,
+        #[diesel(deserialize_as = i64)]
+        pub seq: Option<i64>,
         pub did: String,
-        pub eventType: String,
+        #[diesel(column_name = eventType)]
+        #[serde(rename = "eventType")]
+        pub event_type: String,
+        #[diesel(sql_type = Bytea)]
         pub event: Vec<u8>,
-        pub invalidated: i16,
-        pub sequencedAt: String,
+        #[diesel(deserialize_as = i16)]
+        pub invalidated: Option<i16>,
+        #[diesel(column_name = sequencedAt)]
+        #[serde(rename = "sequencedAt")]
+        pub sequenced_at: String,
+    }
+
+    impl RepoSeq {
+        pub fn new(did: String, event_type: String, event: Vec<u8>, sequenced_at: String) -> Self {
+            RepoSeq {
+                did,
+                event_type,
+                event,
+                sequenced_at,
+                invalidated: None, // default values used on insert
+                seq: None,         // default values used on insert
+            }
+        }
     }
 
     #[derive(
         Queryable,
         Identifiable,
+        Insertable,
         Selectable,
         Clone,
         Debug,
@@ -562,27 +648,45 @@ pub mod pds {
         Serialize,
         Deserialize,
     )]
+    #[diesel(primary_key(id))]
     #[diesel(table_name = crate::schema::pds::token)]
     #[diesel(check_for_backend(Sqlite))]
     pub struct Token {
         pub id: String,
         pub did: String,
-        pub tokenId: String,
-        pub createdAt: DateTime<Utc>,
-        pub updatedAt: DateTime<Utc>,
-        pub expiresAt: DateTime<Utc>,
-        pub clientId: String,
-        pub clientAuth: String,
-        pub deviceId: Option<String>,
+        #[diesel(column_name = tokenId)]
+        #[serde(rename = "tokenId")]
+        pub token_id: String,
+        #[diesel(column_name = createdAt)]
+        #[serde(rename = "createdAt")]
+        pub created_at: DateTime<Utc>,
+        #[diesel(column_name = updatedAt)]
+        #[serde(rename = "updatedAt")]
+        pub updated_at: DateTime<Utc>,
+        #[diesel(column_name = expiresAt)]
+        #[serde(rename = "expiresAt")]
+        pub expires_at: DateTime<Utc>,
+        #[diesel(column_name = clientId)]
+        #[serde(rename = "clientId")]
+        pub client_id: String,
+        #[diesel(column_name = clientAuth)]
+        #[serde(rename = "clientAuth")]
+        pub client_auth: String,
+        #[diesel(column_name = deviceId)]
+        #[serde(rename = "deviceId")]
+        pub device_id: Option<String>,
         pub parameters: String,
         pub details: Option<String>,
         pub code: Option<String>,
-        pub currentRefreshToken: Option<String>,
+        #[diesel(column_name = currentRefreshToken)]
+        #[serde(rename = "currentRefreshToken")]
+        pub current_refresh_token: Option<String>,
     }
 
     #[derive(
         Queryable,
         Identifiable,
+        Insertable,
         Selectable,
         Clone,
         Debug,
@@ -591,11 +695,99 @@ pub mod pds {
         Serialize,
         Deserialize,
     )]
-    #[diesel(primary_key(refreshToken))]
+    #[diesel(primary_key(id))]
+    #[diesel(table_name = crate::schema::pds::device)]
+    #[diesel(check_for_backend(Sqlite))]
+    pub struct Device {
+        pub id: String,
+        #[diesel(column_name = sessionId)]
+        #[serde(rename = "sessionId")]
+        pub session_id: Option<String>,
+        #[diesel(column_name = userAgent)]
+        #[serde(rename = "userAgent")]
+        pub user_agent: Option<String>,
+        #[diesel(column_name = ipAddress)]
+        #[serde(rename = "ipAddress")]
+        pub ip_address: String,
+        #[diesel(column_name = lastSeenAt)]
+        #[serde(rename = "lastSeenAt")]
+        pub last_seen_at: DateTime<Utc>,
+    }
+
+    #[derive(
+        Queryable,
+        Identifiable,
+        Insertable,
+        Selectable,
+        Clone,
+        Debug,
+        PartialEq,
+        Default,
+        Serialize,
+        Deserialize,
+    )]
+    #[diesel(primary_key(did))]
+    #[diesel(table_name = crate::schema::pds::device_account)]
+    #[diesel(check_for_backend(Sqlite))]
+    pub struct DeviceAccount {
+        pub did: String,
+        #[diesel(column_name = deviceId)]
+        #[serde(rename = "deviceId")]
+        pub device_id: String,
+        #[diesel(column_name = authenticatedAt)]
+        #[serde(rename = "authenticatedAt")]
+        pub authenticated_at: DateTime<Utc>,
+        pub remember: bool,
+        #[diesel(column_name = authorizedClients)]
+        #[serde(rename = "authorizedClients")]
+        pub authorized_clients: String,
+    }
+
+    #[derive(
+        Queryable,
+        Identifiable,
+        Insertable,
+        Selectable,
+        Clone,
+        Debug,
+        PartialEq,
+        Default,
+        Serialize,
+        Deserialize,
+    )]
+    #[diesel(primary_key(id))]
+    #[diesel(table_name = crate::schema::pds::authorization_request)]
+    #[diesel(check_for_backend(Sqlite))]
+    pub struct AuthorizationRequest {
+        pub id: String,
+        pub did: Option<String>,
+        #[diesel(column_name = deviceId)]
+        #[serde(rename = "deviceId")]
+        pub device_id: Option<String>,
+        #[diesel(column_name = clientId)]
+        #[serde(rename = "clientId")]
+        pub client_id: String,
+        #[diesel(column_name = clientAuth)]
+        #[serde(rename = "clientAuth")]
+        pub client_auth: String,
+        pub parameters: String,
+        #[diesel(column_name = expiresAt)]
+        #[serde(rename = "expiresAt")]
+        pub expires_at: DateTime<Utc>,
+        pub code: Option<String>,
+    }
+
+    #[derive(
+        Queryable, Insertable, Selectable, Clone, Debug, PartialEq, Default, Serialize, Deserialize,
+    )]
     #[diesel(table_name = crate::schema::pds::used_refresh_token)]
     #[diesel(check_for_backend(Sqlite))]
     pub struct UsedRefreshToken {
-        pub refreshToken: String,
-        pub tokenId: String,
+        #[diesel(column_name = tokenId)]
+        #[serde(rename = "tokenId")]
+        pub token_id: String,
+        #[diesel(column_name = refreshToken)]
+        #[serde(rename = "refreshToken")]
+        pub refresh_token: String,
     }
 }

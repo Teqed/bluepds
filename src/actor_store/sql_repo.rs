@@ -3,6 +3,8 @@
 //!
 //! Modified for SQLite backend
 
+use crate::models::pds as models;
+use crate::models::pds::RepoBlock;
 use anyhow::Result;
 use cidv10::Cid;
 use diesel::dsl::sql;
@@ -10,8 +12,6 @@ use diesel::prelude::*;
 use diesel::sql_types::{Bool, Text};
 use diesel::*;
 use futures::{StreamExt, TryStreamExt, stream};
-use rsky_pds::models;
-use rsky_pds::models::RepoBlock;
 use rsky_repo::block_map::{BlockMap, BlocksAndMissing};
 use rsky_repo::car::blocks_to_car_file;
 use rsky_repo::cid_set::CidSet;

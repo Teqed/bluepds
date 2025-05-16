@@ -10,13 +10,13 @@ use crate::account_manager::helpers::auth::{
 };
 use crate::account_manager::helpers::invite::CodeDetail;
 use crate::account_manager::helpers::password::UpdateUserPasswordOpts;
+use crate::models::pds::EmailTokenPurpose;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::offset::Utc as UtcOffset;
 use cidv10::Cid;
 use diesel::*;
 use futures::try_join;
-use helpers::email_token::EmailTokenPurpose;
 use helpers::{account, auth, email_token, invite, password, repo};
 use rsky_common::RFC3339_VARIANT;
 use rsky_common::time::{HOUR, from_micros_to_str, from_str_to_micros};

@@ -2,6 +2,8 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
+use crate::models::pds as models;
+use crate::models::pds::AppPassword;
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_common::{get_random_str, now};
@@ -10,8 +12,6 @@ use rsky_lexicon::com::atproto::server::CreateAppPasswordOutput;
 pub(crate) use rsky_pds::account_manager::helpers::password::{
     UpdateUserPasswordOpts, gen_salt_and_hash, hash_app_password, hash_with_salt, verify,
 };
-use rsky_pds::models;
-use rsky_pds::models::AppPassword;
 
 pub async fn verify_account_password(
     did: &str,

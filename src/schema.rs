@@ -106,7 +106,7 @@ pub mod pds {
             clientId -> Varchar,
             clientAuth -> Varchar,
             parameters -> Varchar,
-            expiresAt -> Timestamptz,
+            expiresAt -> TimestamptzSqlite,
             code -> Nullable<Varchar>,
         }
     }
@@ -139,7 +139,7 @@ pub mod pds {
             sessionId -> Nullable<Varchar>,
             userAgent -> Nullable<Varchar>,
             ipAddress -> Varchar,
-            lastSeenAt -> Timestamptz,
+            lastSeenAt -> TimestamptzSqlite,
         }
     }
 
@@ -147,7 +147,7 @@ pub mod pds {
         device_account (deviceId, did) {
             did -> Varchar,
             deviceId -> Varchar,
-            authenticatedAt -> Timestamptz,
+            authenticatedAt -> TimestamptzSqlite,
             remember -> Bool,
             authorizedClients -> Varchar,
         }
@@ -255,9 +255,9 @@ pub mod pds {
             id -> Varchar,
             did -> Varchar,
             tokenId -> Varchar,
-            createdAt -> Timestamptz,
-            updatedAt -> Timestamptz,
-            expiresAt -> Timestamptz,
+            createdAt -> TimestamptzSqlite,
+            updatedAt -> TimestamptzSqlite,
+            expiresAt -> TimestamptzSqlite,
             clientId -> Varchar,
             clientAuth -> Varchar,
             deviceId -> Nullable<Varchar>,

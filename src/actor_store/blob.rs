@@ -4,6 +4,7 @@
 //!
 //! Modified for SQLite backend
 
+use crate::models::pds as models;
 use anyhow::{Result, bail};
 use cidv10::Cid;
 use diesel::dsl::{count_distinct, exists, not};
@@ -19,11 +20,10 @@ use rsky_lexicon::blob_refs::BlobRef;
 use rsky_lexicon::com::atproto::admin::StatusAttr;
 use rsky_lexicon::com::atproto::repo::ListMissingBlobsRefRecordBlob;
 use rsky_pds::actor_store::blob::{
-    BlobMetadata, GetBlobMetadataOutput, ListBlobsOpts, ListMissingBlobsOpts, sha256_stream,
-    verify_blob,
+    BlobMetadata, GetBlobMetadataOutput, ListBlobsOpts, ListMissingBlobsOpts, accepted_mime,
+    sha256_stream,
 };
 use rsky_pds::image;
-use rsky_pds::models::models;
 use rsky_repo::error::BlobError;
 use rsky_repo::types::{PreparedBlobRef, PreparedWrite};
 use std::str::FromStr as _;
@@ -691,4 +691,33 @@ impl BlobReader {
             },
         }
     }
+}
+
+pub async fn verify_blob(blob: &PreparedBlobRef, found: &models::Blob) -> Result<()> {
+    if let Some(max_size) = blob.constraints.max_size {
+        if found.size as usize > max_size {
+            bail!(
+                "BlobTooLarge: This file is too large. It is {:?} but the maximum size is {:?}",
+                found.size,
+                max_size
+            )
+        }
+    }
+    if blob.mime_type != found.mime_type {
+        bail!(
+            "InvalidMimeType: Referenced MimeType does not match stored blob. Expected: {:?}, Got: {:?}",
+            found.mime_type,
+            blob.mime_type
+        )
+    }
+    if let Some(ref accept) = blob.constraints.accept {
+        if !accepted_mime(blob.mime_type.clone(), accept.clone()).await {
+            bail!(
+                "Wrong type of file. It is {:?} but it must match {:?}.",
+                blob.mime_type,
+                accept
+            )
+        }
+    }
+    Ok(())
 }

@@ -1,5 +1,0 @@
-CREATE TABLE IF NOT EXISTS actor_migration (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    appliedAt TEXT NOT NULL
-);

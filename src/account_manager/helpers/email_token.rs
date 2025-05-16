@@ -2,12 +2,12 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
-#![allow(unnameable_types, unused_qualifications)]
+use crate::models::pds::EmailToken;
+use crate::models::pds::EmailTokenPurpose;
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_common::time::{MINUTE, from_str_to_utc, less_than_ago_s};
 use rsky_pds::apis::com::atproto::server::get_random_token;
-use rsky_pds::models::EmailToken;
 
 pub async fn create_email_token(
     did: &str,
@@ -121,84 +121,6 @@ pub async fn assert_valid_token_and_find_did(
         Ok(res.did)
     } else {
         bail!("Token is invalid")
-    }
-}
-
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    Hash,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    AsExpression,
-)]
-#[diesel(sql_type = sql_types::Text)]
-pub enum EmailTokenPurpose {
-    #[default]
-    ConfirmEmail,
-    UpdateEmail,
-    ResetPassword,
-    DeleteAccount,
-    PlcOperation,
-}
-
-impl EmailTokenPurpose {
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            Self::ConfirmEmail => "confirm_email",
-            Self::UpdateEmail => "update_email",
-            Self::ResetPassword => "reset_password",
-            Self::DeleteAccount => "delete_account",
-            Self::PlcOperation => "plc_operation",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "confirm_email" => Ok(Self::ConfirmEmail),
-            "update_email" => Ok(Self::UpdateEmail),
-            "reset_password" => Ok(Self::ResetPassword),
-            "delete_account" => Ok(Self::DeleteAccount),
-            "plc_operation" => Ok(Self::PlcOperation),
-            _ => bail!("Unable to parse as EmailTokenPurpose: `{s:?}`"),
-        }
-    }
-}
-
-impl<DB> Queryable<sql_types::Text, DB> for EmailTokenPurpose
-where
-    DB: backend::Backend,
-    String: deserialize::FromSql<sql_types::Text, DB>,
-{
-    type Row = String;
-
-    fn build(s: String) -> deserialize::Result<Self> {
-        Ok(Self::from_str(&s)?)
-    }
-}
-
-impl serialize::ToSql<sql_types::Text, sqlite::Sqlite> for EmailTokenPurpose
-where
-    String: serialize::ToSql<sql_types::Text, sqlite::Sqlite>,
-{
-    fn to_sql<'lifetime>(
-        &'lifetime self,
-        out: &mut serialize::Output<'lifetime, '_, sqlite::Sqlite>,
-    ) -> serialize::Result {
-        serialize::ToSql::<sql_types::Text, sqlite::Sqlite>::to_sql(
-            match self {
-                Self::ConfirmEmail => "confirm_email",
-                Self::UpdateEmail => "update_email",
-                Self::ResetPassword => "reset_password",
-                Self::DeleteAccount => "delete_account",
-                Self::PlcOperation => "plc_operation",
-            },
-            out,
-        )
     }
 }
 

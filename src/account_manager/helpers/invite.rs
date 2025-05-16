@@ -2,6 +2,7 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
+use crate::models::pds as models;
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_lexicon::com::atproto::server::AccountCodes;
@@ -9,7 +10,6 @@ use rsky_lexicon::com::atproto::server::{
     InviteCode as LexiconInviteCode, InviteCodeUse as LexiconInviteCodeUse,
 };
 use rsky_pds::account_manager::DisableInviteCodesOpts;
-use rsky_pds::models::models;
 use std::collections::BTreeMap;
 use std::mem;
 

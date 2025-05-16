@@ -3,23 +3,27 @@
 //!
 //! Modified for SQLite backend
 use crate::schema::pds::account::dsl as AccountSchema;
+use crate::schema::pds::account::table as AccountTable;
 use crate::schema::pds::actor::dsl as ActorSchema;
+use crate::schema::pds::actor::table as ActorTable;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::offset::Utc as UtcOffset;
-use diesel::dsl::{exists, not};
 use diesel::result::{DatabaseErrorKind, Error as DieselError};
 use diesel::*;
 use rsky_common::RFC3339_VARIANT;
 use rsky_lexicon::com::atproto::admin::StatusAttr;
 #[expect(unused_imports)]
 pub(crate) use rsky_pds::account_manager::helpers::account::{
-    AccountStatus, ActorAccount, ActorJoinAccount, AvailabilityFlags, FormattedAccountStatus,
+    AccountStatus, ActorAccount, AvailabilityFlags, FormattedAccountStatus,
     GetAccountAdminStatusOutput, format_account_status,
 };
 use std::ops::Add;
 use std::time::SystemTime;
 use thiserror::Error;
+
+use diesel::dsl::{LeftJoinOn, exists, not};
+use diesel::helper_types::{Eq, IntoBoxed};
 
 #[derive(Error, Debug)]
 pub enum AccountHelperError {
@@ -28,7 +32,8 @@ pub enum AccountHelperError {
     #[error("DatabaseError: `{0}`")]
     DieselError(String),
 }
-
+pub type ActorJoinAccount =
+    LeftJoinOn<ActorTable, AccountTable, Eq<ActorSchema::did, AccountSchema::did>>;
 pub type BoxedQuery<'life> = dsl::IntoBoxed<'life, ActorJoinAccount, sqlite::Sqlite>;
 pub fn select_account_qb(flags: Option<AvailabilityFlags>) -> BoxedQuery<'static> {
     let AvailabilityFlags {

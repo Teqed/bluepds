@@ -2,6 +2,7 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
+use crate::models::pds as models;
 use anyhow::Result;
 use diesel::*;
 use rsky_common::time::from_micros_to_utc;
@@ -12,7 +13,6 @@ pub(crate) use rsky_pds::account_manager::helpers::auth::{
     RefreshToken, ServiceJwtHeader, ServiceJwtParams, ServiceJwtPayload, create_access_token,
     create_refresh_token, create_service_jwt, create_tokens, decode_refresh_token,
 };
-use rsky_pds::models;
 
 pub async fn store_refresh_token(
     payload: RefreshToken,
