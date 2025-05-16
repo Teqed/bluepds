@@ -7,6 +7,7 @@
 //! Modified for SQLite backend
 
 mod blob;
+pub(crate) mod blob_fs;
 mod preference;
 mod record;
 pub(crate) mod sql_blob;
