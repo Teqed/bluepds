@@ -122,7 +122,7 @@ async fn inner_apply_writes(
             .process_writes(writes.clone(), swap_commit_cid)
             .await?;
 
-        sequencer
+        _ = sequencer
             .write()
             .await
             .sequence_commit(did.clone(), commit.clone())
@@ -160,18 +160,10 @@ pub(crate) async fn apply_writes(
     Json(body): Json<ApplyWritesInput>,
 ) -> Result<(), ApiError> {
     tracing::debug!("@LOG: debug apply_writes {body:#?}");
-    let db_actors = state.db_actors.clone();
+    let db_actors = state.db_actors;
     let sequencer = &state.sequencer.sequencer;
     let account_manager = &state.account_manager.account_manager;
-    match inner_apply_writes(
-        body,
-        user,
-        sequencer.clone(),
-        db_actors,
-        account_manager.clone(),
-    )
-    .await
-    {
+    match inner_apply_writes(body, user, sequencer, db_actors, account_manager).await {
         Ok(()) => Ok(()),
         Err(error) => {
             tracing::error!("@LOG: ERROR: {error}");
