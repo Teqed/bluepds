@@ -1,0 +1,26 @@
+-- This file should undo anything in `up.sql`
+DROP TABLE IF EXISTS `oauth_refresh_tokens`;
+DROP TABLE IF EXISTS `repo_seq`;
+DROP TABLE IF EXISTS `blob`;
+DROP TABLE IF EXISTS `oauth_used_jtis`;
+DROP TABLE IF EXISTS `app_password`;
+DROP TABLE IF EXISTS `repo_block`;
+DROP TABLE IF EXISTS `device_account`;
+DROP TABLE IF EXISTS `backlink`;
+DROP TABLE IF EXISTS `actor`;
+DROP TABLE IF EXISTS `device`;
+DROP TABLE IF EXISTS `did_doc`;
+DROP TABLE IF EXISTS `email_token`;
+DROP TABLE IF EXISTS `invite_code`;
+DROP TABLE IF EXISTS `oauth_par_requests`;
+DROP TABLE IF EXISTS `record`;
+DROP TABLE IF EXISTS `repo_root`;
+DROP TABLE IF EXISTS `used_refresh_token`;
+DROP TABLE IF EXISTS `invite_code_use`;
+DROP TABLE IF EXISTS `oauth_authorization_codes`;
+DROP TABLE IF EXISTS `authorization_request`;
+DROP TABLE IF EXISTS `token`;
+DROP TABLE IF EXISTS `refresh_token`;
+DROP TABLE IF EXISTS `account_pref`;
+DROP TABLE IF EXISTS `record_blob`;
+DROP TABLE IF EXISTS `account`;
