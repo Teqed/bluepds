@@ -31,6 +31,7 @@ use secp256k1::{Keypair, Secp256k1, SecretKey};
 use std::collections::BTreeMap;
 use std::env;
 use std::time::SystemTime;
+use tokio::sync::RwLock;
 
 pub(crate) mod helpers {
     pub mod account;
@@ -499,4 +500,8 @@ impl AccountManager {
     ) -> Result<String> {
         email_token::create_email_token(did, purpose, &self.db).await
     }
+}
+
+pub struct SharedAccountManager {
+    pub account_manager: RwLock<AccountManagerCreator>,
 }

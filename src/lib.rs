@@ -19,6 +19,7 @@ mod service_proxy;
 #[cfg(test)]
 mod tests;
 
+use account_manager::{AccountManager, SharedAccountManager};
 use anyhow::{Context as _, anyhow};
 use atrium_api::types::string::Did;
 use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
@@ -44,6 +45,7 @@ use figment::{Figment, providers::Format as _};
 use firehose::FirehoseProducer;
 use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
 use rand::Rng as _;
+use rsky_pds::{crawlers::Crawlers, sequencer::Sequencer};
 use serde::{Deserialize, Serialize};
 use service_proxy::service_proxy;
 use std::{
@@ -52,7 +54,7 @@ use std::{
     str::FromStr as _,
     sync::Arc,
 };
-use tokio::net::TcpListener;
+use tokio::{net::TcpListener, sync::RwLock};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -67,8 +69,12 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("./migrations");
 pub type Result<T> = std::result::Result<T, Error>;
 /// The reqwest client type with middleware.
 pub type Client = reqwest_middleware::ClientWithMiddleware;
-/// The Azure credential type.
-pub type Cred = Arc<dyn TokenCredential>;
+
+/// The Shared Sequencer which requests crawls from upstream relays and emits events to the firehose.
+pub struct SharedSequencer {
+    /// The sequencer instance.
+    pub sequencer: RwLock<Sequencer>,
+}
 
 #[expect(
     clippy::arbitrary_source_item_ordering,
@@ -129,8 +135,11 @@ pub struct Args {
     pub verbosity: Verbosity<InfoLevel>,
 }
 
+/// The actor pools for the database connections.
 pub struct ActorPools {
+    /// The database connection pool for the actor's repository.
     pub repo: Pool,
+    /// The database connection pool for the actor's blobs.
     pub blob: Pool,
 }
 
@@ -148,8 +157,6 @@ impl Clone for ActorPools {
 pub struct AppState {
     /// The application configuration.
     pub config: AppConfig,
-    /// The Azure credential.
-    pub cred: Cred,
     /// The main database connection pool. Used for common PDS data, like invite codes.
     pub db: Pool,
     /// Actor-specific database connection pools. Hashed by DID.
@@ -160,7 +167,9 @@ pub struct AppState {
     /// The simple HTTP client.
     pub simple_client: reqwest::Client,
     /// The firehose producer.
-    pub firehose: FirehoseProducer,
+    pub sequencer: Arc<SharedSequencer>,
+    /// The account manager.
+    pub account_manager: Arc<SharedAccountManager>,
 
     /// The signing key.
     pub signing_key: SigningKey,
@@ -341,7 +350,22 @@ pub async fn run() -> anyhow::Result<()> {
     // conn.run_pending_migrations(MIGRATIONS)
     //     .expect("should be able to run migrations");
 
-    let (_fh, fhp) = firehose::spawn(client.clone(), config.clone());
+    let hostname = config.host_name.clone();
+    let crawlers: Vec<String> = config
+        .firehose
+        .relays
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    let sequencer = Arc::new(SharedSequencer {
+        sequencer: RwLock::new(Sequencer::new(
+            Crawlers::new(hostname, crawlers.clone()),
+            None,
+        )),
+    });
+    let account_manager = SharedAccountManager {
+        account_manager: RwLock::new(AccountManager::creator()),
+    };
 
     let addr = config
         .listen_address
@@ -360,13 +384,13 @@ pub async fn run() -> anyhow::Result<()> {
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(AppState {
-            cred,
             config: config.clone(),
             db: pool.clone(),
             db_actors: actor_pools.clone(),
             client: client.clone(),
             simple_client,
-            firehose: fhp,
+            sequencer: sequencer.clone(),
+            account_manager: Arc::new(account_manager),
             signing_key: skey,
             rotation_key: rkey,
         });
@@ -386,7 +410,7 @@ pub async fn run() -> anyhow::Result<()> {
 
     let result = conn.interact(move |conn| {
         diesel::sql_query(
-            "SELECT (SELECT COUNT(*) FROM accounts) + (SELECT COUNT(*) FROM invites) AS total_count",
+            "SELECT (SELECT COUNT(*) FROM account) + (SELECT COUNT(*) FROM invite_code) AS total_count",
         )
         .get_result::<TotalCount>(conn)
     })
@@ -399,19 +423,26 @@ pub async fn run() -> anyhow::Result<()> {
     if c == 0 {
         let uuid = Uuid::new_v4().to_string();
 
+        use crate::models::pds as models;
+        use crate::schema::pds::invite_code::dsl as InviteCode;
         let uuid_clone = uuid.clone();
-        _ = conn
-            .interact(move |conn| {
-                diesel::sql_query(
-            "INSERT INTO invites (id, did, count, created_at) VALUES (?, NULL, 1, datetime('now'))",
-        )
-        .bind::<diesel::sql_types::Text, _>(uuid_clone)
-        .execute(conn)
-        .context("failed to create new invite code")
-        .expect("should be able to create invite code")
+        drop(
+            conn.interact(move |conn| {
+                diesel::insert_into(InviteCode::invite_code)
+                    .values(models::InviteCode {
+                        code: uuid_clone,
+                        available_uses: 1,
+                        disabled: 0,
+                        for_account: "None".to_owned(),
+                        created_by: "None".to_owned(),
+                        created_at: "None".to_owned(),
+                    })
+                    .execute(conn)
+                    .context("failed to create new invite code")
             })
             .await
-            .expect("should be able to create invite code");
+            .expect("should be able to create invite code"),
+        );
 
         // N.B: This is a sensitive message, so we're bypassing `tracing` here and
         // logging it directly to console.
@@ -435,7 +466,10 @@ pub async fn run() -> anyhow::Result<()> {
     });
 
     // Now that the app is live, request a crawl from upstream relays.
-    firehose::reconnect_relays(&client, &config).await;
+    let mut background_sequencer = sequencer.sequencer.write().await.clone();
+    drop(tokio::spawn(
+        async move { background_sequencer.start().await },
+    ));
 
     serve
         .await

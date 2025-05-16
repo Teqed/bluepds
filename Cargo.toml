@@ -1,3 +1,5 @@
+# cargo-features = ["codegen-backend"]
+
 [package]
 name = "bluepds"
 version = "0.0.0"
@@ -13,9 +15,11 @@ categories = []
 
 [profile.dev.package."*"]
 opt-level = 3
+# codegen-backend = "cranelift"
 
 [profile.dev]
 opt-level = 1
+# codegen-backend = "cranelift"
 
 [profile.release]
 opt-level = "s"     # Slightly slows compile times, great improvements to file size and runtime performance.
@@ -131,7 +135,7 @@ enum_glob_use = "deny"
 # expect_used = "deny"
 
 [dependencies]
-multihash = "0.19.3"
+# multihash = "0.19.3"
 diesel = { version = "2.1.5", features = [
     "chrono",
     "sqlite",
@@ -139,15 +143,15 @@ diesel = { version = "2.1.5", features = [
     "returning_clauses_for_sqlite_3_35",
 ] }
 diesel_migrations = { version = "2.1.0" }
-r2d2 = "0.8.10"
+# r2d2 = "0.8.10"
 
 atrium-repo = "0.1"
 atrium-api = "0.25"
 # atrium-common = { version = "0.1.2", path = "atrium-common" }
 atrium-crypto = "0.1"
 # atrium-identity = { version = "0.1.4", path = "atrium-identity" }
-atrium-xrpc = "0.12"
-atrium-xrpc-client = "0.5"
+# atrium-xrpc = "0.12"
+# atrium-xrpc-client = "0.5"
 # bsky-sdk = { version = "0.1.19", path = "bsky-sdk" }
 rsky-syntax = { git = "https://github.com/blacksky-algorithms/rsky.git" }
 rsky-repo = { git = "https://github.com/blacksky-algorithms/rsky.git" }
@@ -159,11 +163,11 @@ rsky-lexicon = { git = "https://github.com/blacksky-algorithms/rsky.git" }
 # async-stream = "0.3"
 
 # DAG-CBOR codec
-ipld-core = "0.4.2"
+# ipld-core = "0.4.2"
 serde_ipld_dagcbor = { version = "0.6.2", default-features = false, features = [
     "std",
 ] }
-serde_ipld_dagjson = "0.2.0"
+# serde_ipld_dagjson = "0.2.0"
 cidv10 = { version = "0.10.1", package = "cid" }
 
 # Parsing and validation
@@ -172,9 +176,9 @@ chrono = "0.4.39"
 hex = "0.4.3"
 # langtag = "0.3"
 # multibase = "0.9.1"
-regex = "1.11.1"
+# regex = "1.11.1"
 serde = { version = "1.0.218", features = ["derive"] }
-serde_bytes = "0.11.17"
+# serde_bytes = "0.11.17"
 # serde_html_form = "0.2.6"
 serde_json = "1.0.139"
 # unsigned-varint = "0.8"
@@ -184,7 +188,7 @@ serde_json = "1.0.139"
 # elliptic-curve = "0.13.6"
 # jose-jwa = "0.1.2"
 # jose-jwk = { version = "0.1.2", default-features = false }
-k256 = "0.13.4"
+# k256 = "0.13.4"
 # p256 = { version = "0.13.2", default-features = false }
 rand = "0.8.5"
 sha2 = "0.10.8"
@@ -256,8 +260,7 @@ tracing-subscriber = "0.3.19"
 url = "2.5.4"
 uuid = { version = "1.14.0", features = ["v4"] }
 urlencoding = "2.1.3"
-async-trait = "0.1.88"
-lazy_static = "1.5.0"
+# lazy_static = "1.5.0"
 secp256k1 = "0.28.2"
 dotenvy = "0.15.7"
 deadpool-diesel = { version = "0.6.1", features = [

@@ -1282,12 +1282,9 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "argon2",
- "async-trait",
  "atrium-api 0.25.3",
  "atrium-crypto",
  "atrium-repo",
- "atrium-xrpc",
- "atrium-xrpc-client",
  "axum",
  "azure_core",
  "azure_identity",
@@ -1306,16 +1303,10 @@ dependencies = [
  "futures",
  "hex",
  "http-cache-reqwest",
- "ipld-core",
- "k256",
- "lazy_static",
  "memmap2",
  "metrics",
  "metrics-exporter-prometheus",
- "multihash 0.19.3",
- "r2d2",
  "rand 0.8.5",
- "regex",
  "reqwest 0.12.15",
  "reqwest-middleware",
  "rsky-common",
@@ -1325,9 +1316,7 @@ dependencies = [
  "rsky-syntax",
  "secp256k1",
  "serde",
- "serde_bytes",
  "serde_ipld_dagcbor",
- "serde_ipld_dagjson",
  "serde_json",
  "sha2",
  "thiserror 2.0.12",
@@ -5839,17 +5828,6 @@ dependencies = [
  "ipld-core",
  "scopeguard",
  "serde",
-]
-
-[[package]]
-name = "serde_ipld_dagjson"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3359b47ba7f4a306ef5984665e10539e212e97217afa489437d533208eecda36"
-dependencies = [
- "ipld-core",
- "serde",
- "serde_json",
 ]
 
 [[package]]
