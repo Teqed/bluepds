@@ -257,19 +257,31 @@ pub async fn delete_account(
         deadpool_diesel::Manager<SqliteConnection>,
         deadpool_diesel::sqlite::Object,
     >,
+    actor_db: &deadpool_diesel::Pool<
+        deadpool_diesel::Manager<SqliteConnection>,
+        deadpool_diesel::sqlite::Object,
+    >,
 ) -> Result<()> {
+    use crate::schema::actor_store::repo_root::dsl as RepoRootSchema;
     use crate::schema::pds::email_token::dsl as EmailTokenSchema;
     use crate::schema::pds::refresh_token::dsl as RefreshTokenSchema;
-    use crate::schema::pds::repo_root::dsl as RepoRootSchema;
 
+    let did_clone = did.to_owned();
+    _ = actor_db
+        .get()
+        .await?
+        .interact(move |conn| {
+            delete(RepoRootSchema::repo_root)
+                .filter(RepoRootSchema::did.eq(&did_clone))
+                .execute(conn)
+        })
+        .await
+        .expect("Failed to delete actor")?;
     let did = did.to_owned();
     _ = db
         .get()
         .await?
         .interact(move |conn| {
-            _ = delete(RepoRootSchema::repo_root)
-                .filter(RepoRootSchema::did.eq(&did))
-                .execute(conn)?;
             _ = delete(EmailTokenSchema::email_token)
                 .filter(EmailTokenSchema::did.eq(&did))
                 .execute(conn)?;

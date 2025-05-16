@@ -2,6 +2,7 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
+use crate::ActorPools;
 use crate::account_manager::helpers::account::{
     AccountStatus, ActorAccount, AvailabilityFlags, GetAccountAdminStatusOutput,
 };
@@ -16,6 +17,7 @@ use axum::extract::FromRef;
 use chrono::DateTime;
 use chrono::offset::Utc as UtcOffset;
 use cidv10::Cid;
+use deadpool_diesel::sqlite::Pool;
 use diesel::*;
 use futures::try_join;
 use helpers::{account, auth, email_token, invite, password, repo};
@@ -131,7 +133,11 @@ impl AccountManager {
         }
     }
 
-    pub async fn create_account(&self, opts: CreateAccountOpts) -> Result<(String, String)> {
+    pub async fn create_account(
+        &self,
+        opts: CreateAccountOpts,
+        actor_pools: &mut std::collections::HashMap<String, ActorPools>,
+    ) -> Result<(String, String)> {
         let CreateAccountOpts {
             did,
             handle,
@@ -172,7 +178,28 @@ impl AccountManager {
         }
         invite::record_invite_use(did.clone(), invite_code, now, &self.db).await?;
         auth::store_refresh_token(refresh_payload, None, &self.db).await?;
-        repo::update_root(did, repo_cid, repo_rev, &self.db).await?;
+
+        let did_path = did
+            .strip_prefix("did:plc:")
+            .ok_or_else(|| anyhow::anyhow!("Invalid DID"))?;
+        let path_repo = format!("sqlite://{}", did_path);
+        let actor_repo_pool =
+            crate::establish_pool(path_repo.as_str()).expect("Failed to establish pool");
+        let path_blob = path_repo.replace("repo", "blob");
+        let actor_blob_pool = crate::establish_pool(&path_blob).expect("Failed to establish pool");
+        let actor_pool = ActorPools {
+            repo: actor_repo_pool,
+            blob: actor_blob_pool,
+        };
+        actor_pools
+            .insert(did.clone(), actor_pool)
+            .expect("Failed to insert actor pools");
+        let db = actor_pools
+            .get(&did)
+            .ok_or_else(|| anyhow::anyhow!("Actor not found"))?
+            .repo
+            .clone();
+        repo::update_root(did, repo_cid, repo_rev, &db).await?;
         Ok((access_jwt, refresh_jwt))
     }
 
@@ -183,12 +210,32 @@ impl AccountManager {
         account::get_account_admin_status(did, &self.db).await
     }
 
-    pub async fn update_repo_root(&self, did: String, cid: Cid, rev: String) -> Result<()> {
-        repo::update_root(did, cid, rev, &self.db).await
+    pub async fn update_repo_root(
+        &self,
+        did: String,
+        cid: Cid,
+        rev: String,
+        actor_pools: &std::collections::HashMap<String, ActorPools>,
+    ) -> Result<()> {
+        let db = actor_pools
+            .get(&did)
+            .ok_or_else(|| anyhow::anyhow!("Actor not found"))?
+            .repo
+            .clone();
+        repo::update_root(did, cid, rev, &db).await
     }
 
-    pub async fn delete_account(&self, did: &str) -> Result<()> {
-        account::delete_account(did, &self.db).await
+    pub async fn delete_account(
+        &self,
+        did: &str,
+        actor_pools: &std::collections::HashMap<String, ActorPools>,
+    ) -> Result<()> {
+        let db = actor_pools
+            .get(did)
+            .ok_or_else(|| anyhow::anyhow!("Actor not found"))?
+            .repo
+            .clone();
+        account::delete_account(did, &self.db, &db).await
     }
 
     pub async fn takedown_account(&self, did: &str, takedown: StatusAttr) -> Result<()> {

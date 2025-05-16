@@ -134,6 +134,7 @@ async fn inner_apply_writes(
                 did.to_string(),
                 commit.commit_data.cid,
                 commit.commit_data.rev,
+                &actor_pools,
             )
             .await?;
         Ok(())

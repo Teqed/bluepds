@@ -4,19 +4,17 @@
 //! Modified for SQLite backend
 use anyhow::Result;
 use cidv10::Cid;
+use deadpool_diesel::{Manager, Pool, sqlite::Object};
 use diesel::*;
 
 pub async fn update_root(
     did: String,
     cid: Cid,
     rev: String,
-    db: &deadpool_diesel::Pool<
-        deadpool_diesel::Manager<SqliteConnection>,
-        deadpool_diesel::sqlite::Object,
-    >,
+    db: &Pool<Manager<SqliteConnection>, Object>,
 ) -> Result<()> {
     // @TODO balance risk of a race in the case of a long retry
-    use crate::schema::pds::repo_root::dsl as RepoRootSchema;
+    use crate::schema::actor_store::repo_root::dsl as RepoRootSchema;
 
     let now = rsky_common::now();
 

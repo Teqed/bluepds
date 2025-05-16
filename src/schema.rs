@@ -70,15 +70,6 @@ pub mod pds {
     }
 
     diesel::table! {
-        account_pref (id) {
-            id -> Int4,
-            did -> Varchar,
-            name -> Varchar,
-            valueJson -> Nullable<Text>,
-        }
-    }
-
-    diesel::table! {
         actor (did) {
             did -> Varchar,
             handle -> Nullable<Varchar>,
@@ -108,28 +99,6 @@ pub mod pds {
             parameters -> Varchar,
             expiresAt -> TimestamptzSqlite,
             code -> Nullable<Varchar>,
-        }
-    }
-
-    diesel::table! {
-        backlink (uri, path) {
-            uri -> Varchar,
-            path -> Varchar,
-            linkTo -> Varchar,
-        }
-    }
-
-    diesel::table! {
-        blob (cid, did) {
-            cid -> Varchar,
-            did -> Varchar,
-            mimeType -> Varchar,
-            size -> Int4,
-            tempKey -> Nullable<Varchar>,
-            width -> Nullable<Int4>,
-            height -> Nullable<Int4>,
-            createdAt -> Varchar,
-            takedownRef -> Nullable<Varchar>,
         }
     }
 
@@ -190,52 +159,12 @@ pub mod pds {
     }
 
     diesel::table! {
-        record (uri) {
-            uri -> Varchar,
-            cid -> Varchar,
-            did -> Varchar,
-            collection -> Varchar,
-            rkey -> Varchar,
-            repoRev -> Nullable<Varchar>,
-            indexedAt -> Varchar,
-            takedownRef -> Nullable<Varchar>,
-        }
-    }
-
-    diesel::table! {
-        record_blob (blobCid, recordUri) {
-            blobCid -> Varchar,
-            recordUri -> Varchar,
-            did -> Varchar,
-        }
-    }
-
-    diesel::table! {
         refresh_token (id) {
             id -> Varchar,
             did -> Varchar,
             expiresAt -> Varchar,
             nextId -> Nullable<Varchar>,
             appPasswordName -> Nullable<Varchar>,
-        }
-    }
-
-    diesel::table! {
-        repo_block (cid, did) {
-            cid -> Varchar,
-            did -> Varchar,
-            repoRev -> Varchar,
-            size -> Int4,
-            content -> Bytea,
-        }
-    }
-
-    diesel::table! {
-        repo_root (did) {
-            did -> Varchar,
-            cid -> Varchar,
-            rev -> Varchar,
-            indexedAt -> Varchar,
         }
     }
 
@@ -277,25 +206,108 @@ pub mod pds {
 
     diesel::allow_tables_to_appear_in_same_query!(
         account,
-        account_pref,
         actor,
         app_password,
         authorization_request,
-        backlink,
-        blob,
         device,
         device_account,
         did_doc,
         email_token,
         invite_code,
         invite_code_use,
-        record,
-        record_blob,
         refresh_token,
-        repo_block,
-        repo_root,
         repo_seq,
         token,
         used_refresh_token,
+    );
+}
+
+pub mod actor_store {
+    // Actor Store
+
+    // Blob
+    diesel::table! {
+        blob (cid, did) {
+            cid -> Varchar,
+            did -> Varchar,
+            mimeType -> Varchar,
+            size -> Int4,
+            tempKey -> Nullable<Varchar>,
+            width -> Nullable<Int4>,
+            height -> Nullable<Int4>,
+            createdAt -> Varchar,
+            takedownRef -> Nullable<Varchar>,
+        }
+    }
+
+    diesel::table! {
+        record_blob (blobCid, recordUri) {
+            blobCid -> Varchar,
+            recordUri -> Varchar,
+            did -> Varchar,
+        }
+    }
+
+    // Preference
+
+    diesel::table! {
+        account_pref (id) {
+            id -> Int4,
+            did -> Varchar,
+            name -> Varchar,
+            valueJson -> Nullable<Text>,
+        }
+    }
+    // Record
+
+    diesel::table! {
+        record (uri) {
+            uri -> Varchar,
+            cid -> Varchar,
+            did -> Varchar,
+            collection -> Varchar,
+            rkey -> Varchar,
+            repoRev -> Nullable<Varchar>,
+            indexedAt -> Varchar,
+            takedownRef -> Nullable<Varchar>,
+        }
+    }
+
+    diesel::table! {
+        repo_block (cid, did) {
+            cid -> Varchar,
+            did -> Varchar,
+            repoRev -> Varchar,
+            size -> Int4,
+            content -> Bytea,
+        }
+    }
+
+    diesel::table! {
+        backlink (uri, path) {
+            uri -> Varchar,
+            path -> Varchar,
+            linkTo -> Varchar,
+        }
+    }
+    // sql_repo
+
+    diesel::table! {
+        repo_root (did) {
+            did -> Varchar,
+            cid -> Varchar,
+            rev -> Varchar,
+            indexedAt -> Varchar,
+        }
+    }
+
+    diesel::allow_tables_to_appear_in_same_query!(
+        account_pref,
+        backlink,
+        blob,
+        record,
+        record_blob,
+        repo_block,
+        repo_root,
     );
 }

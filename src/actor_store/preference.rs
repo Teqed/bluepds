@@ -4,7 +4,7 @@
 //!
 //! Modified for SQLite backend
 
-use crate::models::pds::AccountPref;
+use crate::models::actor_store::AccountPref;
 use anyhow::{Result, bail};
 use diesel::*;
 use rsky_lexicon::app::bsky::actor::RefPreferences;
@@ -36,7 +36,7 @@ impl PreferenceReader {
         namespace: Option<String>,
         scope: AuthScope,
     ) -> Result<Vec<RefPreferences>> {
-        use crate::schema::pds::account_pref::dsl as AccountPrefSchema;
+        use crate::schema::actor_store::account_pref::dsl as AccountPrefSchema;
 
         let did = self.did.clone();
         self.db
@@ -99,7 +99,7 @@ impl PreferenceReader {
                             bail!("Do not have authorization to set preferences.");
                         }
                         // get all current prefs for user and prep new pref rows
-                        use crate::schema::pds::account_pref::dsl as AccountPrefSchema;
+                        use crate::schema::actor_store::account_pref::dsl as AccountPrefSchema;
                         let all_prefs = AccountPrefSchema::account_pref
                             .filter(AccountPrefSchema::did.eq(&did))
                             .select(AccountPref::as_select())

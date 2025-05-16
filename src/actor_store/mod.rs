@@ -481,7 +481,7 @@ impl ActorStore {
 
     pub async fn destroy(&mut self) -> Result<()> {
         let did: String = self.did.clone();
-        use crate::schema::pds::blob::dsl as BlobSchema;
+        use crate::schema::actor_store::blob::dsl as BlobSchema;
 
         let blob_rows: Vec<String> = self
             .storage
@@ -520,7 +520,7 @@ impl ActorStore {
             return Ok(vec![]);
         }
         let did: String = self.did.clone();
-        use crate::schema::pds::record::dsl as RecordSchema;
+        use crate::schema::actor_store::record::dsl as RecordSchema;
 
         let cid_strs: Vec<String> = cids.into_iter().map(|c| c.to_string()).collect();
         let touched_uri_strs: Vec<String> = touched_uris.iter().map(|t| t.to_string()).collect();
