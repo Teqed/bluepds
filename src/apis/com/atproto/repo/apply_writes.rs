@@ -1,25 +1,15 @@
 //! Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
+use crate::SharedSequencer;
+use crate::account_manager::helpers::account::AvailabilityFlags;
+use crate::account_manager::{AccountManager, AccountManagerCreator, SharedAccountManager};
 use crate::{
-    ActorPools, AppState, Db, Error, Result, SigningKey,
+    ActorPools, AppState, SigningKey,
     actor_store::{ActorStore, sql_blob::BlobStoreSql},
     auth::AuthenticatedUser,
     config::AppConfig,
-    error::ErrorMessage,
-    firehose::{self, FirehoseProducer, RepoOp},
-    metrics::{REPO_COMMITS, REPO_OP_CREATE, REPO_OP_DELETE, REPO_OP_UPDATE},
-    storage,
+    error::{ApiError, ErrorMessage},
 };
-use anyhow::bail;
-use anyhow::{Context as _, anyhow};
-use atrium_api::com::atproto::repo::apply_writes::{self, InputWritesItem, OutputResultsItem};
-use atrium_api::{
-    com::atproto::repo::{self, defs::CommitMetaData},
-    types::{
-        LimitedU32, Object, TryFromUnknown as _, TryIntoUnknown as _, Unknown,
-        string::{AtIdentifier, Nsid, Tid},
-    },
-};
-use atrium_repo::blockstore::CarStore;
+use anyhow::{Result, bail};
 use axum::{
     Json, Router,
     body::Body,
@@ -28,48 +18,28 @@ use axum::{
     routing::{get, post},
 };
 use cidv10::Cid;
-use constcat::concat;
-use futures::TryStreamExt as _;
+use deadpool_diesel::sqlite::Pool;
 use futures::stream::{self, StreamExt};
-use metrics::counter;
 use rsky_lexicon::com::atproto::repo::{ApplyWritesInput, ApplyWritesInputRefWrite};
-use rsky_pds::SharedSequencer;
-use rsky_pds::account_manager::AccountManager;
-use rsky_pds::account_manager::helpers::account::AvailabilityFlags;
-use rsky_pds::apis::ApiError;
 use rsky_pds::auth_verifier::AccessStandardIncludeChecks;
 use rsky_pds::repo::prepare::{
     PrepareCreateOpts, PrepareDeleteOpts, PrepareUpdateOpts, prepare_create, prepare_delete,
     prepare_update,
 };
+use rsky_pds::sequencer::Sequencer;
 use rsky_repo::types::PreparedWrite;
-use rsky_syntax::aturi::AtUri;
-use serde::Deserialize;
-use std::{collections::HashSet, str::FromStr};
-use tokio::io::AsyncWriteExt as _;
+use std::str::FromStr;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
-use super::resolve_did;
-
-/// Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
-/// - POST /xrpc/com.atproto.repo.applyWrites
-/// ### Request Body
-/// - `repo`: `at-identifier` // The handle or DID of the repo (aka, current account).
-/// - `validate`: `boolean` // Can be set to 'false' to skip Lexicon schema validation of record data across all operations, 'true' to require it, or leave unset to validate only for known Lexicons.
-/// - `writes`: `object[]` // One of:
-/// - - com.atproto.repo.applyWrites.create
-/// - - com.atproto.repo.applyWrites.update
-/// - - com.atproto.repo.applyWrites.delete
-/// - `swap_commit`: `cid` // If provided, the entire operation will fail if the current repo commit CID does not match this value. Used to prevent conflicting repo mutations.
-pub(crate) async fn apply_writes(
+async fn inner_apply_writes(
+    body: ApplyWritesInput,
     user: AuthenticatedUser,
-    State(skey): State<SigningKey>,
-    State(config): State<AppConfig>,
-    State(db): State<Db>,
-    State(db_actors): State<std::collections::HashMap<String, ActorPools>>,
-    State(fhp): State<FirehoseProducer>,
-    Json(input): Json<ApplyWritesInput>,
-) -> Result<Json<repo::apply_writes::Output>> {
-    let tx: ApplyWritesInput = input;
+    sequencer: &RwLock<Sequencer>,
+    actor_pools: std::collections::HashMap<String, ActorPools>,
+    account_manager: &RwLock<AccountManager>,
+) -> Result<()> {
+    let tx: ApplyWritesInput = body;
     let ApplyWritesInput {
         repo,
         validate,
@@ -77,6 +47,8 @@ pub(crate) async fn apply_writes(
         ..
     } = tx;
     let account = account_manager
+        .read()
+        .await
         .get_account(
             &repo,
             Some(AvailabilityFlags {
@@ -88,27 +60,15 @@ pub(crate) async fn apply_writes(
 
     if let Some(account) = account {
         if account.deactivated_at.is_some() {
-            return Err(Error::with_message(
-                StatusCode::FORBIDDEN,
-                anyhow!("Account is deactivated"),
-                ErrorMessage::new("AccountDeactivated", "Account is deactivated"),
-            ));
+            bail!("Account is deactivated")
         }
         let did = account.did;
         if did != user.did() {
-            return Err(Error::with_message(
-                StatusCode::FORBIDDEN,
-                anyhow!("AuthRequiredError"),
-                ErrorMessage::new("AuthRequiredError", "Auth required"),
-            ));
+            bail!("AuthRequiredError")
         }
         let did: &String = &did;
         if tx.writes.len() > 200 {
-            return Err(Error::with_message(
-                StatusCode::BAD_REQUEST,
-                anyhow!("Too many writes. Max: 200"),
-                ErrorMessage::new("TooManyWrites", "Too many writes. Max: 200"),
-            ));
+            bail!("Too many writes. Max: 200")
         }
 
         let writes: Vec<PreparedWrite> = stream::iter(tx.writes)
@@ -156,28 +116,20 @@ pub(crate) async fn apply_writes(
             None => None,
         };
 
-        let actor_db = db_actors
-            .get(did)
-            .ok_or_else(|| anyhow!("Actor DB not found"))?;
-        let conn = actor_db
-            .repo
-            .get()
-            .await
-            .context("Failed to get actor db connection")?;
-        let mut actor_store = ActorStore::new(
-            did.clone(),
-            BlobStoreSql::new(did.clone(), actor_db.blob),
-            actor_db.repo,
-            conn,
-        );
+        let mut actor_store = ActorStore::from_actor_pools(did, &actor_pools).await;
 
         let commit = actor_store
             .process_writes(writes.clone(), swap_commit_cid)
             .await?;
 
-        let mut lock = sequencer.sequencer.write().await;
-        lock.sequence_commit(did.clone(), commit.clone()).await?;
+        sequencer
+            .write()
+            .await
+            .sequence_commit(did.clone(), commit.clone())
+            .await?;
         account_manager
+            .write()
+            .await
             .update_repo_root(
                 did.to_string(),
                 commit.commit_data.cid,
@@ -186,10 +138,43 @@ pub(crate) async fn apply_writes(
             .await?;
         Ok(())
     } else {
-        Err(Error::with_message(
-            StatusCode::NOT_FOUND,
-            anyhow!("Could not find repo: `{repo}`"),
-            ErrorMessage::new("RepoNotFound", "Could not find repo"),
-        ))
+        bail!("Could not find repo: `{repo}`")
+    }
+}
+
+/// Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
+/// - POST /xrpc/com.atproto.repo.applyWrites
+/// ### Request Body
+/// - `repo`: `at-identifier` // The handle or DID of the repo (aka, current account).
+/// - `validate`: `boolean` // Can be set to 'false' to skip Lexicon schema validation of record data across all operations, 'true' to require it, or leave unset to validate only for known Lexicons.
+/// - `writes`: `object[]` // One of:
+/// - - com.atproto.repo.applyWrites.create
+/// - - com.atproto.repo.applyWrites.update
+/// - - com.atproto.repo.applyWrites.delete
+/// - `swap_commit`: `cid` // If provided, the entire operation will fail if the current repo commit CID does not match this value. Used to prevent conflicting repo mutations.
+#[axum::debug_handler(state = AppState)]
+pub(crate) async fn apply_writes(
+    user: AuthenticatedUser,
+    State(state): State<AppState>,
+    Json(body): Json<ApplyWritesInput>,
+) -> Result<(), ApiError> {
+    tracing::debug!("@LOG: debug apply_writes {body:#?}");
+    let db_actors = state.db_actors.clone();
+    let sequencer = &state.sequencer.sequencer;
+    let account_manager = &state.account_manager.account_manager;
+    match inner_apply_writes(
+        body,
+        user,
+        sequencer.clone(),
+        db_actors,
+        account_manager.clone(),
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            tracing::error!("@LOG: ERROR: {error}");
+            Err(ApiError::RuntimeError)
+        }
     }
 }

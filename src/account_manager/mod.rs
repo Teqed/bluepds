@@ -12,6 +12,7 @@ use crate::account_manager::helpers::invite::CodeDetail;
 use crate::account_manager::helpers::password::UpdateUserPasswordOpts;
 use crate::models::pds::EmailTokenPurpose;
 use anyhow::Result;
+use axum::extract::FromRef;
 use chrono::DateTime;
 use chrono::offset::Utc as UtcOffset;
 use cidv10::Cid;
@@ -503,5 +504,5 @@ impl AccountManager {
 }
 
 pub struct SharedAccountManager {
-    pub account_manager: RwLock<AccountManagerCreator>,
+    pub account_manager: RwLock<AccountManager>,
 }

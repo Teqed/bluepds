@@ -72,22 +72,23 @@ impl BlobStoreSql {
     }
 
     // /// Create a factory function for blob stores
-    // pub fn creator(
-    //     db: deadpool_diesel::Pool<
-    //     deadpool_diesel::Manager<SqliteConnection>,
-    //     deadpool_diesel::sqlite::Object,
-    // >,
-    // ) -> Box<dyn Fn(String) -> BlobStoreSql> {
-    //     let db_clone = db.clone();
-    //     Box::new(move |did: String| BlobStoreSql::new(did, db_clone.clone()))
-    // }
+    pub fn creator(
+        db: deadpool_diesel::Pool<
+            deadpool_diesel::Manager<SqliteConnection>,
+            deadpool_diesel::sqlite::Object,
+        >,
+    ) -> Box<dyn Fn(String) -> BlobStoreSql> {
+        let db_clone = db.clone();
+        Box::new(move |did: String| BlobStoreSql::new(did, db_clone.clone()))
+    }
 
     /// Store a blob temporarily - now just stores permanently with a key returned for API compatibility
     pub async fn put_temp(&self, bytes: Vec<u8>) -> Result<String> {
         // Generate a unique key as a CID based on the data
-        use sha2::{Digest, Sha256};
-        let digest = Sha256::digest(&bytes);
-        let key = hex::encode(digest);
+        // use sha2::{Digest, Sha256};
+        // let digest = Sha256::digest(&bytes);
+        // let key = hex::encode(digest);
+        let key = rsky_common::get_random_str();
 
         // Just store the blob directly
         self.put_permanent_with_mime(

@@ -2,11 +2,11 @@
 mod account_manager;
 mod actor_endpoints;
 mod actor_store;
+mod apis;
 mod auth;
 mod config;
 mod db;
 mod did;
-mod endpoints;
 pub mod error;
 mod firehose;
 mod metrics;
@@ -299,9 +299,6 @@ pub async fn run() -> anyhow::Result<()> {
     tokio::fs::create_dir_all(&config.plc.path).await?;
     tokio::fs::create_dir_all(&config.blob.path).await?;
 
-    let cred = azure_identity::DefaultAzureCredential::new()
-        .context("failed to create Azure credential")?;
-
     // Create a database connection manager and pool for the main database.
     let pool =
         establish_pool(&config.db).context("failed to establish database connection pool")?;
@@ -364,7 +361,7 @@ pub async fn run() -> anyhow::Result<()> {
         )),
     });
     let account_manager = SharedAccountManager {
-        account_manager: RwLock::new(AccountManager::creator()),
+        account_manager: RwLock::new(AccountManager::new(pool.clone())),
     };
 
     let addr = config
@@ -376,7 +373,7 @@ pub async fn run() -> anyhow::Result<()> {
         .merge(oauth::routes())
         .nest(
             "/xrpc",
-            endpoints::routes()
+            apis::routes()
                 .merge(actor_endpoints::routes())
                 .fallback(service_proxy),
         )
@@ -476,20 +473,4 @@ pub async fn run() -> anyhow::Result<()> {
         .map_err(Into::into)
         .and_then(|r| r)
         .context("failed to serve app")
-}
-
-/// Creates an app router with the provided AppState.
-pub fn create_app(state: AppState) -> Router {
-    Router::new()
-        .route("/", get(index))
-        .merge(oauth::routes())
-        .nest(
-            "/xrpc",
-            endpoints::routes()
-                .merge(actor_endpoints::routes())
-                .fallback(service_proxy),
-        )
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
 }

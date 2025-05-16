@@ -1,6 +1,6 @@
 //! Root module for all endpoints.
 // mod identity;
-// mod repo;
+mod com;
 // mod server;
 // mod sync;
 
@@ -18,9 +18,10 @@ pub(crate) async fn health() -> Result<Json<serde_json::Value>> {
 
 /// Register all root routes.
 pub(crate) fn routes() -> Router<AppState> {
-    Router::new().route("/_health", get(health))
-    // .merge(identity::routes()) // com.atproto.identity
-    // .merge(repo::routes()) // com.atproto.repo
+    Router::new()
+        .route("/_health", get(health))
+        // .merge(identity::routes()) // com.atproto.identity
+        .merge(com::atproto::repo::routes()) // com.atproto.repo
     // .merge(server::routes()) // com.atproto.server
     // .merge(sync::routes()) // com.atproto.sync
 }
