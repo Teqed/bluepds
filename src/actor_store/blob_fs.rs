@@ -1,11 +1,11 @@
 //! File system implementation of blob storage
 //! Based on the S3 implementation but using local file system instead
 use anyhow::Result;
-use std::str::FromStr;
 use cidv10::Cid;
 use rsky_common::get_random_str;
 use rsky_repo::error::BlobError;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use tokio::fs as async_fs;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, warn};
@@ -43,14 +43,14 @@ pub struct BlobStoreFs {
 
 impl BlobStoreFs {
     /// Create a new file system blob store for the given DID and base directory
-    pub fn new(did: String, base_dir: PathBuf) -> Self {
+    pub const fn new(did: String, base_dir: PathBuf) -> Self {
         Self { base_dir, did }
     }
 
     /// Create a factory function for blob stores
-    pub fn creator(base_dir: PathBuf) -> Box<dyn Fn(String) -> BlobStoreFs> {
-        let base_dir_clone = base_dir.clone();
-        Box::new(move |did: String| BlobStoreFs::new(did, base_dir_clone.clone()))
+    pub fn creator(base_dir: PathBuf) -> Box<dyn Fn(String) -> Self> {
+        let base_dir_clone = base_dir;
+        Box::new(move |did: String| Self::new(did, base_dir_clone.clone()))
     }
 
     /// Generate a random key for temporary storage
@@ -66,7 +66,7 @@ impl BlobStoreFs {
     /// Get path to the stored blob with appropriate sharding
     fn get_stored_path(&self, cid: Cid) -> PathBuf {
         let cid_str = cid.to_string();
-        
+
         // Create two-level sharded structure based on CID
         // First 10 chars for level 1, next 10 chars for level 2
         let first_level = if cid_str.len() >= 10 {
@@ -74,13 +74,13 @@ impl BlobStoreFs {
         } else {
             &cid_str
         };
-        
+
         let second_level = if cid_str.len() >= 20 {
             &cid_str[10..20]
         } else {
             "default"
         };
-        
+
         self.base_dir
             .join("blocks")
             .join(&self.did)
@@ -92,24 +92,27 @@ impl BlobStoreFs {
     /// Get path to the quarantined blob
     fn get_quarantined_path(&self, cid: Cid) -> PathBuf {
         let cid_str = cid.to_string();
-        self.base_dir.join("quarantine").join(&self.did).join(&cid_str)
+        self.base_dir
+            .join("quarantine")
+            .join(&self.did)
+            .join(&cid_str)
     }
 
     /// Store a blob temporarily
     pub async fn put_temp(&self, bytes: Vec<u8>) -> Result<String> {
         let key = self.gen_key();
         let temp_path = self.get_tmp_path(&key);
-        
+
         // Ensure the directory exists
         if let Some(parent) = temp_path.parent() {
             async_fs::create_dir_all(parent).await?;
         }
-        
+
         // Write the temporary blob
         let mut file = async_fs::File::create(&temp_path).await?;
         file.write_all(&bytes).await?;
         file.flush().await?;
-        
+
         debug!("Stored temp blob at: {:?}", temp_path);
         Ok(key)
     }
@@ -117,13 +120,14 @@ impl BlobStoreFs {
     /// Make a temporary blob permanent by moving it to the blob store
     pub async fn make_permanent(&self, key: String, cid: Cid) -> Result<()> {
         let already_has = self.has_stored(cid).await?;
-        
+
         if !already_has {
             // Move the temporary blob to permanent storage
             self.move_object(MoveObject {
                 from: self.get_tmp_path(&key),
                 to: self.get_stored_path(cid),
-            }).await?;
+            })
+            .await?;
             debug!("Moved temp blob to permanent: {} -> {}", key, cid);
         } else {
             // Already saved, so just delete the temp
@@ -133,24 +137,24 @@ impl BlobStoreFs {
                 debug!("Deleted temp blob as permanent already exists: {}", key);
             }
         }
-        
+
         Ok(())
     }
 
     /// Store a blob directly as permanent
     pub async fn put_permanent(&self, cid: Cid, bytes: Vec<u8>) -> Result<()> {
         let target_path = self.get_stored_path(cid);
-        
+
         // Ensure the directory exists
         if let Some(parent) = target_path.parent() {
             async_fs::create_dir_all(parent).await?;
         }
-        
+
         // Write the blob
         let mut file = async_fs::File::create(&target_path).await?;
         file.write_all(&bytes).await?;
         file.flush().await?;
-        
+
         debug!("Stored permanent blob: {}", cid);
         Ok(())
     }
@@ -160,8 +164,9 @@ impl BlobStoreFs {
         self.move_object(MoveObject {
             from: self.get_stored_path(cid),
             to: self.get_quarantined_path(cid),
-        }).await?;
-        
+        })
+        .await?;
+
         debug!("Quarantined blob: {}", cid);
         Ok(())
     }
@@ -171,8 +176,9 @@ impl BlobStoreFs {
         self.move_object(MoveObject {
             from: self.get_quarantined_path(cid),
             to: self.get_stored_path(cid),
-        }).await?;
-        
+        })
+        .await?;
+
         debug!("Unquarantined blob: {}", cid);
         Ok(())
     }
@@ -180,7 +186,7 @@ impl BlobStoreFs {
     /// Get a blob as a stream
     async fn get_object(&self, cid: Cid) -> Result<ByteStream> {
         let blob_path = self.get_stored_path(cid);
-        
+
         match async_fs::read(&blob_path).await {
             Ok(bytes) => Ok(ByteStream::new(bytes)),
             Err(e) => {
@@ -215,20 +221,24 @@ impl BlobStoreFs {
     /// Delete multiple blobs by CID
     pub async fn delete_many(&self, cids: Vec<Cid>) -> Result<()> {
         let mut futures = Vec::with_capacity(cids.len());
-        
+
         for cid in cids {
             futures.push(self.delete_path(self.get_stored_path(cid)));
         }
-        
+
         // Execute all delete operations concurrently
         let results = futures::future::join_all(futures).await;
-        
+
         // Count errors but don't fail the operation
         let error_count = results.iter().filter(|r| r.is_err()).count();
         if error_count > 0 {
-            warn!("{} errors occurred while deleting {} blobs", error_count, results.len());
+            warn!(
+                "{} errors occurred while deleting {} blobs",
+                error_count,
+                results.len()
+            );
         }
-        
+
         Ok(())
     }
 
@@ -261,16 +271,16 @@ impl BlobStoreFs {
         if !mov.from.exists() {
             return Err(anyhow::Error::new(BlobError::BlobNotFoundError));
         }
-        
+
         // Ensure the target directory exists
         if let Some(parent) = mov.to.parent() {
             async_fs::create_dir_all(parent).await?;
         }
-        
+
         // Copy first, then delete source after success
-        async_fs::copy(&mov.from, &mov.to).await?;
+        _ = async_fs::copy(&mov.from, &mov.to).await?;
         async_fs::remove_file(&mov.from).await?;
-        
+
         debug!("Moved blob: {:?} -> {:?}", mov.from, mov.to);
         Ok(())
     }
