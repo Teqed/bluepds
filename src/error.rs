@@ -148,7 +148,7 @@ pub enum ApiError {
 
 impl ApiError {
     /// Get the appropriate HTTP status code for this error
-    fn status_code(&self) -> StatusCode {
+    const fn status_code(&self) -> StatusCode {
         match self {
             Self::RuntimeError => StatusCode::INTERNAL_SERVER_ERROR,
             Self::InvalidLogin
@@ -190,7 +190,7 @@ impl ApiError {
             Self::BadRequest(error, _) => error,
             Self::AuthRequiredError(_) => "AuthRequiredError",
         }
-        .to_string()
+        .to_owned()
     }
 
     /// Get the user-facing error message
@@ -218,23 +218,23 @@ impl ApiError {
             Self::BadRequest(_, msg) => msg,
             Self::AuthRequiredError(msg) => msg,
         }
-        .to_string()
+        .to_owned()
     }
 }
 
 impl From<Error> for ApiError {
     fn from(_value: Error) -> Self {
-        ApiError::RuntimeError
+        Self::RuntimeError
     }
 }
 
 impl From<handle::errors::Error> for ApiError {
     fn from(value: handle::errors::Error) -> Self {
         match value.kind {
-            ErrorKind::InvalidHandle => ApiError::InvalidHandle,
-            ErrorKind::HandleNotAvailable => ApiError::HandleNotAvailable,
-            ErrorKind::UnsupportedDomain => ApiError::UnsupportedDomain,
-            ErrorKind::InternalError => ApiError::RuntimeError,
+            ErrorKind::InvalidHandle => Self::InvalidHandle,
+            ErrorKind::HandleNotAvailable => Self::HandleNotAvailable,
+            ErrorKind::UnsupportedDomain => Self::UnsupportedDomain,
+            ErrorKind::InternalError => Self::RuntimeError,
         }
     }
 }
@@ -245,13 +245,14 @@ impl IntoResponse for ApiError {
         let error_type = self.error_type();
         let message = self.message();
 
-        // Log the error for debugging
-        error!("API Error: {}: {}", error_type, message);
+        if cfg!(debug_assertions) {
+            error!("API Error: {}: {}", error_type, message);
+        }
 
         // Create the error message and serialize to JSON
         let error_message = ErrorMessage::new(error_type, message);
         let body = serde_json::to_string(&error_message).unwrap_or_else(|_| {
-            r#"{"error":"InternalServerError","message":"Error serializing response"}"#.to_string()
+            r#"{"error":"InternalServerError","message":"Error serializing response"}"#.to_owned()
         });
 
         // Build the response

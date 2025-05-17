@@ -28,7 +28,7 @@ use rsky_repo::error::BlobError;
 use rsky_repo::types::{PreparedBlobRef, PreparedWrite};
 use std::str::FromStr as _;
 
-use super::sql_blob::{BlobStoreSql, ByteStream};
+use super::blob_fs::{BlobStoreFs, ByteStream};
 
 pub struct GetBlobOutput {
     pub size: i32,
@@ -39,7 +39,7 @@ pub struct GetBlobOutput {
 /// Handles blob operations for an actor store
 pub struct BlobReader {
     /// SQL-based blob storage
-    pub blobstore: BlobStoreSql,
+    pub blobstore: BlobStoreFs,
     /// DID of the actor
     pub did: String,
     /// Database connection
@@ -52,7 +52,7 @@ pub struct BlobReader {
 impl BlobReader {
     /// Create a new blob reader
     pub fn new(
-        blobstore: BlobStoreSql,
+        blobstore: BlobStoreFs,
         db: deadpool_diesel::Pool<
             deadpool_diesel::Manager<SqliteConnection>,
             deadpool_diesel::sqlite::Object,

@@ -23,7 +23,7 @@ use std::time::SystemTime;
 use thiserror::Error;
 
 use diesel::dsl::{LeftJoinOn, exists, not};
-use diesel::helper_types::{Eq, IntoBoxed};
+use diesel::helper_types::Eq;
 
 #[derive(Error, Debug)]
 pub enum AccountHelperError {
@@ -277,26 +277,37 @@ pub async fn delete_account(
         })
         .await
         .expect("Failed to delete actor")?;
-    let did = did.to_owned();
+    let did_clone = did.to_owned();
     _ = db
         .get()
         .await?
         .interact(move |conn| {
             _ = delete(EmailTokenSchema::email_token)
-                .filter(EmailTokenSchema::did.eq(&did))
+                .filter(EmailTokenSchema::did.eq(&did_clone))
                 .execute(conn)?;
             _ = delete(RefreshTokenSchema::refresh_token)
-                .filter(RefreshTokenSchema::did.eq(&did))
+                .filter(RefreshTokenSchema::did.eq(&did_clone))
                 .execute(conn)?;
             _ = delete(AccountSchema::account)
-                .filter(AccountSchema::did.eq(&did))
+                .filter(AccountSchema::did.eq(&did_clone))
                 .execute(conn)?;
             delete(ActorSchema::actor)
-                .filter(ActorSchema::did.eq(&did))
+                .filter(ActorSchema::did.eq(&did_clone))
                 .execute(conn)
         })
         .await
         .expect("Failed to delete account")?;
+
+    let data_repo_file = format!("data/repo/{}.db", did.to_owned());
+    let data_blob_path = format!("data/blob/{}", did);
+    let data_blob_path = std::path::Path::new(&data_blob_path);
+    let data_repo_file = std::path::Path::new(&data_repo_file);
+    if data_repo_file.exists() {
+        std::fs::remove_file(data_repo_file)?;
+    };
+    if data_blob_path.exists() {
+        std::fs::remove_dir_all(data_blob_path)?;
+    };
     Ok(())
 }
 

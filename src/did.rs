@@ -5,7 +5,7 @@ use atrium_api::types::string::Did;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::Client;
+use crate::serve::Client;
 
 /// URL whitelist for DID document resolution.
 const ALLOWED_URLS: &[&str] = &["bsky.app", "bsky.chat"];

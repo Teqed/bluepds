@@ -1,7 +1,9 @@
 //! OAuth endpoints
 #![allow(unnameable_types, unused_qualifications)]
+use crate::config::AppConfig;
+use crate::error::Error;
 use crate::metrics::AUTH_FAILED;
-use crate::{AppConfig, AppState, Client, Error, Result, SigningKey};
+use crate::serve::{AppState, Client, Result, SigningKey};
 use anyhow::{Context as _, anyhow};
 use argon2::{Argon2, PasswordHash, PasswordVerifier as _};
 use atrium_crypto::keypair::Did as _;

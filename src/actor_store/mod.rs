@@ -34,12 +34,12 @@ use std::{env, fmt};
 use tokio::sync::RwLock;
 
 use blob::BlobReader;
+use blob_fs::BlobStoreFs;
 use preference::PreferenceReader;
 use record::RecordReader;
-use sql_blob::BlobStoreSql;
 use sql_repo::SqlRepoReader;
 
-use crate::ActorPools;
+use crate::serve::ActorStorage;
 
 #[derive(Debug)]
 enum FormatCommitError {
@@ -74,10 +74,10 @@ pub struct ActorStore {
 
 // Combination of RepoReader/Transactor, BlobReader/Transactor, SqlRepoReader/Transactor
 impl ActorStore {
-    /// Concrete reader of an individual repo (hence BlobStoreSql which takes `did` param)
+    /// Concrete reader of an individual repo (hence BlobStoreFs which takes `did` param)
     pub fn new(
         did: String,
-        blobstore: BlobStoreSql,
+        blobstore: BlobStoreFs,
         db: deadpool_diesel::Pool<
             deadpool_diesel::Manager<SqliteConnection>,
             deadpool_diesel::sqlite::Object,
@@ -96,13 +96,13 @@ impl ActorStore {
     /// Create a new ActorStore taking ActorPools HashMap as input
     pub async fn from_actor_pools(
         did: &String,
-        hashmap_actor_pools: &std::collections::HashMap<String, ActorPools>,
+        hashmap_actor_pools: &std::collections::HashMap<String, ActorStorage>,
     ) -> Self {
         let actor_pool = hashmap_actor_pools
             .get(did)
             .expect("Actor pool not found")
             .clone();
-        let blobstore = BlobStoreSql::new(did.clone(), actor_pool.blob);
+        let blobstore = BlobStoreFs::new(did.clone(), actor_pool.blob);
         let conn = actor_pool
             .repo
             .clone()

@@ -1,27 +1,17 @@
 //! Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
-use crate::SharedSequencer;
+use crate::account_manager::AccountManager;
 use crate::account_manager::helpers::account::AvailabilityFlags;
-use crate::account_manager::{AccountManager, AccountManagerCreator, SharedAccountManager};
 use crate::{
-    ActorPools, AppState, SigningKey,
-    actor_store::{ActorStore, sql_blob::BlobStoreSql},
+    actor_store::ActorStore,
     auth::AuthenticatedUser,
-    config::AppConfig,
-    error::{ApiError, ErrorMessage},
+    error::ApiError,
+    serve::{ActorStorage, AppState},
 };
 use anyhow::{Result, bail};
-use axum::{
-    Json, Router,
-    body::Body,
-    extract::{Query, Request, State},
-    http::{self, StatusCode},
-    routing::{get, post},
-};
+use axum::{Json, extract::State};
 use cidv10::Cid;
-use deadpool_diesel::sqlite::Pool;
 use futures::stream::{self, StreamExt};
 use rsky_lexicon::com::atproto::repo::{ApplyWritesInput, ApplyWritesInputRefWrite};
-use rsky_pds::auth_verifier::AccessStandardIncludeChecks;
 use rsky_pds::repo::prepare::{
     PrepareCreateOpts, PrepareDeleteOpts, PrepareUpdateOpts, prepare_create, prepare_delete,
     prepare_update,
@@ -29,14 +19,13 @@ use rsky_pds::repo::prepare::{
 use rsky_pds::sequencer::Sequencer;
 use rsky_repo::types::PreparedWrite;
 use std::str::FromStr;
-use std::sync::Arc;
 use tokio::sync::RwLock;
 
 async fn inner_apply_writes(
     body: ApplyWritesInput,
     user: AuthenticatedUser,
     sequencer: &RwLock<Sequencer>,
-    actor_pools: std::collections::HashMap<String, ActorPools>,
+    actor_pools: std::collections::HashMap<String, ActorStorage>,
     account_manager: &RwLock<AccountManager>,
 ) -> Result<()> {
     let tx: ApplyWritesInput = body;

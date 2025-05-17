@@ -72,13 +72,13 @@ impl BlobStoreFs {
         let first_level = if cid_str.len() >= 10 {
             &cid_str[0..10]
         } else {
-            &cid_str
+            "short"
         };
 
         let second_level = if cid_str.len() >= 20 {
             &cid_str[10..20]
         } else {
-            "default"
+            "short"
         };
 
         self.base_dir
@@ -277,9 +277,8 @@ impl BlobStoreFs {
             async_fs::create_dir_all(parent).await?;
         }
 
-        // Copy first, then delete source after success
-        _ = async_fs::copy(&mov.from, &mov.to).await?;
-        async_fs::remove_file(&mov.from).await?;
+        // Move the file
+        async_fs::rename(&mov.from, &mov.to).await?;
 
         debug!("Moved blob: {:?} -> {:?}", mov.from, mov.to);
         Ok(())

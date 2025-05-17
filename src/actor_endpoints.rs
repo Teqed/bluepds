@@ -3,22 +3,26 @@
 /// We shouldn't have to know about any bsky endpoints to store private user data.
 /// This will _very likely_ be changed in the future.
 use atrium_api::app::bsky::actor;
-use axum::{Json, routing::post};
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{get, post},
+};
 use constcat::concat;
 use diesel::prelude::*;
 
-use crate::actor_store::ActorStore;
+use crate::{actor_store::ActorStore, auth::AuthenticatedUser};
 
-use super::*;
+use super::serve::*;
 
 async fn put_preferences(
     user: AuthenticatedUser,
-    State(actor_pools): State<std::collections::HashMap<String, ActorPools>>,
+    State(actor_pools): State<std::collections::HashMap<String, ActorStorage>>,
     Json(input): Json<actor::put_preferences::Input>,
 ) -> Result<()> {
     let did = user.did();
-    let json_string =
-        serde_json::to_string(&input.preferences).context("failed to serialize preferences")?;
+    // let json_string =
+    //     serde_json::to_string(&input.preferences).context("failed to serialize preferences")?;
 
     // let conn = &mut actor_pools
     //     .get(&did)
@@ -35,12 +39,21 @@ async fn put_preferences(
     //         .context("failed to update user preferences")
     // });
     todo!("Use actor_store's preferences writer instead");
+    // let mut actor_store = ActorStore::from_actor_pools(&did, &actor_pools).await;
+    // let values = actor::defs::Preferences {
+    //     private_prefs: Some(json_string),
+    //     ..Default::default()
+    // };
+    // let namespace = actor::defs::PreferencesNamespace::Private;
+    // let scope = actor::defs::PreferencesScope::User;
+    // actor_store.pref.put_preferences(values, namespace, scope);
+
     Ok(())
 }
 
 async fn get_preferences(
     user: AuthenticatedUser,
-    State(actor_pools): State<std::collections::HashMap<String, ActorPools>>,
+    State(actor_pools): State<std::collections::HashMap<String, ActorStorage>>,
 ) -> Result<Json<actor::get_preferences::Output>> {
     let did = user.did();
     // let conn = &mut actor_pools

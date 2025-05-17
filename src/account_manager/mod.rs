@@ -2,7 +2,6 @@
 //! blacksky-algorithms/rsky is licensed under the Apache License 2.0
 //!
 //! Modified for SQLite backend
-use crate::ActorPools;
 use crate::account_manager::helpers::account::{
     AccountStatus, ActorAccount, AvailabilityFlags, GetAccountAdminStatusOutput,
 };
@@ -12,12 +11,11 @@ use crate::account_manager::helpers::auth::{
 use crate::account_manager::helpers::invite::CodeDetail;
 use crate::account_manager::helpers::password::UpdateUserPasswordOpts;
 use crate::models::pds::EmailTokenPurpose;
+use crate::serve::ActorStorage;
 use anyhow::Result;
-use axum::extract::FromRef;
 use chrono::DateTime;
 use chrono::offset::Utc as UtcOffset;
 use cidv10::Cid;
-use deadpool_diesel::sqlite::Pool;
 use diesel::*;
 use futures::try_join;
 use helpers::{account, auth, email_token, invite, password, repo};
@@ -136,7 +134,7 @@ impl AccountManager {
     pub async fn create_account(
         &self,
         opts: CreateAccountOpts,
-        actor_pools: &mut std::collections::HashMap<String, ActorPools>,
+        actor_pools: &mut std::collections::HashMap<String, ActorStorage>,
     ) -> Result<(String, String)> {
         let CreateAccountOpts {
             did,
@@ -182,18 +180,23 @@ impl AccountManager {
         let did_path = did
             .strip_prefix("did:plc:")
             .ok_or_else(|| anyhow::anyhow!("Invalid DID"))?;
-        let path_repo = format!("sqlite://{}", did_path);
+        let repo_path = format!("sqlite://data/repo/{}.db", did_path);
         let actor_repo_pool =
-            crate::establish_pool(path_repo.as_str()).expect("Failed to establish pool");
-        let path_blob = path_repo.replace("repo", "blob");
-        let actor_blob_pool = crate::establish_pool(&path_blob).expect("Failed to establish pool");
-        let actor_pool = ActorPools {
+            crate::db::establish_pool(repo_path.as_str()).expect("Failed to establish pool");
+        let blob_path = std::path::Path::new("data/blob").to_path_buf();
+        let actor_pool = ActorStorage {
             repo: actor_repo_pool,
-            blob: actor_blob_pool,
+            blob: blob_path.clone(),
         };
-        actor_pools
-            .insert(did.clone(), actor_pool)
-            .expect("Failed to insert actor pools");
+        let blob_path = blob_path.join(did_path);
+        tokio::fs::create_dir_all(&blob_path)
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to create blob path"))?;
+        drop(
+            actor_pools
+                .insert(did.clone(), actor_pool)
+                .expect("Failed to insert actor pools"),
+        );
         let db = actor_pools
             .get(&did)
             .ok_or_else(|| anyhow::anyhow!("Actor not found"))?
@@ -215,7 +218,7 @@ impl AccountManager {
         did: String,
         cid: Cid,
         rev: String,
-        actor_pools: &std::collections::HashMap<String, ActorPools>,
+        actor_pools: &std::collections::HashMap<String, ActorStorage>,
     ) -> Result<()> {
         let db = actor_pools
             .get(&did)
@@ -228,7 +231,7 @@ impl AccountManager {
     pub async fn delete_account(
         &self,
         did: &str,
-        actor_pools: &std::collections::HashMap<String, ActorPools>,
+        actor_pools: &std::collections::HashMap<String, ActorStorage>,
     ) -> Result<()> {
         let db = actor_pools
             .get(did)

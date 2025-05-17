@@ -3,38 +3,18 @@
 /// Reference: <https://atproto.com/specs/xrpc#service-proxying>
 use anyhow::{Context as _, anyhow};
 use atrium_api::types::string::Did;
-use atrium_crypto::keypair::{Export as _, Secp256k1Keypair};
 use axum::{
-    Router,
     body::Body,
-    extract::{FromRef, Request, State},
+    extract::{Request, State},
     http::{self, HeaderMap, Response, StatusCode, Uri},
-    response::IntoResponse,
-    routing::get,
 };
-use azure_core::credentials::TokenCredential;
-use clap::Parser;
-use clap_verbosity_flag::{InfoLevel, Verbosity, log::LevelFilter};
-use deadpool_diesel::sqlite::Pool;
-use diesel::prelude::*;
-use diesel_migrations::{EmbeddedMigrations, embed_migrations};
-use figment::{Figment, providers::Format as _};
-use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
 use rand::Rng as _;
-use serde::{Deserialize, Serialize};
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::PathBuf,
-    str::FromStr as _,
-    sync::Arc,
-};
-use tokio::net::TcpListener;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
-use tracing::{info, warn};
-use uuid::Uuid;
+use std::str::FromStr as _;
 
-use super::{Client, Error, Result};
-use crate::{AuthenticatedUser, SigningKey};
+use super::{
+    auth::AuthenticatedUser,
+    serve::{Client, Error, Result, SigningKey},
+};
 
 pub(super) async fn service_proxy(
     uri: Uri,

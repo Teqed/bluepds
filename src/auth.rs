@@ -8,7 +8,10 @@ use base64::Engine as _;
 use diesel::prelude::*;
 use sha2::{Digest as _, Sha256};
 
-use crate::{AppState, Error, error::ErrorMessage};
+use crate::{
+    error::{Error, ErrorMessage},
+    serve::AppState,
+};
 
 /// Request extractor for authenticated users.
 /// If specified in an API endpoint, this guarantees the API can only be called

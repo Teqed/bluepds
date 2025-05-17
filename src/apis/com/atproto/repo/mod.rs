@@ -2,7 +2,7 @@ use atrium_api::com::atproto::repo;
 use axum::{Router, routing::post};
 use constcat::concat;
 
-use crate::AppState;
+use crate::serve::AppState;
 
 pub mod apply_writes;
 // pub mod create_record;

@@ -7,7 +7,7 @@ mod com;
 use axum::{Json, Router, routing::get};
 use serde_json::json;
 
-use crate::{AppState, Result};
+use crate::serve::{AppState, Result};
 
 /// Health check endpoint. Returns name and version of the service.
 pub(crate) async fn health() -> Result<Json<serde_json::Value>> {
