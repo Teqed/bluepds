@@ -402,10 +402,15 @@ pub async fn run() -> anyhow::Result<()> {
     });
 
     // Now that the app is live, request a crawl from upstream relays.
-    let mut background_sequencer = sequencer.sequencer.write().await.clone();
-    drop(tokio::spawn(
-        async move { background_sequencer.start().await },
-    ));
+    if cfg!(debug_assertions) {
+        info!("debug mode: not requesting crawl");
+    } else {
+        info!("requesting crawl from upstream relays");
+        let mut background_sequencer = sequencer.sequencer.write().await.clone();
+        drop(tokio::spawn(
+            async move { background_sequencer.start().await },
+        ));
+    }
 
     serve
         .await
