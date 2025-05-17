@@ -367,14 +367,6 @@ async fn par(
     let response_type = response_type.to_owned();
     let code_challenge = code_challenge.to_owned();
     let code_challenge_method = code_challenge_method.to_owned();
-    let state = state.map(|s| s.to_owned());
-    let login_hint = login_hint.map(|s| s.to_owned());
-    let scope = scope.map(|s| s.to_owned());
-    let redirect_uri = redirect_uri.map(|s| s.to_owned());
-    let response_mode = response_mode.map(|s| s.to_owned());
-    let display = display.map(|s| s.to_owned());
-    let created_at = created_at;
-    let expires_at = expires_at;
     _ = db
         .get()
         .await
@@ -589,7 +581,7 @@ async fn authorize_signin(
         .interact(move |conn| {
             AccountSchema::account
                 .filter(AccountSchema::email.eq(username_clone))
-                .first::<rsky_pds::models::Account>(conn)
+                .first::<crate::models::pds::Account>(conn)
                 .optional()
         })
         .await

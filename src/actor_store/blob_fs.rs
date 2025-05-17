@@ -4,7 +4,7 @@ use anyhow::Result;
 use cidv10::Cid;
 use rsky_common::get_random_str;
 use rsky_repo::error::BlobError;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::fs as async_fs;
 use tokio::io::AsyncWriteExt;

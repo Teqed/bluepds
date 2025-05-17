@@ -9,9 +9,8 @@ use axum::{
     routing::{get, post},
 };
 use constcat::concat;
-use diesel::prelude::*;
 
-use crate::{actor_store::ActorStore, auth::AuthenticatedUser};
+use crate::auth::AuthenticatedUser;
 
 use super::serve::*;
 
