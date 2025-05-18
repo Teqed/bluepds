@@ -158,6 +158,7 @@ rsky-repo = { git = "https://github.com/blacksky-algorithms/rsky.git" }
 rsky-pds = { git = "https://github.com/blacksky-algorithms/rsky.git" }
 rsky-common = { git = "https://github.com/blacksky-algorithms/rsky.git" }
 rsky-lexicon = { git = "https://github.com/blacksky-algorithms/rsky.git" }
+rsky-identity = { git = "https://github.com/blacksky-algorithms/rsky.git" }
 
 # async in streams
 # async-stream = "0.3"

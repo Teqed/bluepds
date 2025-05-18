@@ -18,15 +18,18 @@ use rsky_pds::repo::prepare::{
 };
 use rsky_pds::sequencer::Sequencer;
 use rsky_repo::types::PreparedWrite;
+use std::collections::HashMap;
+use std::hash::RandomState;
 use std::str::FromStr;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 
 async fn inner_apply_writes(
     body: ApplyWritesInput,
     user: AuthenticatedUser,
-    sequencer: &RwLock<Sequencer>,
-    actor_pools: std::collections::HashMap<String, ActorStorage>,
-    account_manager: &RwLock<AccountManager>,
+    sequencer: Arc<RwLock<Sequencer>>,
+    actor_pools: HashMap<String, ActorStorage>,
+    account_manager: Arc<RwLock<AccountManager>>,
 ) -> Result<()> {
     let tx: ApplyWritesInput = body;
     let ApplyWritesInput {
@@ -145,13 +148,12 @@ async fn inner_apply_writes(
 #[axum::debug_handler(state = AppState)]
 pub(crate) async fn apply_writes(
     user: AuthenticatedUser,
-    State(state): State<AppState>,
+    State(db_actors): State<HashMap<String, ActorStorage, RandomState>>,
+    State(account_manager): State<Arc<RwLock<AccountManager>>>,
+    State(sequencer): State<Arc<RwLock<Sequencer>>>,
     Json(body): Json<ApplyWritesInput>,
 ) -> Result<(), ApiError> {
     tracing::debug!("@LOG: debug apply_writes {body:#?}");
-    let db_actors = state.db_actors;
-    let sequencer = &state.sequencer.sequencer;
-    let account_manager = &state.account_manager.account_manager;
     match inner_apply_writes(body, user, sequencer, db_actors, account_manager).await {
         Ok(()) => Ok(()),
         Err(error) => {

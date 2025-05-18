@@ -228,6 +228,12 @@ impl From<Error> for ApiError {
     }
 }
 
+impl From<anyhow::Error> for ApiError {
+    fn from(_value: anyhow::Error) -> Self {
+        Self::RuntimeError
+    }
+}
+
 impl From<handle::errors::Error> for ApiError {
     fn from(value: handle::errors::Error) -> Self {
         match value.kind {

@@ -1310,6 +1310,7 @@ dependencies = [
  "reqwest 0.12.15",
  "reqwest-middleware",
  "rsky-common",
+ "rsky-identity",
  "rsky-lexicon",
  "rsky-pds",
  "rsky-repo",

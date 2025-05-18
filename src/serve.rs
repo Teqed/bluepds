@@ -14,8 +14,13 @@ use diesel::prelude::*;
 use diesel_migrations::{EmbeddedMigrations, embed_migrations};
 use figment::{Figment, providers::Format as _};
 use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
+use rsky_common::env::env_list;
+use rsky_identity::IdResolver;
+use rsky_identity::types::{DidCache, IdentityResolverOpts};
+use rsky_pds::SharedIdResolver;
 use rsky_pds::{crawlers::Crawlers, sequencer::Sequencer};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::PathBuf,
@@ -32,17 +37,12 @@ pub const APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARG
 
 /// Embedded migrations
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("./migrations");
+pub const MIGRATIONS_ACTOR: EmbeddedMigrations = embed_migrations!("./migrations_actor");
 
 /// The application-wide result type.
 pub type Result<T> = std::result::Result<T, Error>;
 /// The reqwest client type with middleware.
 pub type Client = reqwest_middleware::ClientWithMiddleware;
-
-/// The Shared Sequencer which requests crawls from upstream relays and emits events to the firehose.
-pub struct SharedSequencer {
-    /// The sequencer instance.
-    pub sequencer: RwLock<Sequencer>,
-}
 
 #[expect(
     clippy::arbitrary_source_item_ordering,
@@ -136,9 +136,11 @@ pub struct AppState {
     /// The simple HTTP client.
     pub simple_client: reqwest::Client,
     /// The firehose producer.
-    pub sequencer: Arc<SharedSequencer>,
+    pub sequencer: Arc<RwLock<Sequencer>>,
     /// The account manager.
-    pub account_manager: Arc<SharedAccountManager>,
+    pub account_manager: Arc<RwLock<AccountManager>>,
+    /// The ID resolver.
+    pub id_resolver: Arc<RwLock<IdResolver>>,
 
     /// The signing key.
     pub signing_key: SigningKey,
@@ -293,15 +295,22 @@ pub async fn run() -> anyhow::Result<()> {
         .iter()
         .map(|s| s.to_string())
         .collect();
-    let sequencer = Arc::new(SharedSequencer {
-        sequencer: RwLock::new(Sequencer::new(
-            Crawlers::new(hostname, crawlers.clone()),
-            None,
-        )),
-    });
-    let account_manager = SharedAccountManager {
-        account_manager: RwLock::new(AccountManager::new(pool.clone())),
+    let sequencer = Arc::new(RwLock::new(Sequencer::new(
+        Crawlers::new(hostname, crawlers.clone()),
+        None,
+    )));
+    let account_manager = Arc::new(RwLock::new(AccountManager::new(pool.clone())));
+    let plc_url = if cfg!(debug_assertions) {
+        "http://localhost:8000".to_owned() // dummy for debug
+    } else {
+        env::var("PDS_DID_PLC_URL").unwrap_or("https://plc.directory".to_owned()) // TODO: toml config
     };
+    let id_resolver = Arc::new(RwLock::new(IdResolver::new(IdentityResolverOpts {
+        timeout: None,
+        plc_url: Some(plc_url),
+        did_cache: Some(DidCache::new(None, None)),
+        backup_nameservers: Some(env_list("PDS_HANDLE_BACKUP_NAMESERVERS")),
+    })));
 
     let addr = config
         .listen_address
@@ -326,7 +335,8 @@ pub async fn run() -> anyhow::Result<()> {
             client: client.clone(),
             simple_client,
             sequencer: sequencer.clone(),
-            account_manager: Arc::new(account_manager),
+            account_manager,
+            id_resolver,
             signing_key: skey,
             rotation_key: rkey,
         });
@@ -406,7 +416,7 @@ pub async fn run() -> anyhow::Result<()> {
         info!("debug mode: not requesting crawl");
     } else {
         info!("requesting crawl from upstream relays");
-        let mut background_sequencer = sequencer.sequencer.write().await.clone();
+        let mut background_sequencer = sequencer.write().await.clone();
         drop(tokio::spawn(
             async move { background_sequencer.start().await },
         ));
