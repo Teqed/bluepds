@@ -1,25 +1,5 @@
-/// Delete a repository record, or ensure it doesn't exist. Requires auth, implemented by PDS.
-use crate::account_manager::AccountManager;
-use crate::account_manager::helpers::account::AvailabilityFlags;
-use crate::{
-    actor_store::ActorStore,
-    auth::AuthenticatedUser,
-    error::ApiError,
-    serve::{ActorStorage, AppState},
-};
-use anyhow::{Result, bail};
-use axum::{Json, extract::State};
-use cidv10::Cid;
-use rsky_lexicon::com::atproto::repo::DeleteRecordInput;
-use rsky_pds::repo::prepare::{PrepareDeleteOpts, prepare_delete};
-use rsky_pds::sequencer::Sequencer;
-use rsky_repo::types::PreparedWrite;
-use rsky_syntax::aturi::AtUri;
-use std::collections::HashMap;
-use std::hash::RandomState;
-use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+//! Delete a repository record, or ensure it doesn't exist. Requires auth, implemented by PDS.
+use super::*;
 
 async fn inner_delete_record(
     body: DeleteRecordInput,

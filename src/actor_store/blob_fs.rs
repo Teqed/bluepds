@@ -1,6 +1,7 @@
 //! File system implementation of blob storage
 //! Based on the S3 implementation but using local file system instead
 use anyhow::Result;
+use axum::body::Bytes;
 use cidv10::Cid;
 use rsky_common::get_random_str;
 use rsky_repo::error::BlobError;
@@ -12,17 +13,17 @@ use tracing::{debug, error, warn};
 
 /// ByteStream implementation for blob data
 pub struct ByteStream {
-    pub bytes: Vec<u8>,
+    pub bytes: Bytes,
 }
 
 impl ByteStream {
     /// Create a new ByteStream with the given bytes
-    pub const fn new(bytes: Vec<u8>) -> Self {
+    pub const fn new(bytes: Bytes) -> Self {
         Self { bytes }
     }
 
     /// Collect the bytes from the stream
-    pub async fn collect(self) -> Result<Vec<u8>> {
+    pub async fn collect(self) -> Result<Bytes> {
         Ok(self.bytes)
     }
 }
@@ -99,7 +100,7 @@ impl BlobStoreFs {
     }
 
     /// Store a blob temporarily
-    pub async fn put_temp(&self, bytes: Vec<u8>) -> Result<String> {
+    pub async fn put_temp(&self, bytes: Bytes) -> Result<String> {
         let key = self.gen_key();
         let temp_path = self.get_tmp_path(&key);
 
@@ -142,7 +143,7 @@ impl BlobStoreFs {
     }
 
     /// Store a blob directly as permanent
-    pub async fn put_permanent(&self, cid: Cid, bytes: Vec<u8>) -> Result<()> {
+    pub async fn put_permanent(&self, cid: Cid, bytes: Bytes) -> Result<()> {
         let target_path = self.get_stored_path(cid);
 
         // Ensure the directory exists
@@ -188,7 +189,7 @@ impl BlobStoreFs {
         let blob_path = self.get_stored_path(cid);
 
         match async_fs::read(&blob_path).await {
-            Ok(bytes) => Ok(ByteStream::new(bytes)),
+            Ok(bytes) => Ok(ByteStream::new(Bytes::from(bytes))),
             Err(e) => {
                 error!("Failed to read blob at path {:?}: {}", blob_path, e);
                 Err(anyhow::Error::new(BlobError::BlobNotFoundError))
@@ -197,7 +198,7 @@ impl BlobStoreFs {
     }
 
     /// Get blob bytes
-    pub async fn get_bytes(&self, cid: Cid) -> Result<Vec<u8>> {
+    pub async fn get_bytes(&self, cid: Cid) -> Result<Bytes> {
         let stream = self.get_object(cid).await?;
         stream.collect().await
     }

@@ -1,75 +1,18 @@
-use crate::account_manager::AccountManager;
-use crate::auth::AuthenticatedUser;
-use crate::serve::ActorStorage;
-use crate::{actor_store::ActorStore, error::ApiError, serve::AppState};
-use anyhow::{Result, bail};
-use axum::extract::Query;
-use axum::{Json, extract::State};
-use cidv10::Cid;
-use futures::{StreamExt, stream};
 use reqwest::header;
 use rsky_common::env::env_int;
-use rsky_identity::IdResolver;
-use rsky_pds::repo::prepare::{
-    PrepareCreateOpts, PrepareDeleteOpts, PrepareUpdateOpts, prepare_create, prepare_delete,
-    prepare_update,
-};
-use rsky_pds::sequencer::Sequencer;
 use rsky_repo::block_map::BlockMap;
 use rsky_repo::car::{CarWithRoot, read_stream_car_with_root};
 use rsky_repo::parse::get_and_parse_record;
 use rsky_repo::repo::Repo;
 use rsky_repo::sync::consumer::{VerifyRepoInput, verify_diff};
-use rsky_repo::types::{PreparedWrite, RecordWriteDescript, VerifiedDiff};
+use rsky_repo::types::{RecordWriteDescript, VerifiedDiff};
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::hash::RandomState;
 use std::num::NonZeroU64;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+
+use super::*;
 
 struct ImportRepoInput {
     car_with_root: CarWithRoot,
-}
-
-impl<'de> Deserialize<'de> for ImportRepoInput {
-    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        async fn from_data(req: &Request<'_>, data: Data<'_>) -> Result<CarWithRoot, ApiError> {
-            let max_import_size = env_int("IMPORT_REPO_LIMIT").unwrap_or(100).megabytes();
-            match req.headers().get_one(header::CONTENT_LENGTH.as_ref()) {
-                None => {
-                    let error =
-                        ApiError::InvalidRequest("Missing content-length header".to_string());
-                    req.local_cache(|| Some(error.clone()));
-                    return Err(error);
-                }
-                Some(res) => match res.parse::<NonZeroU64>() {
-                    Ok(content_length) => {
-                        if content_length.get().bytes() > max_import_size {
-                            let error = ApiError::InvalidRequest(format!(
-                                "Content-Length is greater than maximum of {max_import_size}"
-                            ));
-                            req.local_cache(|| Some(error.clone()));
-                            return Err(error);
-                        }
-
-                        let import_datastream = data.open(content_length.get().bytes());
-                        read_stream_car_with_root(import_datastream).await
-                    }
-                    Err(_error) => {
-                        tracing::error!("{}", format!("Error parsing content-length\n{_error}"));
-                        let error =
-                            ApiError::InvalidRequest("Error parsing content-length".to_string());
-                        req.local_cache(|| Some(error.clone()));
-                        Err(error)
-                    }
-                },
-            }
-        }
-    }
 }
 
 // #[rocket::async_trait]
@@ -117,16 +60,18 @@ impl<'de> Deserialize<'de> for ImportRepoInput {
 //     }
 // }
 
+// TODO: lookup axum docs to impl deserialize
+
 #[tracing::instrument(skip_all)]
 #[axum::debug_handler(state = AppState)]
 pub async fn import_repo(
     // auth: AccessFullImport,
-    user: AuthenticatedUser,
+    auth: AuthenticatedUser,
     Query(import_repo_input): Query<ImportRepoInput>,
     State(actor_pools): State<HashMap<String, ActorStorage, RandomState>>,
 ) -> Result<(), ApiError> {
     // let requester = auth.access.credentials.unwrap().did.unwrap();
-    let requester = user.did();
+    let requester = auth.did();
     let mut actor_store = ActorStore::from_actor_pools(&requester, &actor_pools).await;
 
     // Get current repo if it exists
@@ -233,7 +178,7 @@ async fn prepare_import_repo_writes(
         .collect::<Vec<_>>()
         .await
         .into_iter()
-        .collect::<anyhow::Result<Vec<PreparedWrite>, _>>()
+        .collect::<Result<Vec<PreparedWrite>, _>>()
     {
         Ok(res) => Ok(res),
         Err(error) => {

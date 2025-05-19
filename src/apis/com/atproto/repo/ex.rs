@@ -25,11 +25,13 @@ async fn fun(
 #[tracing::instrument(skip_all)]
 #[axum::debug_handler(state = AppState)]
 pub async fn fun(
+    auth: AuthenticatedUser,
     Query(input): Query<atrium_api::com::atproto::repo::describe_repo::ParametersData>,
-    State(db_actors): State<HashMap<String, ActorStorage, RandomState>>,
+    State(actor_pools): State<HashMap<String, ActorStorage, RandomState>>,
     State(account_manager): State<Arc<RwLock<AccountManager>>>,
     State(id_resolver): State<Arc<RwLock<IdResolver>>>,
     State(sequencer): State<Arc<RwLock<Sequencer>>>,
+    Json(body): Json<ApplyWritesInput>,
 ) -> Result<Json<_>, ApiError> {
     todo!();
 }

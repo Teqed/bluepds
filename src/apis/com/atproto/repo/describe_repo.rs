@@ -1,18 +1,5 @@
 //! Get information about an account and repository, including the list of collections. Does not require auth.
-use crate::account_manager::AccountManager;
-use crate::serve::ActorStorage;
-use crate::{actor_store::ActorStore, error::ApiError, serve::AppState};
-use anyhow::{Result, bail};
-use axum::extract::Query;
-use axum::{Json, extract::State};
-use rsky_identity::IdResolver;
-use rsky_identity::types::DidDocument;
-use rsky_lexicon::com::atproto::repo::DescribeRepoOutput;
-use rsky_syntax::handle::INVALID_HANDLE;
-use std::collections::HashMap;
-use std::hash::RandomState;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use super::*;
 
 async fn inner_describe_repo(
     repo: String,
@@ -28,8 +15,13 @@ async fn inner_describe_repo(
     match account {
         None => bail!("Cound not find user: `{repo}`"),
         Some(account) => {
-            let mut lock = id_resolver.write().await;
-            let did_doc: DidDocument = match lock.did.ensure_resolve(&account.did, None).await {
+            let did_doc: DidDocument = match id_resolver
+                .write()
+                .await
+                .did
+                .ensure_resolve(&account.did, None)
+                .await
+            {
                 Err(err) => bail!("Could not resolve DID: `{err}`"),
                 Ok(res) => res,
             };
@@ -41,7 +33,7 @@ async fn inner_describe_repo(
             let collections = actor_store.record.list_collections().await?;
 
             Ok(DescribeRepoOutput {
-                handle: account.handle.unwrap_or(INVALID_HANDLE.to_string()),
+                handle: account.handle.unwrap_or_else(|| INVALID_HANDLE.to_owned()),
                 did: account.did,
                 did_doc: serde_json::to_value(did_doc)?,
                 collections,
@@ -63,7 +55,7 @@ async fn inner_describe_repo(
 #[tracing::instrument(skip_all)]
 #[axum::debug_handler(state = AppState)]
 pub async fn describe_repo(
-    Query(input): Query<atrium_api::com::atproto::repo::describe_repo::ParametersData>,
+    Query(input): Query<atrium_repo::describe_repo::ParametersData>,
     State(db_actors): State<HashMap<String, ActorStorage, RandomState>>,
     State(account_manager): State<Arc<RwLock<AccountManager>>>,
     State(id_resolver): State<Arc<RwLock<IdResolver>>>,

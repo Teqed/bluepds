@@ -1,19 +1,5 @@
 //! Get a single record from a repository. Does not require auth.
-use crate::account_manager::AccountManager;
-use crate::serve::ActorStorage;
-use crate::{actor_store::ActorStore, error::ApiError, serve::AppState};
-use anyhow::{Result, bail};
-use axum::extract::Query;
-use axum::{Json, extract::State};
-use rsky_identity::IdResolver;
-use rsky_lexicon::com::atproto::repo::GetRecordOutput;
-use rsky_pds::pipethrough::{OverrideOpts, ProxyRequest, pipethrough};
-use rsky_pds::sequencer::Sequencer;
-use rsky_syntax::aturi::AtUri;
-use std::collections::HashMap;
-use std::hash::RandomState;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use super::*;
 
 async fn inner_get_record(
     repo: String,

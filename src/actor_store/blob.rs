@@ -6,6 +6,7 @@
 
 use crate::models::actor_store as models;
 use anyhow::{Result, bail};
+use axum::body::Bytes;
 use cidv10::Cid;
 use diesel::dsl::{count_distinct, exists, not};
 use diesel::sql_types::{Integer, Nullable, Text};
@@ -138,16 +139,17 @@ impl BlobReader {
     pub async fn upload_blob_and_get_metadata(
         &self,
         user_suggested_mime: String,
-        blob: Vec<u8>,
+        blob: Bytes,
     ) -> Result<BlobMetadata> {
         let bytes = blob;
         let size = bytes.len() as i64;
 
         let (temp_key, sha256, img_info, sniffed_mime) = try_join!(
             self.blobstore.put_temp(bytes.clone()),
-            sha256_stream(bytes.clone()),
-            image::maybe_get_info(bytes.clone()),
-            image::mime_type_from_bytes(bytes.clone())
+            // TODO: reimpl funcs to use Bytes instead of Vec<u8>
+            sha256_stream(bytes.to_vec()),
+            image::maybe_get_info(bytes.to_vec()),
+            image::mime_type_from_bytes(bytes.to_vec())
         )?;
 
         let cid = sha256_raw_to_cid(sha256);

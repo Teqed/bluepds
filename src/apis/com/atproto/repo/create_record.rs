@@ -1,34 +1,12 @@
 //! Create a single new repository record. Requires auth, implemented by PDS.
-use crate::account_manager::AccountManager;
-use crate::account_manager::helpers::account::AvailabilityFlags;
-use crate::{
-    actor_store::ActorStore,
-    auth::AuthenticatedUser,
-    error::ApiError,
-    serve::{ActorStorage, AppState},
-};
-use anyhow::{Result, bail};
-use axum::{Json, extract::State};
-use cidv10::Cid;
-use rsky_lexicon::com::atproto::repo::{CreateRecordInput, CreateRecordOutput};
-use rsky_pds::SharedIdResolver;
-use rsky_pds::repo::prepare::{
-    PrepareCreateOpts, PrepareDeleteOpts, prepare_create, prepare_delete,
-};
-use rsky_pds::sequencer::Sequencer;
-use rsky_repo::types::{PreparedDelete, PreparedWrite};
-use rsky_syntax::aturi::AtUri;
-use std::collections::HashMap;
-use std::hash::RandomState;
-use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+
+use super::*;
 
 async fn inner_create_record(
     body: CreateRecordInput,
     user: AuthenticatedUser,
     sequencer: Arc<RwLock<Sequencer>>,
-    actor_pools: std::collections::HashMap<String, ActorStorage>,
+    actor_pools: HashMap<String, ActorStorage>,
     account_manager: Arc<RwLock<AccountManager>>,
 ) -> Result<CreateRecordOutput> {
     let CreateRecordInput {

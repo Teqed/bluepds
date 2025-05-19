@@ -1,32 +1,10 @@
 //! Apply a batch transaction of repository creates, updates, and deletes. Requires auth, implemented by PDS.
-use crate::account_manager::AccountManager;
-use crate::account_manager::helpers::account::AvailabilityFlags;
-use crate::{
-    actor_store::ActorStore,
-    auth::AuthenticatedUser,
-    error::ApiError,
-    serve::{ActorStorage, AppState},
-};
-use anyhow::{Result, bail};
-use axum::{Json, extract::State};
-use cidv10::Cid;
-use futures::stream::{self, StreamExt};
-use rsky_lexicon::com::atproto::repo::{ApplyWritesInput, ApplyWritesInputRefWrite};
-use rsky_pds::repo::prepare::{
-    PrepareCreateOpts, PrepareDeleteOpts, PrepareUpdateOpts, prepare_create, prepare_delete,
-    prepare_update,
-};
-use rsky_pds::sequencer::Sequencer;
-use rsky_repo::types::PreparedWrite;
-use std::collections::HashMap;
-use std::hash::RandomState;
-use std::str::FromStr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+
+use super::*;
 
 async fn inner_apply_writes(
     body: ApplyWritesInput,
-    user: AuthenticatedUser,
+    auth: AuthenticatedUser,
     sequencer: Arc<RwLock<Sequencer>>,
     actor_pools: HashMap<String, ActorStorage>,
     account_manager: Arc<RwLock<AccountManager>>,
@@ -55,7 +33,7 @@ async fn inner_apply_writes(
             bail!("Account is deactivated")
         }
         let did = account.did;
-        if did != user.did() {
+        if did != auth.did() {
             bail!("AuthRequiredError")
         }
         let did: &String = &did;
@@ -64,7 +42,7 @@ async fn inner_apply_writes(
         }
 
         let writes: Vec<PreparedWrite> = stream::iter(tx.writes)
-            .then(|write| async move {
+            .then(async |write| {
                 Ok::<PreparedWrite, anyhow::Error>(match write {
                     ApplyWritesInputRefWrite::Create(write) => PreparedWrite::Create(
                         prepare_create(PrepareCreateOpts {
@@ -147,14 +125,14 @@ async fn inner_apply_writes(
 /// - `swap_commit`: `cid` // If provided, the entire operation will fail if the current repo commit CID does not match this value. Used to prevent conflicting repo mutations.
 #[axum::debug_handler(state = AppState)]
 pub(crate) async fn apply_writes(
-    user: AuthenticatedUser,
-    State(db_actors): State<HashMap<String, ActorStorage, RandomState>>,
+    auth: AuthenticatedUser,
+    State(actor_pools): State<HashMap<String, ActorStorage, RandomState>>,
     State(account_manager): State<Arc<RwLock<AccountManager>>>,
     State(sequencer): State<Arc<RwLock<Sequencer>>>,
     Json(body): Json<ApplyWritesInput>,
 ) -> Result<(), ApiError> {
     tracing::debug!("@LOG: debug apply_writes {body:#?}");
-    match inner_apply_writes(body, user, sequencer, db_actors, account_manager).await {
+    match inner_apply_writes(body, auth, sequencer, actor_pools, account_manager).await {
         Ok(()) => Ok(()),
         Err(error) => {
             tracing::error!("@LOG: ERROR: {error}");
