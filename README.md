@@ -44,7 +44,7 @@ This is how much it costs to host the @teq.shatteredsky.net account:
     - Size: 47 GB
     - VPUs/GB: 10
 
-This is about half of the 3,000 OCPU hours and 18,000 GB hours available per month for free on the VM.Standard.A1.Flex shape. This is _without_ optimizing for costs. The PDS can likely be made much cheaper.
+This is about half of the 3,000 OCPU hours and 18,000 GB hours available per month for free on the VM.Standard.A1.Flex shape. This is _without_ optimizing for costs. The PDS can likely be made to run on much less resources.
 
 ## To-do
 ### APIs
@@ -90,7 +90,7 @@ This is about half of the 3,000 OCPU hours and 18,000 GB hours available per mon
     - [X] AP /xrpc/com.atproto.repo.createRecord
     - [X] AP /xrpc/com.atproto.repo.deleteRecord
     - [X] UG /xrpc/com.atproto.repo.describeRepo
-    - [ ] UG /xrpc/com.atproto.repo.getRecord
+    - [X] UG /xrpc/com.atproto.repo.getRecord
     - [X] xx /xrpc/com.atproto.repo.importRepo
     - [X] xx /xrpc/com.atproto.repo.listMissingBlobs
     - [X] UG /xrpc/com.atproto.repo.listRecords
