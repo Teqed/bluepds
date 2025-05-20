@@ -269,3 +269,4 @@ deadpool-diesel = { version = "0.6.1", features = [
     "sqlite",
     "tracing",
 ] }
+ubyte = "0.10.4"

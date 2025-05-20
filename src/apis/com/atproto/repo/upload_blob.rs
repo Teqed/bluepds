@@ -50,7 +50,7 @@ async fn inner_upload_blob(
 
     Ok(BlobOutput {
         blob: Blob {
-            r#type: Some("blob".to_string()),
+            r#type: Some("blob".to_owned()),
             r#ref: Some(blobref.get_cid()?),
             cid: None,
             mime_type: blobref.get_mime_type().to_string(),

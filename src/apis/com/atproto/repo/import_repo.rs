@@ -1,3 +1,4 @@
+use axum::{body::Bytes, http::HeaderMap};
 use reqwest::header;
 use rsky_common::env::env_int;
 use rsky_repo::block_map::BlockMap;
@@ -6,73 +7,59 @@ use rsky_repo::parse::get_and_parse_record;
 use rsky_repo::repo::Repo;
 use rsky_repo::sync::consumer::{VerifyRepoInput, verify_diff};
 use rsky_repo::types::{RecordWriteDescript, VerifiedDiff};
-use serde::Deserialize;
-use std::num::NonZeroU64;
+use ubyte::ToByteUnit;
 
 use super::*;
 
-struct ImportRepoInput {
-    car_with_root: CarWithRoot,
+async fn from_data(bytes: Bytes) -> Result<CarWithRoot, ApiError> {
+    let max_import_size = env_int("IMPORT_REPO_LIMIT").unwrap_or(100).megabytes();
+    if bytes.len() > max_import_size {
+        return Err(ApiError::InvalidRequest(format!(
+            "Content-Length is greater than maximum of {max_import_size}"
+        )));
+    }
+
+    let mut cursor = std::io::Cursor::new(bytes);
+    match read_stream_car_with_root(&mut cursor).await {
+        Ok(car_with_root) => Ok(car_with_root),
+        Err(error) => {
+            tracing::error!("Error reading stream car with root\n{error}");
+            Err(ApiError::InvalidRequest("Invalid CAR file".to_owned()))
+        }
+    }
 }
-
-// #[rocket::async_trait]
-// impl<'r> FromData<'r> for ImportRepoInput {
-//     type Error = ApiError;
-
-//     #[tracing::instrument(skip_all)]
-//     async fn from_data(req: &'r Request<'_>, data: Data<'r>) -> Outcome<'r, Self, Self::Error> {
-//         let max_import_size = env_int("IMPORT_REPO_LIMIT").unwrap_or(100).megabytes();
-//         match req.headers().get_one(header::CONTENT_LENGTH.as_ref()) {
-//             None => {
-//                 let error = ApiError::InvalidRequest("Missing content-length header".to_string());
-//                 req.local_cache(|| Some(error.clone()));
-//                 Outcome::Error((Status::BadRequest, error))
-//             }
-//             Some(res) => match res.parse::<NonZeroU64>() {
-//                 Ok(content_length) => {
-//                     if content_length.get().bytes() > max_import_size {
-//                         let error = ApiError::InvalidRequest(format!(
-//                             "Content-Length is greater than maximum of {max_import_size}"
-//                         ));
-//                         req.local_cache(|| Some(error.clone()));
-//                         return Outcome::Error((Status::BadRequest, error));
-//                     }
-
-//                     let import_datastream = data.open(content_length.get().bytes());
-//                     match read_stream_car_with_root(import_datastream).await {
-//                         Ok(car_with_root) => Outcome::Success(ImportRepoInput { car_with_root }),
-//                         Err(error) => {
-//                             let error = ApiError::InvalidRequest(error.to_string());
-//                             req.local_cache(|| Some(error.clone()));
-//                             Outcome::Error((Status::BadRequest, error))
-//                         }
-//                     }
-//                 }
-//                 Err(_error) => {
-//                     tracing::error!("{}", format!("Error parsing content-length\n{_error}"));
-//                     let error =
-//                         ApiError::InvalidRequest("Error parsing content-length".to_string());
-//                     req.local_cache(|| Some(error.clone()));
-//                     Outcome::Error((Status::BadRequest, error))
-//                 }
-//             },
-//         }
-//     }
-// }
-
-// TODO: lookup axum docs to impl deserialize
 
 #[tracing::instrument(skip_all)]
 #[axum::debug_handler(state = AppState)]
+/// Import a repo in the form of a CAR file. Requires Content-Length HTTP header to be set.
+/// Request
+/// mime     application/vnd.ipld.car
+/// Body - required
 pub async fn import_repo(
     // auth: AccessFullImport,
     auth: AuthenticatedUser,
-    Query(import_repo_input): Query<ImportRepoInput>,
+    headers: HeaderMap,
     State(actor_pools): State<HashMap<String, ActorStorage, RandomState>>,
+    body: Bytes,
 ) -> Result<(), ApiError> {
     // let requester = auth.access.credentials.unwrap().did.unwrap();
     let requester = auth.did();
     let mut actor_store = ActorStore::from_actor_pools(&requester, &actor_pools).await;
+
+    // Check headers
+    let content_length = headers
+        .get(header::CONTENT_LENGTH)
+        .expect("no content length provided")
+        .to_str()
+        .map_err(anyhow::Error::from)
+        .and_then(|content_length| content_length.parse::<u64>().map_err(anyhow::Error::from))
+        .expect("invalid content-length header");
+    if content_length > env_int("IMPORT_REPO_LIMIT").unwrap_or(100).megabytes() {
+        return Err(ApiError::InvalidRequest(format!(
+            "Content-Length is greater than maximum of {}",
+            env_int("IMPORT_REPO_LIMIT").unwrap_or(100).megabytes()
+        )));
+    };
 
     // Get current repo if it exists
     let curr_root: Option<Cid> = actor_store.get_repo_root().await;
@@ -82,7 +69,14 @@ pub async fn import_repo(
     };
 
     // Process imported car
-    let car_with_root = import_repo_input.car_with_root;
+    // let car_with_root = import_repo_input.car_with_root;
+    let car_with_root: CarWithRoot = match from_data(body).await {
+        Ok(car) => car,
+        Err(error) => {
+            tracing::error!("Error importing repo\n{error:?}");
+            return Err(ApiError::InvalidRequest("Invalid CAR file".to_owned()));
+        }
+    };
 
     // Get verified difference from current repo and imported repo
     let mut imported_blocks: BlockMap = car_with_root.blocks;
@@ -127,13 +121,13 @@ pub async fn import_repo(
 
 /// Converts list of RecordWriteDescripts into a list of PreparedWrites
 async fn prepare_import_repo_writes(
-    _did: String,
+    did: String,
     writes: Vec<RecordWriteDescript>,
     blocks: &BlockMap,
 ) -> Result<Vec<PreparedWrite>, ApiError> {
     match stream::iter(writes)
         .then(|write| {
-            let did = _did.clone();
+            let did = did.clone();
             async move {
                 Ok::<PreparedWrite, anyhow::Error>(match write {
                     RecordWriteDescript::Create(write) => {

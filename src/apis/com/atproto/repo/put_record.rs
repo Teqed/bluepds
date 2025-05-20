@@ -86,7 +86,9 @@ async fn inner_put_record(
             };
 
             match current {
-                Some(current) if current.cid == write.cid().unwrap().to_string() => (None, write),
+                Some(current) if current.cid == write.cid().expect("write cid").to_string() => {
+                    (None, write)
+                }
                 _ => {
                     let commit = actor_store
                         .process_writes(vec![write.clone()], swap_commit_cid)
@@ -97,7 +99,7 @@ async fn inner_put_record(
         };
 
         if let Some(commit) = commit {
-            sequencer
+            _ = sequencer
                 .write()
                 .await
                 .sequence_commit(did.clone(), commit.clone())
@@ -115,7 +117,7 @@ async fn inner_put_record(
         }
         Ok(PutRecordOutput {
             uri: write.uri().to_string(),
-            cid: write.cid().unwrap().to_string(),
+            cid: write.cid().expect("write cid").to_string(),
         })
     } else {
         bail!("Could not find repo: `{repo}`")
