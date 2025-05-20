@@ -1,4 +1,4 @@
-use super::account_manager::{AccountManager, SharedAccountManager};
+use super::account_manager::AccountManager;
 use super::config::AppConfig;
 use super::db::establish_pool;
 pub use super::error::Error;
@@ -17,7 +17,6 @@ use http_cache_reqwest::{CacheMode, HttpCacheOptions, MokaManager};
 use rsky_common::env::env_list;
 use rsky_identity::IdResolver;
 use rsky_identity::types::{DidCache, IdentityResolverOpts};
-use rsky_pds::SharedIdResolver;
 use rsky_pds::{crawlers::Crawlers, sequencer::Sequencer};
 use serde::{Deserialize, Serialize};
 use std::env;
