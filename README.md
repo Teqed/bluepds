@@ -49,89 +49,89 @@ This is about half of the 3,000 OCPU hours and 18,000 GB hours available per mon
 ## To-do
 ### APIs
 - [ ] [Service proxying](https://atproto.com/specs/xrpc#service-proxying)
-- [ ] UG /xrpc/_health (undocumented, but impl by reference PDS)
-<!-- - [ ] xx /xrpc/app.bsky.notification.registerPush
+- [ ] /xrpc/_health (undocumented, but impl by reference PDS)
+<!-- - [ ] /xrpc/app.bsky.notification.registerPush
 - app.bsky.actor
-    - [ ] AG /xrpc/app.bsky.actor.getPreferences
-    - [ ] xx /xrpc/app.bsky.actor.getProfile
-    - [ ] xx /xrpc/app.bsky.actor.getProfiles
-    - [ ] AP /xrpc/app.bsky.actor.putPreferences
+    - [ ] /xrpc/app.bsky.actor.getPreferences
+    - [ ] /xrpc/app.bsky.actor.getProfile
+    - [ ] /xrpc/app.bsky.actor.getProfiles
+    - [ ] /xrpc/app.bsky.actor.putPreferences
 - app.bsky.feed
-    - [ ] xx /xrpc/app.bsky.feed.getActorLikes
-    - [ ] xx /xrpc/app.bsky.feed.getAuthorFeed
-    - [ ] xx /xrpc/app.bsky.feed.getFeed
-    - [ ] xx /xrpc/app.bsky.feed.getPostThread
-    - [ ] xx /xrpc/app.bsky.feed.getTimeline -->
+    - [ ] /xrpc/app.bsky.feed.getActorLikes
+    - [ ] /xrpc/app.bsky.feed.getAuthorFeed
+    - [ ] /xrpc/app.bsky.feed.getFeed
+    - [ ] /xrpc/app.bsky.feed.getPostThread
+    - [ ] /xrpc/app.bsky.feed.getTimeline -->
 - com.atproto.admin
-    - [ ] xx /xrpc/com.atproto.admin.deleteAccount
-    - [ ] xx /xrpc/com.atproto.admin.disableAccountInvites
-    - [ ] xx /xrpc/com.atproto.admin.disableInviteCodes
-    - [ ] xx /xrpc/com.atproto.admin.enableAccountInvites
-    - [ ] xx /xrpc/com.atproto.admin.getAccountInfo
-    - [ ] xx /xrpc/com.atproto.admin.getAccountInfos
-    - [ ] xx /xrpc/com.atproto.admin.getInviteCodes
-    - [ ] xx /xrpc/com.atproto.admin.getSubjectStatus
-    - [ ] xx /xrpc/com.atproto.admin.sendEmail
-    - [ ] xx /xrpc/com.atproto.admin.updateAccountEmail
-    - [ ] xx /xrpc/com.atproto.admin.updateAccountHandle
-    - [ ] xx /xrpc/com.atproto.admin.updateAccountPassword
-    - [ ] xx /xrpc/com.atproto.admin.updateSubjectStatus
+    - [ ] /xrpc/com.atproto.admin.deleteAccount
+    - [ ] /xrpc/com.atproto.admin.disableAccountInvites
+    - [ ] /xrpc/com.atproto.admin.disableInviteCodes
+    - [ ] /xrpc/com.atproto.admin.enableAccountInvites
+    - [ ] /xrpc/com.atproto.admin.getAccountInfo
+    - [ ] /xrpc/com.atproto.admin.getAccountInfos
+    - [ ] /xrpc/com.atproto.admin.getInviteCodes
+    - [ ] /xrpc/com.atproto.admin.getSubjectStatus
+    - [ ] /xrpc/com.atproto.admin.sendEmail
+    - [ ] /xrpc/com.atproto.admin.updateAccountEmail
+    - [ ] /xrpc/com.atproto.admin.updateAccountHandle
+    - [ ] /xrpc/com.atproto.admin.updateAccountPassword
+    - [ ] /xrpc/com.atproto.admin.updateSubjectStatus
 - com.atproto.identity
-    - [ ] xx /xrpc/com.atproto.identity.getRecommendedDidCredentials
-    - [ ] AP /xrpc/com.atproto.identity.requestPlcOperationSignature
-    - [ ] UG /xrpc/com.atproto.identity.resolveHandle
-    - [ ] AP /xrpc/com.atproto.identity.signPlcOperation
-    - [ ] xx /xrpc/com.atproto.identity.submitPlcOperation
-    - [ ] AP /xrpc/com.atproto.identity.updateHandle
+    - [ ] /xrpc/com.atproto.identity.getRecommendedDidCredentials
+    - [ ] /xrpc/com.atproto.identity.requestPlcOperationSignature
+    - [ ] /xrpc/com.atproto.identity.resolveHandle
+    - [ ] /xrpc/com.atproto.identity.signPlcOperation
+    - [ ] /xrpc/com.atproto.identity.submitPlcOperation
+    - [ ] /xrpc/com.atproto.identity.updateHandle
 <!-- - com.atproto.moderation
-    - [ ] xx /xrpc/com.atproto.moderation.createReport -->
+    - [ ] /xrpc/com.atproto.moderation.createReport -->
 - com.atproto.repo
-    - [X] AP /xrpc/com.atproto.repo.applyWrites
-    - [X] AP /xrpc/com.atproto.repo.createRecord
-    - [X] AP /xrpc/com.atproto.repo.deleteRecord
-    - [X] UG /xrpc/com.atproto.repo.describeRepo
-    - [X] UG /xrpc/com.atproto.repo.getRecord
-    - [X] xx /xrpc/com.atproto.repo.importRepo
-    - [X] xx /xrpc/com.atproto.repo.listMissingBlobs
-    - [X] UG /xrpc/com.atproto.repo.listRecords
-    - [X] AP /xrpc/com.atproto.repo.putRecord
-    - [X] AP /xrpc/com.atproto.repo.uploadBlob
+    - [X] /xrpc/com.atproto.repo.applyWrites
+    - [X] /xrpc/com.atproto.repo.createRecord
+    - [X] /xrpc/com.atproto.repo.deleteRecord
+    - [X] /xrpc/com.atproto.repo.describeRepo
+    - [X] /xrpc/com.atproto.repo.getRecord
+    - [X] /xrpc/com.atproto.repo.importRepo
+    - [X] /xrpc/com.atproto.repo.listMissingBlobs
+    - [X] /xrpc/com.atproto.repo.listRecords
+    - [X] /xrpc/com.atproto.repo.putRecord
+    - [X] /xrpc/com.atproto.repo.uploadBlob
 - com.atproto.server
-    - [ ] xx /xrpc/com.atproto.server.activateAccount
-    - [ ] xx /xrpc/com.atproto.server.checkAccountStatus
-    - [ ] xx /xrpc/com.atproto.server.confirmEmail
-    - [ ] UP /xrpc/com.atproto.server.createAccount
-    - [ ] xx /xrpc/com.atproto.server.createAppPassword
-    - [ ] AP /xrpc/com.atproto.server.createInviteCode
-    - [ ] xx /xrpc/com.atproto.server.createInviteCodes
-    - [ ] UP /xrpc/com.atproto.server.createSession
-    - [ ] xx /xrpc/com.atproto.server.deactivateAccount
-    - [ ] xx /xrpc/com.atproto.server.deleteAccount
-    - [ ] xx /xrpc/com.atproto.server.deleteSession
-    - [ ] UG /xrpc/com.atproto.server.describeServer
-    - [ ] xx /xrpc/com.atproto.server.getAccountInviteCodes
-    - [ ] AG /xrpc/com.atproto.server.getServiceAuth
-    - [ ] AG /xrpc/com.atproto.server.getSession
-    - [ ] xx /xrpc/com.atproto.server.listAppPasswords
-    - [ ] xx /xrpc/com.atproto.server.refreshSession
-    - [ ] xx /xrpc/com.atproto.server.requestAccountDelete
-    - [ ] xx /xrpc/com.atproto.server.requestEmailConfirmation
-    - [ ] xx /xrpc/com.atproto.server.requestEmailUpdate
-    - [ ] xx /xrpc/com.atproto.server.requestPasswordReset
-    - [ ] xx /xrpc/com.atproto.server.reserveSigningKey
-    - [ ] xx /xrpc/com.atproto.server.resetPassword
-    - [ ] xx /xrpc/com.atproto.server.revokeAppPassword
-    - [ ] xx /xrpc/com.atproto.server.updateEmail
+    - [ ] /xrpc/com.atproto.server.activateAccount
+    - [ ] /xrpc/com.atproto.server.checkAccountStatus
+    - [ ] /xrpc/com.atproto.server.confirmEmail
+    - [ ] /xrpc/com.atproto.server.createAccount
+    - [ ] /xrpc/com.atproto.server.createAppPassword
+    - [ ] /xrpc/com.atproto.server.createInviteCode
+    - [ ] /xrpc/com.atproto.server.createInviteCodes
+    - [ ] /xrpc/com.atproto.server.createSession
+    - [ ] /xrpc/com.atproto.server.deactivateAccount
+    - [ ] /xrpc/com.atproto.server.deleteAccount
+    - [ ] /xrpc/com.atproto.server.deleteSession
+    - [ ] /xrpc/com.atproto.server.describeServer
+    - [ ] /xrpc/com.atproto.server.getAccountInviteCodes
+    - [ ] /xrpc/com.atproto.server.getServiceAuth
+    - [ ] /xrpc/com.atproto.server.getSession
+    - [ ] /xrpc/com.atproto.server.listAppPasswords
+    - [ ] /xrpc/com.atproto.server.refreshSession
+    - [ ] /xrpc/com.atproto.server.requestAccountDelete
+    - [ ] /xrpc/com.atproto.server.requestEmailConfirmation
+    - [ ] /xrpc/com.atproto.server.requestEmailUpdate
+    - [ ] /xrpc/com.atproto.server.requestPasswordReset
+    - [ ] /xrpc/com.atproto.server.reserveSigningKey
+    - [ ] /xrpc/com.atproto.server.resetPassword
+    - [ ] /xrpc/com.atproto.server.revokeAppPassword
+    - [ ] /xrpc/com.atproto.server.updateEmail
 - com.atproto.sync
-    - [ ] UG /xrpc/com.atproto.sync.getBlob
-    - [ ] UG /xrpc/com.atproto.sync.getBlocks
-    - [ ] UG /xrpc/com.atproto.sync.getLatestCommit
-    - [ ] UG /xrpc/com.atproto.sync.getRecord
-    - [ ] UG /xrpc/com.atproto.sync.getRepo
-    - [ ] UG /xrpc/com.atproto.sync.getRepoStatus
-    - [ ] UG /xrpc/com.atproto.sync.listBlobs
-    - [ ] UG /xrpc/com.atproto.sync.listRepos
-    - [ ] UG /xrpc/com.atproto.sync.subscribeRepos
+    - [ ] /xrpc/com.atproto.sync.getBlob
+    - [ ] /xrpc/com.atproto.sync.getBlocks
+    - [ ] /xrpc/com.atproto.sync.getLatestCommit
+    - [ ] /xrpc/com.atproto.sync.getRecord
+    - [ ] /xrpc/com.atproto.sync.getRepo
+    - [ ] /xrpc/com.atproto.sync.getRepoStatus
+    - [ ] /xrpc/com.atproto.sync.listBlobs
+    - [ ] /xrpc/com.atproto.sync.listRepos
+    - [ ] /xrpc/com.atproto.sync.subscribeRepos
 
 ## Deployment (NixOS)
 ```nix
