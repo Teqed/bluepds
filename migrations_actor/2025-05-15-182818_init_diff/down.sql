@@ -1,0 +1,7 @@
+DROP TABLE IF EXISTS `blob`;
+DROP TABLE IF EXISTS `repo_block`;
+DROP TABLE IF EXISTS `backlink`;
+DROP TABLE IF EXISTS `record`;
+DROP TABLE IF EXISTS `repo_root`;
+DROP TABLE IF EXISTS `account_pref`;
+DROP TABLE IF EXISTS `record_blob`;

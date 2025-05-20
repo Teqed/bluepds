@@ -1,0 +1,75 @@
+# allow-unwrap-in-tests = true
+# avoid-breaking-exported-api = false # https://doc.rust-lang.org/nightly/clippy/lint_configuration.html#avoid-breaking-exported-api
+# excessive-nesting-threshold = 7
+# max-fn-params-bools = 0
+# max-include-file-size = 1000000 # https://rust-lang.github.io/rust-clippy/master/index.html#/large_include_file
+# stack-size-threshold = 65536 # https://rust-lang.github.io/rust-clippy/master/index.html#/large_stack_frames
+# too-many-lines-threshold = 200
+# array-size-threshold = 64
+# future-size-threshold = 8192
+# type-complexity-threshold = 200
+# cognitive-complexity-threshold = 7
+# missing-docs-in-crate-items = true
+# check-private-items = true
+# too-many-arguments-threshold = 7
+
+# # -----------------------------------------------------------------------------
+
+# # https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_macros
+# disallowed-macros = [
+#   'dbg',
+#   'std::eprint',
+#   'std::eprintln',
+#   'std::print',
+#   # 'std::println',
+#   # 'std::unimplemented',
+# ]
+
+# # https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_methods
+# disallowed-methods = [
+#   { path = "log::error", reason = "use tracing::error" },
+#   { path = "log::warn", reason = "use tracing::warn" },
+#   { path = "log::info", reason = "use tracing::info" },
+#   { path = "log::debug", reason = "use tracing::debug" },
+#   { path = "log::trace", reason = "use tracing::trace" },
+#   # { path = "sha1::Digest::new", reason = "SHA1 is cryptographically broken" },
+#   { path = "std::env::temp_dir", reason = "Use the tempdir crate instead" },
+#   { path = "std::panic::catch_unwind", reason = "We compile with `panic = 'abort'`" },
+#   { path = "std::thread::spawn", reason = "Use `std::thread::Builder` and name the thread" },
+# ]
+
+# # https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_names
+# disallowed-names = []
+
+# # https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_types
+# disallowed-types = [
+#   { path = "ring::digest::SHA1_FOR_LEGACY_USE_ONLY", reason = "SHA1 is cryptographically broken" },
+#   { path = "std::sync::Condvar", reason = "Use parking_lot instead" },
+#   { path = "std::sync::Mutex", reason = "Use parking_lot instead" },
+#   { path = "std::sync::RwLock", reason = "Use parking_lot instead" },
+# ]
+
+# # Allow-list of words for markdown in docstrings https://rust-lang.github.io/rust-clippy/master/index.html#doc_markdown
+doc-valid-idents = [
+    "..",
+    "DPoP",
+    "ATProto",
+    "SQLite",
+    #   "GitHub",
+    #   "GLB",
+    #   "GLTF",
+    #   "iOS",
+    #   "macOS",
+    #   "MessagePack",
+    #   "MiMalloc",
+    #   "NaN",
+    #   "OBJ",
+    #   "OpenGL",
+    #   "PyPI",
+    #   "sRGB",
+    #   "sRGBA",
+    #   "WebGL",
+    #   "WebGPU",
+    #   "WebSocket",
+    #   "WebSockets",
+]
