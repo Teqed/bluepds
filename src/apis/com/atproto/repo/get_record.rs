@@ -1,12 +1,17 @@
 //! Get a single record from a repository. Does not require auth.
+
+use crate::pipethrough::{ProxyRequest, pipethrough};
+
 use super::*;
+
+use rsky_pds::pipethrough::OverrideOpts;
 
 async fn inner_get_record(
     repo: String,
     collection: String,
     rkey: String,
     cid: Option<String>,
-    // req: ProxyRequest<'_>,
+    req: ProxyRequest,
     actor_pools: HashMap<String, ActorStorage>,
     account_manager: Arc<RwLock<AccountManager>>,
 ) -> Result<GetRecordOutput> {
@@ -31,28 +36,28 @@ async fn inner_get_record(
             _ => bail!("Could not locate record: `{uri}`"),
         }
     } else {
-        // match req.cfg.bsky_app_view {
-        //     None => bail!("Could not locate record"),
-        //     Some(_) => match pipethrough(
-        //         &req,
-        //         None,
-        //         OverrideOpts {
-        //             aud: None,
-        //             lxm: None,
-        //         },
-        //     )
-        //     .await
-        //     {
-        //         Err(error) => {
-        //             tracing::error!("@LOG: ERROR: {error}");
-        bail!("Could not locate record")
-        //         }
-        //         Ok(res) => {
-        //             let output: GetRecordOutput = serde_json::from_slice(res.buffer.as_slice())?;
-        //             Ok(output)
-        //         }
-        //     },
-        // }
+        match req.cfg.bsky_app_view {
+            None => bail!("Could not locate record"),
+            Some(_) => match pipethrough(
+                &req,
+                None,
+                OverrideOpts {
+                    aud: None,
+                    lxm: None,
+                },
+            )
+            .await
+            {
+                Err(error) => {
+                    tracing::error!("@LOG: ERROR: {error}");
+                    bail!("Could not locate record")
+                }
+                Ok(res) => {
+                    let output: GetRecordOutput = serde_json::from_slice(res.buffer.as_slice())?;
+                    Ok(output)
+                }
+            },
+        }
     }
 }
 
@@ -73,23 +78,13 @@ pub async fn get_record(
     Query(input): Query<ParametersData>,
     State(db_actors): State<HashMap<String, ActorStorage, RandomState>>,
     State(account_manager): State<Arc<RwLock<AccountManager>>>,
+    req: ProxyRequest,
 ) -> Result<Json<GetRecordOutput>, ApiError> {
     let repo = input.repo;
     let collection = input.collection;
     let rkey = input.rkey;
     let cid = input.cid;
-    // let req: ProxyRequest = todo!(); // TODO: Implement service proxy
-    match inner_get_record(
-        repo,
-        collection,
-        rkey,
-        cid,
-        // req,
-        db_actors,
-        account_manager,
-    )
-    .await
-    {
+    match inner_get_record(repo, collection, rkey, cid, req, db_actors, account_manager).await {
         Ok(res) => Ok(Json(res)),
         Err(error) => {
             tracing::error!("@LOG: ERROR: {error}");

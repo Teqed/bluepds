@@ -11,6 +11,7 @@ pub mod error;
 mod metrics;
 mod models;
 mod oauth;
+mod pipethrough;
 mod schema;
 mod serve;
 mod service_proxy;
